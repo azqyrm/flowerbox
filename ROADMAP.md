@@ -127,12 +127,19 @@ claude_ds/
    ├─ input.rs          # leafwing actions, tap/hold detection, input buffer
    ├─ camera.rs         # third-person orbit camera, collision pull-in, lock-on (later)
    ├─ arena.rs          # circular dungeon, pillars, torches, lighting, fog
+   ├─ character/       # GENERIC: anything that moves/acts/takes damage (player, future enemies)
+   │  ├─ mod.rs         # CharacterPlugin, CharacterSystems, MoveIntent, ActionIntent, character_bundle()
+   │  ├─ controller.rs  # kinematic movement from MoveIntent, gravity, grounding, jump, air momentum
+   │  ├─ action.rs      # state machine: roll, attacks, drinking, timings, lunges, running attack
+   │  └─ stats.rs       # Health, Stamina, regen, Invulnerable, DamageMessage/DamageTaken
+   ├─ humanoid/        # GENERIC: reusable humanoid body + shared animations
+   │  ├─ mod.rs         # Bone enum, HumanoidSpec (proportions/look), spawn_humanoid(), HumanoidRig
+   │  ├─ pose.rs        # HumanoidPose (+ blending/masks), forward kinematics
+   │  └─ anim.rs        # locomotion (idle/walk/run/jump/land) + action poses, HumanoidAnimator
    ├─ player/
-   │  ├─ mod.rs         # PlayerPlugin, spawn
-   │  ├─ controller.rs  # kinematic movement, gravity, grounding, jump
-   │  ├─ action.rs      # state machine: roll, attacks, drinking, timings
-   │  └─ stats.rs       # Health, Stamina, regen, Invulnerable
-   ├─ combat.rs         # hitboxes, damage events, hitstop, dummy
+   │  └─ mod.rs         # Player = character_bundle + HumanoidSpec::human() + longsword + input
+   ├─ combat.rs         # Weapon, blade hitbox via FK, hitstop, camera shake, training dummy
+   ├─ debug.rs          # F3 overlay, debug keys, screenshots, autopilot scripts
    ├─ items/
    │  ├─ mod.rs         # ItemDef registry, ItemId
    │  ├─ inventory.rs   # Inventory, Equipment components, equip/unequip events
@@ -190,6 +197,13 @@ claude_ds/
 - [x] Training dummy: HP, a hit flash, a knockback wobble, and it resets when it "dies"
 - [x] Hitstop and a small camera shake on hit
 
+### Phase 5.5 — Humanoid animation and movement interface (user request, 2026-11-14)
+- [x] Generic `character` module: any entity with `character_bundle()` moves and acts from `MoveIntent` and `ActionIntent` (player input today, AI later)
+- [x] Reusable `humanoid` module: bone skeleton from a `HumanoidSpec`, a shared animator, and FK so the hitboxes follow the bones
+- [x] Movement animations: idle breathing, walk/run cycle with arm counter-swing, a rising/falling jump pose, and a landing crouch
+- [x] Full-body action poses: tucked roll, backstep, light/heavy/jump attacks with stance, hurt, death fall, and drinking (upper body)
+- [x] Attacks step forward (light 0.45 m, heavy 0.7 m). The running attack (light while sprinting) leaps 3.2 m with a hop. Jumps and jump attacks keep their horizontal momentum.
+
 ### Phase 6 — Healing Ale, Hearth, death and HUD
 - [ ] Healing Ale: charges, drinking state, slowed movement, heal tick
 - [ ] Hearth: interact prompt, rest (restore HP, stamina and Ale), set the respawn point
@@ -211,7 +225,7 @@ claude_ds/
 - [ ] Simple enemy (a hollow-type melee AI) to test i-frames against real attacks
 
 ### Phase 9 — Polish
-- [ ] Replace the primitives with a rigged glTF character (CC0) and blend its animations into the state machine
+- [ ] Replace the primitives with a rigged glTF character (CC0). Map its skeleton onto `humanoid::Bone` so the shared poses and the FK hitbox keep working, or blend its clips in `humanoid::anim` (see N13).
 - [ ] Sound: footsteps, swings, hits, the drink gulp, Hearth ambience and torches crackling
 - [ ] Settings: mouse sensitivity, key rebinding, invert Y
 - [ ] Save and load (inventory, Hearth, Ale upgrades)
@@ -232,6 +246,8 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | Debug overlay on F3 is always compiled in (it's cheap). Debug keys (H, 1-4) only exist in debug builds. Not tied to the `dev` feature. |
 | 2026-11-14 | Backstep = rolling with no movement input; there's no separate input or request for it (user request). |
 | 2026-11-14 | Sword hits are detected with blade shape queries that sample the same pose function the animation uses (`player::pose`), not avian sensors. This is deterministic, needs no kinematic/static sensor pairs, and keeps the visuals and hitbox identical. |
+| 2026-11-14 | Characters are generic (`character` module, driven by `MoveIntent`/`ActionIntent`) and bodies are generic (`humanoid` module: `HumanoidSpec` + shared animator). To add another humanoid (an enemy), spawn `character_bundle()` + `spawn_humanoid(spec)` + `HumanoidAnimator`, and write its intents from AI (user request). |
+| 2026-11-14 | A light attack while sprinting = running attack (a leaping slash). Light and heavy attacks lunge forward, and jump attacks keep their momentum (user request). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -302,3 +318,15 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
     - With F3 on, the blade hitbox is drawn in red during active frames. The overlay shows LMB held time, charge % and dummy HP.
     - `FLOWERBOX_AUTOPILOT=combat` places the player 1.5 m in front of the dummy and scripts the attack button. Expected over 13 s: light ×3 (20 each) → heavy (about 36) → jump attack (36, breaks the dummy) → reset → full heavy (40) → light ×2. Grep for `hit `, `dummy` and `action`.
     - The default autopilot (`=1`) now walks into the dummy, and its combo hits it.
+- **N13 (2026-11-14) — humanoid and character interface (user request):**
+  - **Adding a humanoid** (an enemy, say): spawn an entity with `character_bundle(transform, hp, stamina)`, then `spawn_humanoid(&mut commands, meshes, materials, entity, &HumanoidSpec, root_height)`. Insert the returned `HumanoidRig`, the `HumanoidSpec` and a `HumanoidAnimator`, plus a `Weapon` if it attacks and a `Hurtbox` if it can be hit. Drive it by writing `MoveIntent { dir, sprint, jump_buffer }` and `ActionIntent::buffer(ActionRequest)`. `PlayerInput`/`gather_player_input` is just the player's writer.
+  - **Body:** `HumanoidSpec` holds proportions and colours (`HumanoidSpec::human()` = the player). The bones are `Pelvis → Chest → Head`, `Chest → UpperArm → Forearm → Hand` (L/R), and `Pelvis → Thigh → Shin → Foot` (L/R). Limbs hang along local -Y. +X rotation swings a limb forward; on the shin, -X bends the knee. The weapon is a child of `HandR`, with the blade along +Y.
+  - **Animation** (`humanoid/anim.rs`): `locomotion_pose(LocomotionInput)` (the gait phase advances with distance travelled, walk↔run blends by speed, plus air/landing layers) and `action_pose(&ActiveAction) -> (pose, Full|UpperBody)`. The animator blends the action layer in over 0.06 s and out over 0.12 s.
+  - **Hitbox** = `action_pose` + FK (`bone_character_transform`), so whatever the pose functions do, the hitbox follows. Unit tests check that the swings pass in front, the overheads come down in front, the guard is forward-down, the feet alternate when walking, and the roll stays above the floor.
+  - **Movement additions:**
+    - The `Scripted` lunges (`lunge_speed`, a sine bell) give light attacks 0.45 m and heavy attacks 0.7 m of forward motion.
+    - `RunningAttack`: a light attack while `ctrl.sprinting` (and not mid-action) gives a 3.2 m leap, `ActionDef::hop` = 3.2 m/s upward, and 1.3× damage.
+    - In the air, the target speed is at least your current horizontal speed, so momentum carries. `Plunge` keeps the horizontal velocity.
+  - **Bevy quirk (workaround):** frustum culling hid the posed humanoid meshes mid-roll even though their transforms were correct (verified at runtime). All humanoid and weapon meshes therefore get `NoFrustumCulling`. The root cause hasn't been found; it may be Bevy visibility caching combined with child transforms that change every frame. Revisit with real models.
+  - **The combat autopilot now also tests** a running attack (sprinting from z=4.4 at 12.7 s, tap at 13.15 s, 26 damage) and a walking jump attack (walking from z=4 and jumping at 14.7 s, 36 damage, breaks the dummy). Run it for 17 s.
+- **N14 (2026-11-14) — possible improvement:** small rubble (for example the stone at (-0.5, 4.98)) lifts the capsule so it's briefly airborne, so a sprint attack over it becomes a jump attack. Consider a step-up/step-offset in the controller, treating short drops (under about 0.25 m) as grounded.

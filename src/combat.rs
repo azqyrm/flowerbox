@@ -1,19 +1,24 @@
 //! Combat: sword hit detection, hit feedback (hitstop, camera shake) and the training dummy.
 //!
 //! Hit detection doesn't use physics sensors. Each fixed tick of an attack's active phase,
-//! the blade (from `player::pose`, the same pose the animation shows) is swept between the
-//! previous and current tick in a few sub-steps, and a capsule along it is tested against
-//! colliders with a [`Hurtbox`]. Each swing (`PlayerAction::serial`) hits a target once.
+//! the blade — the [`Weapon`] in the humanoid's right hand, posed by the shared animation
+//! (`humanoid::anim::action_pose` + forward kinematics, exactly what's on screen) — is swept
+//! between the previous and current tick, and a capsule along it is tested against colliders
+//! with a [`Hurtbox`]. Each swing (`CharacterAction::serial`) hits a target once. Works for any
+//! armed humanoid character, not just the player.
 
 use std::f32::consts::FRAC_PI_2;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::player::action::{ActionKind, ActionPhase, ActiveAction, PlayerAction};
-use crate::player::pose::{arm_pose, blade_segment, damage_multiplier};
-use crate::player::stats::{DamageMessage, DamageTaken, Health};
-use crate::player::{Player, PlayerSystems};
+use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
+use crate::character::CharacterSystems;
+use crate::character::stats::{DamageMessage, DamageTaken, Health};
+use crate::humanoid::anim::action_pose;
+use crate::humanoid::pose::bone_character_transform;
+use crate::humanoid::{Bone, HumanoidRig, HumanoidSpec};
+use crate::player::Player;
 use crate::tuning::*;
 
 pub struct CombatPlugin;
@@ -23,7 +28,7 @@ impl Plugin for CombatPlugin {
         app.init_resource::<Hitstop>()
             .init_resource::<CameraShake>()
             .add_systems(Startup, spawn_dummy)
-            .add_systems(FixedUpdate, sword_hits.in_set(PlayerSystems::Combat))
+            .add_systems(FixedUpdate, sword_hits.in_set(CharacterSystems::Combat))
             .add_systems(Update, (hit_feedback, run_hitstop, dummy_react, dummy_animate).chain());
     }
 }
@@ -51,11 +56,45 @@ pub struct CameraShake {
     pub trauma: f32,
 }
 
-/// Blade capsule in world space for the given action state.
-pub fn blade_world(player_tf: &Transform, action: &ActiveAction) -> (Vec3, Vec3) {
-    let (a, b) = blade_segment(arm_pose(Some(action)));
-    let to_root = |p: Vec3| player_tf.transform_point(p - Vec3::Y * PLAYER_HALF_HEIGHT);
-    (to_root(a), to_root(b))
+/// The weapon a character holds in its right hand. The blade runs along the hand bone's +Y.
+#[derive(Component, Clone, Debug)]
+pub struct Weapon {
+    /// Blade span along the hand's +Y (crossguard → tip), metres.
+    pub blade_start: f32,
+    pub blade_end: f32,
+    pub base_damage: f32,
+}
+
+impl Weapon {
+    /// Placeholder stats until Phase 7 (items) provides them.
+    pub fn longsword() -> Self {
+        Self { blade_start: 0.13, blade_end: 1.03, base_damage: WEAPON_BASE_DAMAGE }
+    }
+}
+
+/// Damage multiplier of an attacking action (None = this action doesn't hit).
+pub fn damage_multiplier(a: &ActiveAction) -> Option<f32> {
+    match a.kind {
+        ActionKind::LightAttack(_) => Some(LIGHT_DAMAGE_MULT),
+        ActionKind::RunningAttack => Some(RUN_ATTACK_DAMAGE_MULT),
+        ActionKind::HeavyAttack => Some(HEAVY_DAMAGE_MULT + (HEAVY_FULL_CHARGE_MULT - HEAVY_DAMAGE_MULT) * a.charge),
+        ActionKind::JumpAttack => Some(JUMP_ATTACK_DAMAGE_MULT),
+        _ => None,
+    }
+}
+
+/// Blade (crossguard, tip) in world space for the given action state.
+pub fn blade_world(
+    tf: &Transform,
+    spec: &HumanoidSpec,
+    rig: &HumanoidRig,
+    weapon: &Weapon,
+    action: &ActiveAction,
+) -> Option<(Vec3, Vec3)> {
+    let (pose, _) = action_pose(action)?;
+    let hand = bone_character_transform(spec, &pose, rig.root_height, Bone::HandR);
+    let world = |along: f32| tf.transform_point(hand.transform_point(Vec3::Y * along));
+    Some((world(weapon.blade_start), world(weapon.blade_end)))
 }
 
 fn sword_hits(
@@ -63,16 +102,15 @@ fn sword_hits(
     spatial: SpatialQuery,
     hurtboxes: Query<(), With<Hurtbox>>,
     mut damage: MessageWriter<DamageMessage>,
-    mut players: Query<(Entity, &Transform, &PlayerAction, Option<&mut SwingHits>), With<Player>>,
+    mut attackers: Query<(Entity, &Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &Weapon, Option<&mut SwingHits>)>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    for (entity, tf, action, hits) in &mut players {
-        let Some(hits) = hits else {
+    for (entity, tf, action, spec, rig, weapon, hits) in &mut attackers {
+        let Some(mut hits) = hits else {
             commands.entity(entity).insert(SwingHits::default());
             continue;
         };
-        let mut hits = hits;
         if hits.serial != action.serial {
             *hits = SwingHits { serial: action.serial, hit: vec![] };
         }
@@ -89,12 +127,12 @@ fn sword_hits(
         for i in 0..=steps {
             let mut sample = cur;
             sample.elapsed = from + (cur.elapsed - from) * i as f32 / steps as f32;
-            let (a, b) = blade_world(tf, &sample);
+            let Some((a, b)) = blade_world(tf, spec, rig, weapon, &sample) else { continue };
             let blade = Collider::capsule_endpoints(BLADE_HIT_RADIUS, a, b);
             for target in spatial.shape_intersections(&blade, Vec3::ZERO, Quat::IDENTITY, &filter) {
                 if hurtboxes.contains(target) && !hits.hit.contains(&target) {
                     hits.hit.push(target);
-                    let amount = (WEAPON_BASE_DAMAGE * mult).round();
+                    let amount = (weapon.base_damage * mult).round();
                     info!("hit {target} with {:?} for {amount}", cur.kind);
                     damage.write(DamageMessage { target, amount, from: Some(tf.translation) });
                 }
@@ -107,7 +145,7 @@ fn sword_hits(
 fn hit_feedback(
     mut taken: MessageReader<DamageTaken>,
     hurtboxes: Query<(), With<Hurtbox>>,
-    player: Query<&PlayerAction, With<Player>>,
+    player: Query<&CharacterAction, With<Player>>,
     mut hitstop: ResMut<Hitstop>,
     mut shake: ResMut<CameraShake>,
 ) {
@@ -117,7 +155,7 @@ fn hit_feedback(
         }
         let heavy = player
             .iter()
-            .any(|a| matches!(a.current.map(|c| c.kind), Some(ActionKind::HeavyAttack | ActionKind::JumpAttack)));
+            .any(|a| matches!(a.current.map(|c| c.kind), Some(ActionKind::HeavyAttack | ActionKind::JumpAttack | ActionKind::RunningAttack)));
         let (stop, trauma) = if heavy { (HITSTOP_HEAVY, SHAKE_HEAVY) } else { (HITSTOP_LIGHT, SHAKE_LIGHT) };
         hitstop.remaining = hitstop.remaining.max(stop);
         shake.trauma = (shake.trauma + trauma).min(1.0);

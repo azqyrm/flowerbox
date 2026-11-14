@@ -8,7 +8,8 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use leafwing_input_manager::prelude::*;
 
 use crate::camera::ThirdPersonCamera;
-use crate::player::action::ActionRequest;
+use crate::character::{ActionIntent, MoveIntent};
+use crate::character::action::ActionRequest;
 use crate::tuning::*;
 
 pub struct InputPlugin;
@@ -57,22 +58,12 @@ pub fn default_input_map() -> InputMap<Action> {
     .with_dual_axis(Action::Look, MouseMove::default())
 }
 
-/// Per-frame input already translated into gameplay terms. Lives on the player entity.
+/// Player-only input state (button timings). Gameplay reads the generic
+/// [`MoveIntent`] / [`ActionIntent`] that `gather_player_input` fills from it.
 #[derive(Component, Default, Debug)]
 pub struct PlayerInput {
-    /// World-space, camera-relative, horizontal move direction (length 0..=1).
-    pub move_dir: Vec3,
-    pub sprint: bool,
-    /// Seconds left in which a jump press is still honoured (input buffer).
-    pub jump_buffer: f32,
     /// How long Shift has been held (for tap-vs-hold).
     pub dodge_held: f32,
-    /// Action waiting to start (input buffer). Consumed by `player::action`.
-    pub buffered: Option<ActionRequest>,
-    /// Seconds before `buffered` expires.
-    pub buffer_left: f32,
-    /// LMB is held (and the press began while the cursor was grabbed). Keeps a heavy charging.
-    pub attack_pressed: bool,
     pub attack: AttackTracker,
 }
 
@@ -115,19 +106,12 @@ impl AttackTracker {
     }
 }
 
-impl PlayerInput {
-    /// Queue an action request; it stays valid for `INPUT_BUFFER` seconds.
-    pub fn buffer(&mut self, request: ActionRequest) {
-        self.buffered = Some(request);
-        self.buffer_left = INPUT_BUFFER;
-    }
-}
-
 /// `FLOWERBOX_AUTOPILOT=...` makes the player act on its own (automated testing, see ROADMAP N7, N12).
+/// Scripts are defined in `debug.rs`.
 #[derive(Resource, Default)]
 pub struct Autopilot {
-    /// Use the default walk/jump script in `gather_player_input`.
-    pub walk_scripted: bool,
+    /// Scripted movement: (time, dt) -> (world direction, sprint, jump pressed).
+    pub movement: Option<fn(f32, f32) -> (Vec3, bool, bool)>,
     /// Scripted attack button: (time, dt) -> (pressed, just_pressed, just_released).
     pub attack_button: Option<fn(f32, f32) -> (bool, bool, bool)>,
 }
@@ -137,18 +121,37 @@ fn gather_player_input(
     autopilot: Option<Res<Autopilot>>,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     cam: Query<&ThirdPersonCamera>,
-    mut players: Query<(&ActionState<Action>, &mut PlayerInput)>,
+    mut players: Query<(&ActionState<Action>, &mut PlayerInput, &mut MoveIntent, &mut ActionIntent)>,
 ) {
     let yaw = cam.iter().next().map_or(0.0, |c| c.yaw);
     // Camera-relative basis on the ground plane (camera looks along -Z at yaw 0).
     let forward = -Vec3::new(yaw.sin(), 0.0, yaw.cos());
     let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
     let dt = time.delta_secs();
+    let t = time.elapsed_secs();
 
-    for (actions, mut input) in &mut players {
+    for (actions, mut input, mut movement, mut intent) in &mut players {
+        intent.tick(dt);
+
+        // Movement: WASD relative to the camera (or the autopilot's script).
         let stick = actions.clamped_axis_pair(&Action::Move);
+        let mut dir = (right * stick.x + forward * stick.y).clamp_length_max(1.0);
         let mut jump = actions.just_pressed(&Action::Jump);
-        input.move_dir = (right * stick.x + forward * stick.y).clamp_length_max(1.0);
+        let mut scripted_sprint = None;
+        if let Some(script) = autopilot.as_ref().and_then(|a| a.movement) {
+            let (d, sprint, j) = script(t, dt);
+            (dir, jump, scripted_sprint) = (d, j, Some(sprint));
+        }
+        movement.dir = dir;
+        movement.jump_buffer = if jump { JUMP_BUFFER } else { (movement.jump_buffer - dt).max(0.0) };
+
+        // Shift: a short tap rolls on release, holding sprints.
+        if actions.just_released(&Action::DodgeSprint) && is_dodge_tap(input.dodge_held) {
+            intent.buffer(ActionRequest::Roll);
+        }
+        input.dodge_held = if actions.pressed(&Action::DodgeSprint) { input.dodge_held + dt } else { 0.0 };
+        movement.sprint = scripted_sprint.unwrap_or(input.dodge_held >= SPRINT_HOLD_THRESHOLD);
+
         // Attack button. Ignored while the cursor is free, so the click that re-grabs it
         // doesn't swing the sword. The autopilot may script the button instead.
         let mut attack = (
@@ -157,39 +160,14 @@ fn gather_player_input(
             actions.just_released(&Action::Attack),
         );
         let mut grabbed = cursor_grabbed(&cursor);
-        if let Some(ap) = &autopilot {
-            if let Some(script) = ap.attack_button {
-                attack = script(time.elapsed_secs(), dt);
-                grabbed = true;
-            }
+        if let Some(script) = autopilot.as_ref().and_then(|a| a.attack_button) {
+            attack = script(t, dt);
+            grabbed = true;
         }
         if let Some(request) = input.attack.update(attack.0, attack.1, attack.2, grabbed, dt) {
-            input.buffer(request);
+            intent.buffer(request);
         }
-        input.attack_pressed = attack.0 && input.attack.is_holding();
-
-        if autopilot.as_ref().is_some_and(|a| a.walk_scripted) {
-            // Walk along world -Z (toward the center, then the far wall), independent of the
-            // camera so FLOWERBOX_CAM can film from any side.
-            let t = time.elapsed_secs();
-            // Stands still from 10.8 s to 11.6 s so the script can test the backstep.
-            input.move_dir = if (10.8..11.6).contains(&t) { Vec3::ZERO } else { Vec3::NEG_Z };
-            jump = (t % 2.0) < dt && t > 1.0;
-        }
-
-        input.jump_buffer = if jump { JUMP_BUFFER } else { (input.jump_buffer - dt).max(0.0) };
-
-        input.buffer_left = (input.buffer_left - dt).max(0.0);
-        if input.buffer_left == 0.0 {
-            input.buffered = None;
-        }
-
-        // Shift: a short tap rolls on release, holding sprints.
-        if actions.just_released(&Action::DodgeSprint) && is_dodge_tap(input.dodge_held) {
-            input.buffer(ActionRequest::Roll);
-        }
-        input.dodge_held = if actions.pressed(&Action::DodgeSprint) { input.dodge_held + dt } else { 0.0 };
-        input.sprint = input.dodge_held >= SPRINT_HOLD_THRESHOLD;
+        intent.attack_held = attack.0 && input.attack.is_holding();
     }
 }
 
