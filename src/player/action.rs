@@ -31,6 +31,8 @@ pub enum ActionKind {
     Backstep,
     /// Combo index, 0-based.
     LightAttack(u8),
+    /// Holding LMB: the heavy attack winds up until release or full charge.
+    HeavyCharge,
     HeavyAttack,
     JumpAttack,
     DrinkAle,
@@ -57,6 +59,8 @@ pub enum ActionMovement {
     Locked,
     /// The action drives the horizontal velocity: `dir * speed(elapsed)`.
     Scripted(fn(f32) -> f32),
+    /// Jump attack: hang in the air during startup, then dive at `PLUNGE_SPEED`.
+    Plunge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,12 +145,23 @@ pub fn action_def(kind: ActionKind) -> ActionDef {
             movement: ActionMovement::Locked,
             ground: GroundRule::Ground,
         },
+        HeavyCharge => ActionDef {
+            startup: 0.0,
+            // Never ends by itself: `release_heavy_charge` turns it into HeavyAttack.
+            active: HEAVY_CHARGE_MAX + 10.0,
+            recovery: 0.0,
+            cancel: 0.0, // can roll out of a charge
+            stamina_cost: HEAVY_COST,
+            iframes: None,
+            movement: ActionMovement::Slowed(HEAVY_CHARGE_MOVE_FACTOR),
+            ground: GroundRule::Ground,
+        },
         HeavyAttack => ActionDef {
             startup: HEAVY_STARTUP,
             active: HEAVY_ACTIVE,
             recovery: HEAVY_RECOVERY,
             cancel: HEAVY_CANCEL,
-            stamina_cost: HEAVY_COST,
+            stamina_cost: 0.0, // paid when the charge starts
             iframes: None,
             movement: ActionMovement::Locked,
             ground: GroundRule::Ground,
@@ -160,7 +175,7 @@ pub fn action_def(kind: ActionKind) -> ActionDef {
                 cancel: total,
                 stamina_cost: JUMP_ATTACK_COST,
                 iframes: None,
-                movement: ActionMovement::Slowed(0.3),
+                movement: ActionMovement::Plunge,
                 ground: GroundRule::Air,
             }
         }
@@ -208,11 +223,13 @@ pub struct ActiveAction {
     pub elapsed: f32,
     /// World-space horizontal direction locked in at start (roll direction, etc.).
     pub dir: Vec3,
+    /// Heavy attack charge, 0..=1.
+    pub charge: f32,
 }
 
 impl ActiveAction {
     pub fn new(kind: ActionKind, dir: Vec3) -> Self {
-        Self { kind, def: action_def(kind), elapsed: 0.0, dir }
+        Self { kind, def: action_def(kind), elapsed: 0.0, dir, charge: 0.0 }
     }
 
     pub fn phase(&self) -> ActionPhase {
@@ -241,15 +258,23 @@ impl ActiveAction {
 #[derive(Component, Debug, Default)]
 pub struct PlayerAction {
     pub current: Option<ActiveAction>,
+    /// Increments every time an action starts; lets combat tell swings apart.
+    pub serial: u32,
 }
 
 impl PlayerAction {
+    /// Starts `action` now, replacing whatever was running.
+    pub fn start(&mut self, action: ActiveAction) {
+        self.current = Some(action);
+        self.serial = self.serial.wrapping_add(1);
+    }
+
     /// Starts an action immediately, interrupting anything (used for Hurt / Dead).
     pub fn force(&mut self, kind: ActionKind, dir: Vec3) {
         if matches!(self.current, Some(a) if a.kind == ActionKind::Dead) {
             return; // nothing interrupts death
         }
-        self.current = Some(ActiveAction::new(kind, dir));
+        self.start(ActiveAction::new(kind, dir));
     }
 
     pub fn movement(&self) -> ActionMovement {
@@ -278,7 +303,7 @@ pub fn resolve_request(
             Some(ActionKind::LightAttack(n)) if n + 1 < LIGHT_COMBO_MAX => ActionKind::LightAttack(n + 1),
             _ => ActionKind::LightAttack(0),
         },
-        ActionRequest::HeavyAttack => ActionKind::HeavyAttack,
+        ActionRequest::HeavyAttack => ActionKind::HeavyCharge,
         ActionRequest::DrinkAle => ActionKind::DrinkAle,
     };
     let def = action_def(kind);
@@ -315,8 +340,21 @@ pub(super) fn start_buffered_action(
             ctrl.facing = f32::atan2(-dir.x, -dir.z);
         }
         stamina.spend(action_def(kind).stamina_cost);
-        action.current = Some(ActiveAction::new(kind, dir));
+        action.start(ActiveAction::new(kind, dir));
         input.buffered = None;
+    }
+}
+
+/// Turns a heavy charge into the heavy swing when LMB is released or the charge is full.
+pub(super) fn release_heavy_charge(mut q: Query<(&mut PlayerAction, &PlayerInput)>) {
+    for (mut action, input) in &mut q {
+        let Some(cur) = action.current else { continue };
+        if cur.kind != ActionKind::HeavyCharge || (input.attack_pressed && cur.elapsed < HEAVY_CHARGE_MAX) {
+            continue;
+        }
+        let mut heavy = ActiveAction::new(ActionKind::HeavyAttack, cur.dir);
+        heavy.charge = (cur.elapsed / HEAVY_CHARGE_MAX).clamp(0.0, 1.0);
+        action.start(heavy);
     }
 }
 
@@ -331,6 +369,13 @@ pub(super) fn tick_action(
         let mut iframes = false;
         if let Some(cur) = action.current.as_mut() {
             cur.elapsed += dt;
+            // Jump attack: landing ends the plunge; the slam stays active briefly.
+            // Never skip the swing itself (its hit sweep would be skipped too).
+            let swing_done = cur.elapsed >= cur.def.startup + JUMP_ATTACK_STRIKE;
+            if cur.kind == ActionKind::JumpAttack && cur.phase() == ActionPhase::Active && ctrl.grounded && swing_done {
+                let slam_start = cur.def.startup + cur.def.active - JUMP_SLAM_TIME;
+                cur.elapsed = cur.elapsed.max(slam_start);
+            }
             iframes = cur.in_iframes();
             if cur.phase() == ActionPhase::Done {
                 if cur.kind == ActionKind::Dead {
@@ -421,6 +466,7 @@ mod tests {
             "light attack in the air = jump attack"
         );
         assert_eq!(resolve_request(None, ActionRequest::HeavyAttack, false, true, &full), None, "no heavy in the air");
+        assert_eq!(resolve_request(None, ActionRequest::HeavyAttack, true, true, &full), Some(ActionKind::HeavyCharge));
         assert_eq!(resolve_request(None, ActionRequest::Roll, true, true, &empty), None, "no stamina");
         assert_eq!(resolve_request(None, ActionRequest::Roll, true, false, &full), Some(ActionKind::Backstep), "roll standing still = backstep");
         assert_eq!(resolve_request(None, ActionRequest::Roll, false, false, &full), None, "no backstep in the air");
@@ -433,7 +479,7 @@ mod tests {
         let d = action_def(ActionKind::DrinkAle);
         let drinking = at(ActionKind::DrinkAle, d.total() - 0.01);
         assert_eq!(resolve_request(Some(&drinking), ActionRequest::Roll, true, true, &s), None);
-        let mut pa = PlayerAction { current: Some(at(ActionKind::Dead, 0.0)) };
+        let mut pa = PlayerAction { current: Some(at(ActionKind::Dead, 0.0)), serial: 0 };
         pa.force(ActionKind::Hurt, Vec3::ZERO);
         assert_eq!(pa.current.unwrap().kind, ActionKind::Dead);
     }

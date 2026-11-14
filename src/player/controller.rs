@@ -4,7 +4,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::action::{ActionMovement, PlayerAction};
+use super::action::{ActionMovement, ActionPhase, PlayerAction};
 use super::stats::Stamina;
 use crate::input::PlayerInput;
 use crate::tuning::*;
@@ -75,6 +75,9 @@ fn move_character(
                 ctrl.sprinting = false;
                 let a = action.current.expect("scripted movement needs an action");
                 (Vec3::ZERO, a.dir * speed(a.elapsed))
+            }            ActionMovement::Plunge => {
+                ctrl.sprinting = false;
+                (Vec3::ZERO, approach(horizontal, Vec3::ZERO, AIR_ACCEL * dt))
             }
         };
 
@@ -93,6 +96,14 @@ fn move_character(
             vy = vy.max(-2.0); // keep pressing into the floor so contact is detected each tick
         } else {
             ctrl.coyote = (ctrl.coyote - dt).max(0.0);
+        }
+        // Jump attack: hover during the wind-up, then dive.
+        if let (ActionMovement::Plunge, Some(a)) = (action.movement(), action.current) {
+            match a.phase() {
+                ActionPhase::Startup => vy = 0.0,
+                ActionPhase::Active => vy = -PLUNGE_SPEED,
+                _ => {}
+            }
         }
         if free && input.jump_buffer > 0.0 && ctrl.coyote > 0.0 {
             vy = (2.0 * GRAVITY * JUMP_HEIGHT).sqrt();

@@ -2,6 +2,7 @@
 
 pub mod action;
 pub mod controller;
+pub mod pose;
 pub mod stats;
 pub mod visuals;
 
@@ -12,23 +13,33 @@ use crate::input::{PlayerInput, default_input_map};
 use crate::tuning::*;
 use action::PlayerAction;
 use controller::CharacterController;
-use stats::{DamageMessage, Health, Stamina};
+use stats::{DamageMessage, DamageTaken, Health, Stamina};
 
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<DamageMessage>()
+            .add_message::<DamageTaken>()
             .configure_sets(
                 FixedUpdate,
-                (PlayerSystems::Damage, PlayerSystems::Actions, PlayerSystems::Stats, PlayerSystems::Movement).chain(),
+                (
+                    PlayerSystems::Damage,
+                    PlayerSystems::Actions,
+                    PlayerSystems::Combat,
+                    PlayerSystems::Stats,
+                    PlayerSystems::Movement,
+                )
+                    .chain(),
             )
             .add_systems(Startup, spawn_player)
             .add_systems(
                 FixedUpdate,
                 (
                     stats::apply_damage.in_set(PlayerSystems::Damage),
-                    (action::start_buffered_action, action::tick_action).chain().in_set(PlayerSystems::Actions),
+                    (action::start_buffered_action, action::release_heavy_charge, action::tick_action)
+                        .chain()
+                        .in_set(PlayerSystems::Actions),
                     stats::update_stamina.in_set(PlayerSystems::Stats),
                 ),
             )
@@ -36,11 +47,12 @@ impl Plugin for PlayerPlugin {
     }
 }
 
-/// Fixed-timestep order for player logic: damage → actions → stats → movement.
+/// Fixed-timestep order for player logic: damage → actions → combat (hit detection) → stats → movement.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PlayerSystems {
     Damage,
     Actions,
+    Combat,
     Stats,
     Movement,
 }
@@ -52,7 +64,12 @@ pub struct Player;
 #[derive(Component)]
 pub struct PlayerModel;
 
-/// Where the held weapon attaches. Phase 7 swaps the weapon mesh under this entity.
+/// Right shoulder pivot; rotating it swings the arm (see `pose::arm_pose`).
+#[derive(Component)]
+pub struct RightShoulder;
+
+/// Where the held weapon attaches (child of the shoulder, at the hand). Its rotation is the
+/// grip. Phase 7 swaps the weapon mesh under this entity.
 #[derive(Component)]
 pub struct RightHandSocket;
 
@@ -117,19 +134,30 @@ fn spawn_player(
                 part("Head", Sphere::new(0.14).into(), &skin, Transform::from_xyz(0.0, 1.66, 0.0));
                 part("Hair", Sphere::new(0.145).into(), &leather, Transform::from_xyz(0.0, 1.69, 0.025));
                 part("Eyes", Cuboid::new(0.14, 0.03, 0.02).into(), &dark, Transform::from_xyz(0.0, 1.68, -0.13));
-                for x in [-0.33, 0.33] {
-                    part("Arm", Capsule3d::new(0.07, 0.45).into(), &tunic, Transform::from_xyz(x, 1.15, 0.0));
-                    part("Hand", Sphere::new(0.07).into(), &skin, Transform::from_xyz(x, 0.85, -0.02));
-                }
+                part("Arm", Capsule3d::new(0.07, 0.45).into(), &tunic, Transform::from_xyz(-0.33, 1.15, 0.0));
+                part("Hand", Sphere::new(0.07).into(), &skin, Transform::from_xyz(-0.33, 0.85, -0.02));
 
-                // Right hand socket + longsword. Sword rests pointing forward and down.
-                m.spawn((
-                    Name::new("Right Hand Socket"),
-                    RightHandSocket,
-                    Transform::from_xyz(0.33, 0.85, -0.02).with_rotation(Quat::from_euler(EulerRot::XYZ, -1.95, 0.0, -0.15)),
+                // Right arm: shoulder pivot → arm + hand → sword socket (grip).
+                let rest = pose::rest();
+                let mut shoulder = m.spawn((
+                    Name::new("Right Shoulder"),
+                    RightShoulder,
+                    Transform::from_translation(pose::SHOULDER).with_rotation(rest.shoulder),
                     Visibility::default(),
-                ))
-                .with_children(|s| {
+                ));
+                shoulder.with_children(|sh| {
+                    let mut limb = |name: &'static str, mesh: Mesh, material: &Handle<StandardMaterial>, t: Transform| {
+                        sh.spawn((Name::new(name), Mesh3d(meshes.add(mesh)), MeshMaterial3d(material.clone()), t));
+                    };
+                    limb("Arm", Capsule3d::new(0.07, 0.45).into(), &tunic, Transform::from_xyz(0.0, -0.27, 0.0));
+                    limb("Hand", Sphere::new(0.07).into(), &skin, Transform::from_xyz(0.0, -pose::ARM_LENGTH, 0.0));
+                    sh.spawn((
+                        Name::new("Right Hand Socket"),
+                        RightHandSocket,
+                        Transform::from_xyz(0.0, -pose::ARM_LENGTH, 0.0).with_rotation(rest.grip),
+                        Visibility::default(),
+                    ))
+                    .with_children(|s| {
                     // Blade extends along local +Y from the grip.
                     let mut sword = |name: &'static str, mesh: Mesh, material: &Handle<StandardMaterial>, y: f32| {
                         s.spawn((Name::new(name), Mesh3d(meshes.add(mesh)), MeshMaterial3d(material.clone()), Transform::from_xyz(0.0, y, 0.0)));
@@ -138,6 +166,7 @@ fn spawn_player(
                     sword("Grip", Cylinder::new(0.022, 0.2).into(), &leather, 0.0);
                     sword("Crossguard", Cuboid::new(0.22, 0.035, 0.04).into(), &steel, 0.11);
                     sword("Blade", Cuboid::new(0.06, 0.9, 0.015).into(), &steel, 0.58);
+                    });
                 });
 
                 m.spawn((

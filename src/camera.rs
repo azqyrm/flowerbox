@@ -12,6 +12,7 @@ use bevy::transform::TransformSystems;
 use bevy::window::{CursorOptions, PrimaryWindow};
 use leafwing_input_manager::prelude::*;
 
+use crate::combat::CameraShake;
 use crate::input::{Action, cursor_grabbed};
 use crate::player::Player;
 use crate::tuning::*;
@@ -61,6 +62,8 @@ fn spawn_camera(mut commands: Commands) {
 
 fn follow_camera(
     time: Res<Time>,
+    real: Res<Time<Real>>,
+    mut shake: ResMut<CameraShake>,
     spatial: SpatialQuery,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     player: Single<(Entity, &Transform, &ActionState<Action>), (With<Player>, Without<ThirdPersonCamera>)>,
@@ -97,6 +100,14 @@ fn follow_camera(
             cam.current_distance + (target - cam.current_distance) * (1.0 - (-6.0 * time.delta_secs()).exp())
         };
 
+        // Camera shake (trauma², smooth pseudo-noise); decays in real time so hitstop doesn't freeze it.
+        let t = real.elapsed_secs();
+        let k = shake.trauma * shake.trauma * 0.12;
+        let jitter = Vec3::new((t * 47.0).sin() + (t * 31.0).cos() * 0.5, (t * 53.0).cos() + (t * 23.0).sin() * 0.5, 0.0) * k;
+        shake.trauma = (shake.trauma - real.delta_secs() * 2.5).max(0.0);
+
         *tf = Transform::from_translation(focus + dir * cam.current_distance).looking_at(focus, Vec3::Y);
+        let offset = tf.rotation * jitter;
+        tf.translation += offset;
     }
 }

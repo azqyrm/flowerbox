@@ -9,12 +9,17 @@
 //!   captures at a game time instead (useful with the autopilot timeline). `FLOWERBOX_OVERLAY=1` shows the overlay at start.
 //! - `FLOWERBOX_AUTOPILOT=1` → walks forward, jumps every 2 s and runs a scripted action/damage
 //!   timeline (see `autopilot_script`); position and action changes are logged.
+//! - `FLOWERBOX_AUTOPILOT=combat` → stands 1.5 m in front of the training dummy and drives the
+//!   real attack-button logic through a timeline (see `combat_attack_button`). ROADMAP N12.
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::time::common_conditions::on_timer;
 
+use crate::combat::{Dummy, blade_world};
 use crate::input::{Autopilot, PlayerInput};
+use crate::player::action::ActionPhase;
+use crate::player::pose::damage_multiplier;
 use crate::player::Player;
 use crate::player::action::{ActionKind, ActionRequest, PlayerAction};
 use crate::player::controller::CharacterController;
@@ -36,8 +41,12 @@ impl Plugin for DebugPlugin {
             app.insert_resource(AutoScreenshot { path, frame: 0, at, at_time, taken_frame: None })
                 .add_systems(Update, auto_screenshot);
         }
-        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() {
-            app.insert_resource(Autopilot)
+        app.add_systems(Update, draw_blade_hitbox);
+        if std::env::var("FLOWERBOX_AUTOPILOT").as_deref() == Ok("combat") {
+            app.insert_resource(Autopilot { walk_scripted: false, attack_button: Some(combat_attack_button) })
+                .add_systems(Update, (combat_script, log_dummy));
+        } else if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() {
+            app.insert_resource(Autopilot { walk_scripted: true, ..default() })
                 .init_resource::<AirborneTicks>()
                 .add_systems(FixedLast, count_airborne)
                 .add_systems(
@@ -82,6 +91,7 @@ fn toggle_overlay(keys: Res<ButtonInput<KeyCode>>, mut q: Query<&mut Visibility,
 }
 
 fn update_overlay(
+    dummies: Query<&Health, (With<Dummy>, Without<Player>)>,
     player: Query<(&PlayerAction, &PlayerInput, &Health, &Stamina, &CharacterController, Has<Invulnerable>), With<Player>>,
     mut text: Query<(&mut Text, &Visibility), With<DebugOverlay>>,
 ) {
@@ -117,7 +127,7 @@ fn update_overlay(
             None => "-".into(),
         };
         text.0 = format!(
-            "[F3] DEBUG\n{action_line}\nbuffer: {buffer}\nHP {:.0}/{:.0}   ST {:.0}/{:.0}{}\n{}grounded {}  speed {:.1} m/s",
+            "[F3] DEBUG\n{action_line}\nbuffer: {buffer}\nHP {:.0}/{:.0}   ST {:.0}/{:.0}{}\n{}grounded {}  speed {:.1} m/s\nLMB held {:.2}s{}\ndummy HP {}",
             hp.current,
             hp.max,
             st.current,
@@ -126,6 +136,9 @@ fn update_overlay(
             if invuln { "** INVULNERABLE **\n" } else { "" },
             ctrl.grounded,
             Vec2::new(ctrl.velocity.x, ctrl.velocity.z).length(),
+            input.attack.held,
+            action.current.map_or(String::new(), |a| if a.charge > 0.0 { format!("  charge {:.0}%", a.charge * 100.0) } else { String::new() }),
+            dummies.iter().next().map_or("-".into(), |h| format!("{:.0}/{:.0}", h.current, h.max)),
         );
     }
 }
@@ -174,6 +187,26 @@ fn show_iframe_shell(
     }
 }
 
+/// While the overlay is on, draws the blade hitbox in red during an attack's active frames.
+fn draw_blade_hitbox(
+    mut gizmos: Gizmos,
+    overlay: Query<&Visibility, With<DebugOverlay>>,
+    player: Query<(&Transform, &PlayerAction), With<Player>>,
+) {
+    if !overlay.iter().any(|v| *v != Visibility::Hidden) {
+        return;
+    }
+    for (tf, action) in &player {
+        let Some(cur) = action.current else { continue };
+        if damage_multiplier(&cur).is_none() || cur.phase() != ActionPhase::Active {
+            continue;
+        }
+        let (a, b) = blade_world(tf, &cur);
+        gizmos.line(a, b, Color::srgb(1.0, 0.1, 0.1));
+        gizmos.sphere(Isometry3d::from_translation(b), BLADE_HIT_RADIUS, Color::srgb(1.0, 0.3, 0.1));
+    }
+}
+
 // ── Debug keys (debug builds only) ───────────────────────────────────────
 
 fn debug_keys(
@@ -183,7 +216,7 @@ fn debug_keys(
 ) {
     let Ok((entity, mut input)) = player.single_mut() else { return };
     if keys.just_pressed(KeyCode::KeyH) {
-        damage.write(DamageMessage { target: entity, amount: 15.0 });
+        damage.write(DamageMessage { target: entity, amount: 15.0, from: None });
     }
     let requests = [
         (KeyCode::Digit1, ActionRequest::Roll),
@@ -250,11 +283,11 @@ fn autopilot_script(
     }
     if crossed(1.2) {
         info!("autopilot: 10 damage during roll");
-        damage.write(DamageMessage { target: entity, amount: 10.0 });
+        damage.write(DamageMessage { target: entity, amount: 10.0, from: None });
     }
     if crossed(2.5) {
         info!("autopilot: 10 damage while free");
-        damage.write(DamageMessage { target: entity, amount: 10.0 });
+        damage.write(DamageMessage { target: entity, amount: 10.0, from: None });
     }
     for t in [2.9, 3.25, 3.6] {
         if crossed(t) {
@@ -271,7 +304,7 @@ fn autopilot_script(
     }
     if crossed(7.5) {
         info!("autopilot: lethal damage");
-        damage.write(DamageMessage { target: entity, amount: 500.0 });
+        damage.write(DamageMessage { target: entity, amount: 500.0, from: None });
     }
 }
 
@@ -312,4 +345,52 @@ fn log_player(mut ticks: ResMut<AirborneTicks>, q: Query<(&Transform, &Character
         );
     }
     ticks.0 = 0;
+}
+
+// ── Combat autopilot (FLOWERBOX_AUTOPILOT=combat) ────────────────────────
+
+/// Attack button presses as (start, end) seconds. Expected (dummy has 120 HP):
+/// light ×3 (combo 0,1,2: 20 each) → partial heavy (~36) → jump attack (36, breaks the dummy)
+/// → dummy resets at ~8.7 s → fully charged heavy (40) → two light taps.
+const COMBAT_PRESSES: [(f32, f32); 8] =
+    [(2.0, 2.08), (2.35, 2.43), (2.7, 2.78), (3.8, 4.4), (5.62, 5.68), (9.0, 10.4), (11.4, 11.48), (11.85, 11.93)];
+/// Jump right before the jump-attack tap.
+const COMBAT_JUMP_AT: f32 = 5.5;
+
+fn combat_attack_button(t: f32, dt: f32) -> (bool, bool, bool) {
+    let mut out = (false, false, false);
+    for (start, end) in COMBAT_PRESSES {
+        let pressed = (start..end).contains(&t);
+        let was = (start..end).contains(&(t - dt));
+        out.0 |= pressed;
+        out.1 |= pressed && !was;
+        out.2 |= was && !pressed;
+    }
+    out
+}
+
+/// Puts the player 1.5 m in front of the dummy, facing it, and jumps once on cue.
+fn combat_script(
+    time: Res<Time>,
+    mut placed: Local<bool>,
+    mut last: Local<f32>,
+    mut player: Query<(&mut Transform, &mut PlayerInput), With<Player>>,
+) {
+    let Ok((mut tf, mut input)) = player.single_mut() else { return };
+    let (prev, now) = (*last, time.elapsed_secs());
+    *last = now;
+    if !*placed && now > 0.2 {
+        let (x, z) = DUMMY_POSITION;
+        tf.translation = Vec3::new(x, PLAYER_HALF_HEIGHT + 0.02, z + 1.5);
+        *placed = true;
+    }
+    if prev < COMBAT_JUMP_AT && now >= COMBAT_JUMP_AT {
+        input.jump_buffer = JUMP_BUFFER;
+    }
+}
+
+fn log_dummy(dummies: Query<&Health, (With<Dummy>, Changed<Health>)>) {
+    for h in &dummies {
+        info!("dummy HP {:.0}/{:.0}", h.current, h.max);
+    }
 }

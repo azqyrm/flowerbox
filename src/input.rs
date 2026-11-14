@@ -71,6 +71,48 @@ pub struct PlayerInput {
     pub buffered: Option<ActionRequest>,
     /// Seconds before `buffered` expires.
     pub buffer_left: f32,
+    /// LMB is held (and the press began while the cursor was grabbed). Keeps a heavy charging.
+    pub attack_pressed: bool,
+    pub attack: AttackTracker,
+}
+
+/// Tap-vs-hold logic of the attack button. Pure so it can be unit tested.
+#[derive(Default, Debug, Clone)]
+pub struct AttackTracker {
+    /// How long the current press has lasted.
+    pub held: f32,
+    /// The current press started while the game had the cursor (so it's a real attack press).
+    pub armed: bool,
+    heavy_sent: bool,
+}
+
+impl AttackTracker {
+    /// Feed one frame of button state; returns a request when one should be queued.
+    /// Tap (released before the threshold) = light, holding past the threshold = heavy (charge).
+    pub fn update(&mut self, pressed: bool, just_pressed: bool, just_released: bool, grabbed: bool, dt: f32) -> Option<ActionRequest> {
+        let mut request = None;
+        if just_pressed {
+            *self = Self { armed: grabbed, ..default() };
+        }
+        if self.armed && pressed && !just_pressed {
+            self.held += dt;
+            if self.held >= ATTACK_HOLD_THRESHOLD && !self.heavy_sent {
+                self.heavy_sent = true;
+                request = Some(ActionRequest::HeavyAttack);
+            }
+        }
+        if just_released {
+            if self.armed && !self.heavy_sent {
+                request = Some(ActionRequest::LightAttack);
+            }
+            *self = Self::default();
+        }
+        request
+    }
+
+    pub fn is_holding(&self) -> bool {
+        self.armed
+    }
 }
 
 impl PlayerInput {
@@ -81,13 +123,19 @@ impl PlayerInput {
     }
 }
 
-/// `FLOWERBOX_AUTOPILOT=1` makes the player walk on its own (for automated testing, see ROADMAP N7).
-#[derive(Resource)]
-pub struct Autopilot;
+/// `FLOWERBOX_AUTOPILOT=...` makes the player act on its own (automated testing, see ROADMAP N7, N12).
+#[derive(Resource, Default)]
+pub struct Autopilot {
+    /// Use the default walk/jump script in `gather_player_input`.
+    pub walk_scripted: bool,
+    /// Scripted attack button: (time, dt) -> (pressed, just_pressed, just_released).
+    pub attack_button: Option<fn(f32, f32) -> (bool, bool, bool)>,
+}
 
 fn gather_player_input(
     time: Res<Time>,
     autopilot: Option<Res<Autopilot>>,
+    cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     cam: Query<&ThirdPersonCamera>,
     mut players: Query<(&ActionState<Action>, &mut PlayerInput)>,
 ) {
@@ -101,7 +149,26 @@ fn gather_player_input(
         let stick = actions.clamped_axis_pair(&Action::Move);
         let mut jump = actions.just_pressed(&Action::Jump);
         input.move_dir = (right * stick.x + forward * stick.y).clamp_length_max(1.0);
-        if autopilot.is_some() {
+        // Attack button. Ignored while the cursor is free, so the click that re-grabs it
+        // doesn't swing the sword. The autopilot may script the button instead.
+        let mut attack = (
+            actions.pressed(&Action::Attack),
+            actions.just_pressed(&Action::Attack),
+            actions.just_released(&Action::Attack),
+        );
+        let mut grabbed = cursor_grabbed(&cursor);
+        if let Some(ap) = &autopilot {
+            if let Some(script) = ap.attack_button {
+                attack = script(time.elapsed_secs(), dt);
+                grabbed = true;
+            }
+        }
+        if let Some(request) = input.attack.update(attack.0, attack.1, attack.2, grabbed, dt) {
+            input.buffer(request);
+        }
+        input.attack_pressed = attack.0 && input.attack.is_holding();
+
+        if autopilot.as_ref().is_some_and(|a| a.walk_scripted) {
             // Walk along world -Z (toward the center, then the far wall), independent of the
             // camera so FLOWERBOX_CAM can film from any side.
             let t = time.elapsed_secs();
@@ -161,6 +228,34 @@ pub fn cursor_grabbed(cursor: &CursorOptions) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Simulates pressing for `hold` seconds at 60 fps; returns all requests produced.
+    fn press(tracker: &mut AttackTracker, hold: f32, grabbed: bool) -> Vec<ActionRequest> {
+        let dt = 1.0 / 60.0;
+        let mut out = vec![];
+        out.extend(tracker.update(true, true, false, grabbed, dt));
+        let mut t = 0.0;
+        while t < hold {
+            out.extend(tracker.update(true, false, false, true, dt));
+            t += dt;
+        }
+        out.extend(tracker.update(false, false, true, true, dt));
+        out
+    }
+
+    #[test]
+    fn attack_tap_is_light_hold_is_heavy() {
+        let mut t = AttackTracker::default();
+        assert_eq!(press(&mut t, 0.1, true), vec![ActionRequest::LightAttack]);
+        assert_eq!(press(&mut t, 0.6, true), vec![ActionRequest::HeavyAttack], "heavy fires once, no light on release");
+    }
+
+    #[test]
+    fn click_that_grabs_the_cursor_does_not_attack() {
+        let mut t = AttackTracker::default();
+        assert!(press(&mut t, 0.1, false).is_empty());
+        assert!(press(&mut t, 0.6, false).is_empty());
+    }
 
     #[test]
     fn short_shift_press_rolls_long_press_sprints() {

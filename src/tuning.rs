@@ -94,14 +94,15 @@ pub const LIGHT_CANCEL: f32 = 0.35;
 pub const LIGHT_COST: f32 = 15.0;
 pub const LIGHT_COMBO_MAX: u8 = 3;
 
-pub const HEAVY_STARTUP: f32 = 0.35;
+pub const HEAVY_STARTUP: f32 = 0.12; // short: the charge is the wind-up
 pub const HEAVY_ACTIVE: f32 = 0.15;
 pub const HEAVY_RECOVERY: f32 = 0.40;
 pub const HEAVY_CANCEL: f32 = 0.70;
 pub const HEAVY_COST: f32 = 30.0;
 
 pub const JUMP_ATTACK_STARTUP: f32 = 0.20;
-pub const JUMP_ATTACK_ACTIVE: f32 = 0.25;
+/// Max plunge time; the active phase ends early on landing (see JUMP_SLAM_TIME).
+pub const JUMP_ATTACK_ACTIVE: f32 = 1.0;
 pub const JUMP_ATTACK_RECOVERY: f32 = 0.35;
 pub const JUMP_ATTACK_COST: f32 = 25.0;
 
@@ -113,3 +114,36 @@ pub const DRINK_MOVE_FACTOR: f32 = 0.35;
 pub const HURT_DURATION: f32 = 0.45;
 /// Placeholder until Phase 6 (Hearth respawn): time on the floor before respawning.
 pub const DEAD_DURATION: f32 = 3.0;
+
+// ── Combat ───────────────────────────────────────────────────────────────
+/// LMB held at least this long = heavy attack (charging starts), shorter = light attack.
+pub const ATTACK_HOLD_THRESHOLD: f32 = 0.25;
+/// Extra charge time after the threshold until the heavy releases automatically.
+pub const HEAVY_CHARGE_MAX: f32 = 0.65;
+pub const HEAVY_CHARGE_MOVE_FACTOR: f32 = 0.3;
+/// Downward speed of the jump attack plunge (m/s).
+pub const PLUNGE_SPEED: f32 = 14.0;
+/// After landing, the jump attack's hitbox stays active this long (the slam).
+pub const JUMP_SLAM_TIME: f32 = 0.1;
+/// Duration of the jump attack's downward swing at the start of its active phase.
+pub const JUMP_ATTACK_STRIKE: f32 = 0.12;
+/// Placeholder until Phase 7 gives weapons stats: the longsword's base damage.
+pub const WEAPON_BASE_DAMAGE: f32 = 20.0;
+pub const LIGHT_DAMAGE_MULT: f32 = 1.0;
+pub const HEAVY_DAMAGE_MULT: f32 = 1.6;
+pub const HEAVY_FULL_CHARGE_MULT: f32 = 2.0;
+pub const JUMP_ATTACK_DAMAGE_MULT: f32 = 1.8;
+/// Radius of the capsule swept along the blade for hit detection (a little forgiving).
+pub const BLADE_HIT_RADIUS: f32 = 0.12;
+/// Game time is slowed to almost zero for this long (real seconds) when a hit lands.
+pub const HITSTOP_LIGHT: f32 = 0.06;
+pub const HITSTOP_HEAVY: f32 = 0.1;
+pub const HITSTOP_TIME_SCALE: f32 = 0.05;
+pub const SHAKE_LIGHT: f32 = 0.35;
+pub const SHAKE_HEAVY: f32 = 0.6;
+
+// ── Training dummy ───────────────────────────────────────────────────────
+pub const DUMMY_HP: f32 = 120.0;
+pub const DUMMY_POSITION: (f32, f32) = (0.0, 0.0);
+/// Seconds the broken dummy lies on the floor before it resets.
+pub const DUMMY_RESET_TIME: f32 = 3.0;

@@ -183,12 +183,12 @@ claude_ds/
 - [x] Test that damage during i-frames is ignored. Add a unit test for the timing windows.
 
 ### Phase 5 — Combat: light, heavy and jump attacks
-- [ ] Tap/hold detection on the attack action (threshold in `tuning.rs`)
-- [ ] Light combo chain, heavy charge and release, and a jump attack (plunge) when airborne
-- [ ] Procedural swing animation (rotating the arm/sword pivot) until real animations arrive
-- [ ] Sword sensor hitbox that's only on during active frames, a per-swing hit list, `DamageEvent`
-- [ ] Training dummy: HP, a hit flash, a knockback wobble, and it resets when it "dies"
-- [ ] Hitstop and a small camera shake on hit
+- [x] Tap/hold detection on the attack action (threshold in `tuning.rs`)
+- [x] Light combo chain, heavy charge and release, and a jump attack (plunge) when airborne
+- [x] Procedural swing animation (rotating the arm/sword pivot) until real animations arrive
+- [x] Sword hitbox that's only on during active frames, a per-swing hit list, `DamageMessage`. This is done with blade shape queries instead of a physics sensor; see N12.
+- [x] Training dummy: HP, a hit flash, a knockback wobble, and it resets when it "dies"
+- [x] Hitstop and a small camera shake on hit
 
 ### Phase 6 — Healing Ale, Hearth, death and HUD
 - [ ] Healing Ale: charges, drinking state, slowed movement, heal tick
@@ -231,6 +231,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | Project title: **FlowerBox** (crate `flowerbox`). |
 | 2026-11-14 | Debug overlay on F3 is always compiled in (it's cheap). Debug keys (H, 1-4) only exist in debug builds. Not tied to the `dev` feature. |
 | 2026-11-14 | Backstep = rolling with no movement input; there's no separate input or request for it (user request). |
+| 2026-11-14 | Sword hits are detected with blade shape queries that sample the same pose function the animation uses (`player::pose`), not avian sensors. This is deterministic, needs no kinematic/static sensor pairs, and keeps the visuals and hitbox identical. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -280,3 +281,24 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Animation:** `player/visuals.rs` does a procedural somersault. `model_pose()` returns a rotation, scale and lift that are applied around a pivot 0.9 m up. It does one forward flip with a tuck (scale 0.7) and a dip, finishing at about 0.5 s. The backstep leans back and hops a little. Phase 5 attack swings should go in this same file and function.
   - **Debug:** while F3 is on, a cyan ring at the feet shows i-frames. `FLOWERBOX_SHOT_TIME=secs` takes the screenshot at a given game time (for example 1.2 = mid-roll in the autopilot timeline). The autopilot now walks along world -Z regardless of camera yaw, so `FLOWERBOX_CAM="1.57,0.2,5"` gives a side view. It stands still from 10.8 to 11.6 s for the backstep test.
   - **Watch in Phase 6:** the placeholder death respawn teleports the player while `TransformInterpolation` is on, so the model may smear across the arena for one tick. When doing the Hearth respawn, check this and reset the interpolation if needed.
+- **N12 (2026-11-14) — Phase 5 (combat):**
+  - **Attack input** (`input::AttackTracker`, unit-tested):
+    - The press must start while the cursor is grabbed, so the click that re-grabs it never attacks.
+    - Released under 0.25 s buffers `LightAttack`, which becomes `JumpAttack` in the air.
+    - Held for 0.25 s buffers `HeavyAttack`, which becomes `HeavyCharge`. That costs 30 stamina, slows movement to 0.3×, and can be cancelled by a roll.
+    - `release_heavy_charge` turns the charge into `HeavyAttack` on release, or automatically after 0.65 s. `charge` (0..1) scales damage from 1.6× to 2.0×.
+  - **Jump attack:**
+    - Movement mode `Plunge`: hover during the 0.2 s startup, then dive at 14 m/s.
+    - Landing skips ahead to a 0.1 s slam window, but only after the 0.12 s downward swing has finished. Skipping mid-swing used to skip its hit samples too, which made hits random; that was a bug, now fixed.
+    - There's no area-of-effect slam yet. It's a possible extra.
+  - **Poses** (`player/pose.rs`, unit-tested): `arm_pose(action)` returns the shoulder and grip rotations for every action. The swings are: light 0 right→left, light 1 left→right, light 2 overhead, heavy overhead from the raised charge, and the jump attack downward. `animate_arm` applies them to `RightShoulder`/`RightHandSocket`, and `combat::blade_world` uses the same pose for the hitbox. The right arm is now a shoulder pivot with the arm, hand and sword socket as children.
+  - **Hits** (`combat.rs`, `PlayerSystems::Combat`, after Actions):
+    - During the active phase, the blade capsule (radius 0.12) is sampled every ~4 ms of action time between the last tick and now, and `shape_intersections` checks it against colliders that have `Hurtbox`.
+    - The hit list is per `PlayerAction::serial`. `start()` increments it, so every action, including the heavy release, is a new swing.
+    - Damage is `WEAPON_BASE_DAMAGE` (20, a placeholder until Phase 7 adds weapon stats) × the multiplier.
+  - **Damage pipeline:** `DamageMessage { target, amount, from }` → `stats::apply_damage`, which works on any `Health` (players also go to Hurt or Dead) → `DamageTaken { killed, .. }`. Feedback reads `DamageTaken`: hitstop (virtual time × 0.05 for 60 or 100 ms of real time) and camera shake (trauma, decayed in real time).
+  - **Dummy:** 120 HP, at the arena center (`DUMMY_POSITION`). It flashes, wobbles on a spring away from the hit, and breaks by falling away from the killing blow. It resets after 3 s.
+  - **Debug:**
+    - With F3 on, the blade hitbox is drawn in red during active frames. The overlay shows LMB held time, charge % and dummy HP.
+    - `FLOWERBOX_AUTOPILOT=combat` places the player 1.5 m in front of the dummy and scripts the attack button. Expected over 13 s: light ×3 (20 each) → heavy (about 36) → jump attack (36, breaks the dummy) → reset → full heavy (40) → light ×2. Grep for `hit `, `dummy` and `action`.
+    - The default autopilot (`=1`) now walks into the dummy, and its combo hits it.

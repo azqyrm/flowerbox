@@ -5,15 +5,16 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
-use super::PlayerModel;
 use super::action::{ActionKind, PlayerAction};
+use super::pose::arm_pose;
+use super::{PlayerModel, RightHandSocket, RightShoulder};
 use crate::tuning::*;
 
 pub struct VisualsPlugin;
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, animate_model);
+        app.add_systems(Update, (animate_model, animate_arm));
     }
 }
 
@@ -61,6 +62,23 @@ fn animate_model(
             tf.scale = Vec3::splat(scale);
             tf.translation = Vec3::Y * (-PLAYER_HALF_HEIGHT + lift) + pivot - rot * (pivot * scale);
         }
+    }
+}
+
+/// Poses the sword arm from `pose::arm_pose` (the same pose the hitbox uses).
+fn animate_arm(
+    players: Query<&PlayerAction>,
+    mut shoulders: Query<&mut Transform, (With<RightShoulder>, Without<RightHandSocket>)>,
+    mut sockets: Query<&mut Transform, (With<RightHandSocket>, Without<RightShoulder>)>,
+) {
+    // One player for now; with more, shoulders/sockets would need matching per player.
+    let Some(action) = players.iter().next() else { return };
+    let pose = arm_pose(action.current.as_ref());
+    for mut tf in &mut shoulders {
+        tf.rotation = pose.shoulder;
+    }
+    for mut tf in &mut sockets {
+        tf.rotation = pose.grip;
     }
 }
 

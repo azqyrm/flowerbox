@@ -63,26 +63,42 @@ impl Stamina {
 #[derive(Component, Debug)]
 pub struct Invulnerable;
 
-/// Request to damage an entity. Sent by combat (Phase 5), the debug key, enemies later.
+/// Request to damage an entity. Sent by combat, the debug key, enemies later.
 #[derive(Message, Debug, Clone)]
 pub struct DamageMessage {
     pub target: Entity,
     pub amount: f32,
+    /// Where the hit came from (attacker position), for knockback / reactions.
+    pub from: Option<Vec3>,
 }
 
-pub(super) fn apply_damage(
+/// Damage that was actually applied (not blocked by i-frames). For hit reactions.
+#[derive(Message, Debug, Clone)]
+pub struct DamageTaken {
+    pub target: Entity,
+    pub amount: f32,
+    pub from: Option<Vec3>,
+    pub killed: bool,
+}
+
+/// Applies damage to anything with `Health`. Players additionally flinch (Hurt) or die.
+pub fn apply_damage(
     mut messages: MessageReader<DamageMessage>,
-    mut q: Query<(&mut Health, &mut PlayerAction, Has<Invulnerable>)>,
+    mut taken: MessageWriter<DamageTaken>,
+    mut q: Query<(&mut Health, Option<&mut PlayerAction>, Has<Invulnerable>)>,
 ) {
     for msg in messages.read() {
-        let Ok((mut health, mut action, invulnerable)) = q.get_mut(msg.target) else { continue };
+        let Ok((mut health, action, invulnerable)) = q.get_mut(msg.target) else { continue };
         if invulnerable || health.is_dead() {
             info!("damage {} ignored (invulnerable={invulnerable})", msg.amount);
             continue;
         }
         health.current = (health.current - msg.amount).max(0.0);
-        let kind = if health.is_dead() { ActionKind::Dead } else { ActionKind::Hurt };
-        action.force(kind, Vec3::ZERO);
+        let killed = health.is_dead();
+        if let Some(mut action) = action {
+            action.force(if killed { ActionKind::Dead } else { ActionKind::Hurt }, Vec3::ZERO);
+        }
+        taken.write(DamageTaken { target: msg.target, amount: msg.amount, from: msg.from, killed });
     }
 }
 
