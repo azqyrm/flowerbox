@@ -9,7 +9,7 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
-use super::pose::{HumanoidPose, PoseMask};
+use super::pose::{HumanoidPose, PoseMask, bone_model_transform};
 use super::{Bone, HumanoidRig, HumanoidSpec};
 use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
 use crate::character::controller::CharacterController;
@@ -39,9 +39,10 @@ fn bell(t: f32) -> f32 {
 /// Everything the locomotion layer needs to know about the character this frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LocomotionInput {
-    /// Horizontal speed (m/s).
+    /// Gait speed (m/s): how fast the legs animate. Usually the actual horizontal speed;
+    /// at least a slow walk while pushing against a wall.
     pub speed: f32,
-    /// Gait cycle phase (radians), advanced by distance travelled.
+    /// Gait cycle phase (radians), advanced by distance travelled. 0 = left heel strikes.
     pub phase: f32,
     /// 0 = on the ground, 1 = fully airborne (smoothed).
     pub air: f32,
@@ -49,6 +50,8 @@ pub struct LocomotionInput {
     pub vertical: f32,
     /// 0..1 landing crouch.
     pub landing: f32,
+    /// 0..1 pressing against an obstacle: short braced steps, free hand on the wall.
+    pub blocked: f32,
     /// Seconds, for idle breathing.
     pub time: f32,
     /// Held weapon class (its guard stance).
@@ -58,54 +61,257 @@ pub struct LocomotionInput {
 /// Idle guard of a weapon class (its `GuardSpec`), knees soft.
 pub fn guard_pose(weapon: WeaponClass) -> HumanoidPose {
     let g = weapon.moveset().guard;
-    let (arm, elbow) = (rx(g.arm_pitch), rx(g.elbow));
     let mut p = HumanoidPose::default();
-    p.set(Bone::UpperArmR, arm)
-        .set(Bone::ForearmR, elbow)
-        // The grip is given relative to the shoulder frame; undo the arm and elbow rotation.
-        .set(Bone::HandR, (arm * elbow).inverse() * Quat::from_euler(EulerRot::XYZ, g.grip.x, g.grip.y, g.grip.z))
-        .set(Bone::UpperArmL, rx(g.off_arm_pitch) * rz(-0.1))
+    set_sword_arm(&mut p, g.arm_pitch, g.elbow, g.grip);
+    p.set(Bone::UpperArmL, rx(g.off_arm_pitch) * rz(-0.1))
         .set(Bone::ForearmL, rx(g.off_elbow))
         .set(Bone::ThighL, rx(0.06))
         .set(Bone::ShinL, rx(-0.12))
+        .set(Bone::FootL, rx(0.06))
         .set(Bone::ThighR, rx(0.03))
-        .set(Bone::ShinR, rx(-0.08));
+        .set(Bone::ShinR, rx(-0.08))
+        .set(Bone::FootR, rx(0.05));
     p
 }
 
-/// Walk / run cycle blended by speed, plus airborne and landing poses.
-pub fn locomotion_pose(input: &LocomotionInput) -> HumanoidPose {
-    let mut p = guard_pose(input.weapon);
-    let walk = (input.speed / WALK_SPEED).clamp(0.0, 1.0);
-    let run = ((input.speed - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
-    let ph = input.phase;
+/// Right arm holding the weapon: `grip` is given relative to the shoulder frame, so the arm
+/// and elbow rotation are undone at the hand.
+fn set_sword_arm(p: &mut HumanoidPose, arm_pitch: f32, elbow: f32, grip: Vec3) {
+    let (arm, elbow) = (rx(arm_pitch), rx(elbow));
+    p.set(Bone::UpperArmR, arm)
+        .set(Bone::ForearmR, elbow)
+        .set(Bone::HandR, (arm * elbow).inverse() * Quat::from_euler(EulerRot::XYZ, grip.x, grip.y, grip.z));
+}
+
+/// Shape of one gait. Angles in radians; slow walk, jog and sprint are blended by speed.
+#[derive(Clone, Copy, Debug)]
+struct Gait {
+    /// Fraction of the cycle a foot is on the ground (> 0.5 walking, < 0.5 = flight phases).
+    duty: f32,
+    /// Thigh angle at heel strike (forward) and at toe-off (back).
+    hip_fwd: f32,
+    hip_back: f32,
+    /// Knee bend absorbing the step (mid-stance) and lifting the foot (swing).
+    knee_stance: f32,
+    knee_swing: f32,
+    /// Toe push at the end of stance; heel-first contact is 40 % of it.
+    toe_off: f32,
+    /// Forward lean of the pelvis and chest.
+    lean: f32,
+    /// Free arm swing and elbow bend.
+    arm_swing: f32,
+    elbow: f32,
+    /// Hip/shoulder counter-rotation and side-to-side pelvis roll.
+    twist: f32,
+    sway: f32,
+    /// Extra lift in the flight phases.
+    bounce: f32,
+    /// Distance covered by one full cycle (two steps).
+    stride: f32,
+}
+
+impl Gait {
+    fn lerp(&self, o: &Gait, t: f32) -> Gait {
+        let l = |a: f32, b: f32| a + (b - a) * t;
+        Gait {
+            duty: l(self.duty, o.duty),
+            hip_fwd: l(self.hip_fwd, o.hip_fwd),
+            hip_back: l(self.hip_back, o.hip_back),
+            knee_stance: l(self.knee_stance, o.knee_stance),
+            knee_swing: l(self.knee_swing, o.knee_swing),
+            toe_off: l(self.toe_off, o.toe_off),
+            lean: l(self.lean, o.lean),
+            arm_swing: l(self.arm_swing, o.arm_swing),
+            elbow: l(self.elbow, o.elbow),
+            twist: l(self.twist, o.twist),
+            sway: l(self.sway, o.sway),
+            bounce: l(self.bounce, o.bounce),
+            stride: l(self.stride, o.stride),
+        }
+    }
+}
+
+/// Careful, short steps (pushing against a wall, charging a heavy, drinking on the move).
+const SLOW_WALK: Gait = Gait {
+    duty: 0.66,
+    hip_fwd: 0.26,
+    hip_back: 0.2,
+    knee_stance: 0.08,
+    knee_swing: 0.7,
+    toe_off: 0.2,
+    lean: 0.04,
+    arm_swing: 0.12,
+    elbow: 0.2,
+    twist: 0.05,
+    sway: 0.045,
+    bounce: 0.0,
+    stride: 1.0,
+};
+/// Default movement (WALK_SPEED): a light, guarded jog.
+const JOG: Gait = Gait {
+    duty: 0.5,
+    hip_fwd: 0.5,
+    hip_back: 0.36,
+    knee_stance: 0.28,
+    knee_swing: 1.25,
+    toe_off: 0.4,
+    lean: 0.1,
+    arm_swing: 0.32,
+    elbow: 0.55,
+    twist: 0.11,
+    sway: 0.04,
+    bounce: 0.02,
+    stride: 1.9,
+};
+/// Sprint (SPRINT_SPEED): leaning in, high knees, arms pumping, weapon trailing.
+const SPRINT: Gait = Gait {
+    duty: 0.36,
+    hip_fwd: 0.9,
+    hip_back: 0.5,
+    knee_stance: 0.45,
+    knee_swing: 2.0,
+    toe_off: 0.55,
+    lean: 0.26,
+    arm_swing: 0.7,
+    elbow: 1.4,
+    twist: 0.15,
+    sway: 0.025,
+    bounce: 0.05,
+    stride: 2.7,
+};
+/// Below this speed the gait is a slow walk.
+const SLOW_WALK_SPEED: f32 = 1.4;
+
+/// The gait for a speed, and how much the character is moving at all (0 = idle).
+fn gait_for(speed: f32) -> (Gait, f32) {
+    let moving = ease(speed / SLOW_WALK_SPEED);
+    let to_jog = ((speed - SLOW_WALK_SPEED) / (WALK_SPEED - SLOW_WALK_SPEED)).clamp(0.0, 1.0);
+    let to_sprint = ((speed - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
+    (SLOW_WALK.lerp(&JOG, to_jog).lerp(&SPRINT, to_sprint), moving)
+}
+
+/// Distance of one full gait cycle at this speed (the animator advances the phase by it).
+pub fn stride_length(speed: f32) -> f32 {
+    gait_for(speed).0.stride
+}
+
+/// One leg at cycle position `u` (0..1, 0 = heel strike): (thigh, knee bend, foot angle
+/// relative to a level foot; + = toes up).
+fn leg_cycle(u: f32, g: &Gait) -> (f32, f32, f32) {
+    let u = u.rem_euclid(1.0);
+    if u < g.duty {
+        // Stance: the planted foot travels back at constant speed; the knee gives a little;
+        // the heel lands first and the toes push off at the end.
+        let s = u / g.duty;
+        let thigh = g.hip_fwd - (g.hip_fwd + g.hip_back) * s;
+        let knee = 0.06 + g.knee_stance * bell(s.powf(0.8));
+        let heel = g.toe_off * 0.4 * (1.0 - s / 0.2).max(0.0);
+        let push = -g.toe_off * ((s - 0.65) / 0.35).max(0.0).powi(2);
+        (thigh, knee, heel + push)
+    } else {
+        // Swing: the knee folds early to clear the floor, then reaches forward.
+        let s = (u - g.duty) / (1.0 - g.duty);
+        let thigh = -g.hip_back + (g.hip_fwd + g.hip_back) * ease(s.powf(0.85));
+        let knee = 0.06 + g.knee_swing * bell(s.powf(0.7));
+        let foot = -g.toe_off * (1.0 - s / 0.4).max(0.0) + g.toe_off * 0.4 * ease(s);
+        (thigh, knee, foot)
+    }
+}
+
+/// Idle / slow walk / jog / sprint cycle, braced steps against walls, airborne and landing
+/// poses, with the lowest point of the soles kept on the floor.
+pub fn locomotion_pose(spec: &HumanoidSpec, input: &LocomotionInput) -> HumanoidPose {
+    let guard = guard_pose(input.weapon);
+    let mut p = guard;
+    let (g, moving) = gait_for(input.speed);
+    let sprint = ((input.speed - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
+    let u = input.phase / TAU;
 
     // Idle breathing (fades out while moving).
-    let breathe = (input.time * 1.8).sin() * 0.025 * (1.0 - walk);
-    p.add(Bone::Chest, rx(breathe));
+    p.add(Bone::Chest, rx((input.time * 1.8).sin() * 0.025 * (1.0 - moving)));
 
-    // Legs: thighs swing opposite each other; the knee bends while the leg swings forward.
-    let hip_amp = (0.42 + 0.33 * run) * walk;
-    let knee_amp = (0.55 + 0.75 * run) * walk;
-    for (thigh, shin, foot, offset) in [(Bone::ThighL, Bone::ShinL, Bone::FootL, 0.0), (Bone::ThighR, Bone::ShinR, Bone::FootR, PI)] {
-        let swing = (ph + offset).sin() * hip_amp;
-        let bend = (ph + offset).cos().max(0.0) * knee_amp + 0.1 * walk;
-        p.add(thigh, rx(swing)).add(shin, rx(-bend));
-        // Keep the foot roughly level with the floor.
-        p.set(foot, rx(-(swing - bend) * 0.4));
+    // Legs. Foot angle = knee − thigh keeps the foot level (bones chain pelvis → thigh →
+    // shin → foot, all pitching about X), plus heel strike / toe-off.
+    let lean = g.lean * moving;
+    let mut thighs = [0.0; 2];
+    for (i, (thigh, shin, foot, offset)) in
+        [(Bone::ThighL, Bone::ShinL, Bone::FootL, 0.0), (Bone::ThighR, Bone::ShinR, Bone::FootR, 0.5)].into_iter().enumerate()
+    {
+        let (t, k, f) = leg_cycle(u + offset, &g);
+        thighs[i] = t;
+        let rest = (guard.get(thigh), guard.get(shin), guard.get(foot));
+        // The pelvis leans forward by 40 % of the lean; thighs compensate so feet stay under.
+        let lean_comp = lean * 0.4;
+        p.set(thigh, rest.0.slerp(rx(t + lean_comp), moving))
+            .set(shin, rest.1.slerp(rx(-k), moving))
+            .set(foot, rest.2.slerp(rx(k - t + f), moving));
     }
-    // Arms swing against the legs; the sword arm swings less and lifts the blade back when running.
-    let arm_amp = (0.3 + 0.35 * run) * walk;
-    p.add(Bone::UpperArmL, rx(-ph.sin() * arm_amp)).add(Bone::ForearmL, rx(0.25 * walk + 0.7 * run));
-    p.add(Bone::UpperArmR, rx(ph.sin() * arm_amp * 0.4 - 0.25 * run)).add(Bone::ForearmR, rx(0.3 * run));
-    // Torso: lean into the run, counter-twist the hips, bob down twice per cycle.
-    p.add(Bone::Chest, rx(-0.06 * walk - 0.18 * run) * ry(ph.sin() * 0.12 * walk));
-    p.add(Bone::Pelvis, ry(-ph.sin() * 0.08 * walk));
-    p.pelvis_offset.y -= (2.0 * ph).cos().mul_add(0.5, 0.5) * (0.02 + 0.03 * run) * walk;
+    // −1 = right leg forward … +1 = left leg forward.
+    let span = (g.hip_fwd + g.hip_back).max(1e-3);
+    let side = ((thighs[0] - thighs[1]) / span).clamp(-1.0, 1.0) * moving;
+
+    // Pelvis: lean, counter-rotate with the legs, roll toward the standing leg.
+    p.add(Bone::Pelvis, rx(-lean * 0.4) * ry(-side * g.twist * 0.7) * rz(side * g.sway));
+    // Chest: more lean, twist against the hips; head stays level.
+    p.add(Bone::Chest, rx(-lean * 0.6) * ry(side * g.twist) * rz(-side * g.sway * 0.6));
+    p.set(Bone::Head, rx(lean * 0.8));
+
+    // Free arm swings with the opposite leg; elbow bends more the faster you go.
+    p.add(Bone::UpperArmL, rx(-side * g.arm_swing) * rz(-0.08 * sprint))
+        .set(Bone::ForearmL, guard.get(Bone::ForearmL).slerp(rx(g.elbow), moving));
+    // Sword arm: a small swing in the guard; sprinting trails the weapon low behind.
+    let gs = input.weapon.moveset().guard;
+    let mut trail = HumanoidPose::default();
+    set_sword_arm(&mut trail, gs.run_arm_pitch + side * g.arm_swing * 0.5, gs.run_elbow, gs.run_grip);
+    p.add(Bone::UpperArmR, rx(side * g.arm_swing * 0.25 * moving));
+    for bone in [Bone::UpperArmR, Bone::ForearmR, Bone::HandR] {
+        p.set(bone, p.get(bone).slerp(trail.get(bone), ease(sprint)));
+    }
+
+    // Flight phases (both feet up) lift the body a little: running looks springy.
+    // Per step (half cycle) a foot leaves at 2·duty and the other lands at 1.
+    let step = (u * 2.0).rem_euclid(1.0);
+    let flight_start = 2.0 * g.duty;
+    let flight = if flight_start < 1.0 && step > flight_start { bell((step - flight_start) / (1.0 - flight_start)) } else { 0.0 };
+    let bounce = g.bounce * flight * moving;
+
+    // Pushing against a wall: hunched in, free hand braced forward against it.
+    if input.blocked > 0.0 {
+        let b = ease(input.blocked);
+        p.add(Bone::Chest, rx(-0.15 * b)).add(Bone::Pelvis, rx(-0.05 * b));
+        let (arm, fore) = (p.get(Bone::UpperArmL), p.get(Bone::ForearmL));
+        p.set(Bone::UpperArmL, arm.slerp(rx(1.35) * rz(0.15), b))
+            .set(Bone::ForearmL, fore.slerp(rx(0.35), b))
+            .set(Bone::HandL, rx(-0.9 * b))
+            .add(Bone::Head, rx(0.12 * b));
+    }
+
+    // Plant the feet: drop (or raise) the body so the lowest heel/toe touches the floor.
+    // Applied before the air pose blends in, so jumps aren't pulled down.
+    let grounded_feet = |p: &HumanoidPose| {
+        [Bone::FootL, Bone::FootR]
+            .into_iter()
+            .flat_map(|foot| {
+                let t = bone_model_transform(spec, p, foot);
+                spec.sole_points().map(|q| t.transform_point(q).y)
+            })
+            .fold(f32::INFINITY, f32::min)
+    };
+
+    // Landing: knees absorb the fall (planting lowers the body to match).
+    if input.landing > 0.0 {
+        let k = input.landing;
+        for (thigh, shin, foot) in [(Bone::ThighL, Bone::ShinL, Bone::FootL), (Bone::ThighR, Bone::ShinR, Bone::FootR)] {
+            p.add(thigh, rx(0.5 * k)).add(shin, rx(-0.95 * k)).add(foot, rx(0.45 * k));
+        }
+        p.add(Bone::Chest, rx(-0.22 * k));
+    }
+    p.pelvis_offset.y -= grounded_feet(&p);
+    p.pelvis_offset.y += bounce;
 
     // Airborne: rising tucks one knee up, falling spreads arms and reaches the legs down.
     if input.air > 0.0 {
-        let mut air = guard_pose(input.weapon);
+        let mut air = guard;
         let rising = (input.vertical / 4.0).clamp(-1.0, 1.0) * 0.5 + 0.5;
         air.set(Bone::ThighL, rx(0.3 + 0.5 * rising))
             .set(Bone::ShinL, rx(-0.4 - 0.7 * rising))
@@ -115,15 +321,6 @@ pub fn locomotion_pose(input: &LocomotionInput) -> HumanoidPose {
             .add(Bone::UpperArmR, rz(0.25) * rx(0.1))
             .add(Bone::Chest, rx(-0.08));
         p = p.blend(&air, input.air, PoseMask::Full);
-    }
-
-    // Landing: a quick crouch absorbing the fall.
-    if input.landing > 0.0 {
-        let k = input.landing;
-        p.pelvis_offset.y -= 0.14 * k;
-        p.add(Bone::ThighL, rx(0.45 * k)).add(Bone::ShinL, rx(-0.85 * k)).add(Bone::FootL, rx(0.4 * k));
-        p.add(Bone::ThighR, rx(0.45 * k)).add(Bone::ShinR, rx(-0.85 * k)).add(Bone::FootR, rx(0.4 * k));
-        p.add(Bone::Chest, rx(-0.2 * k));
     }
     p
 }
@@ -303,18 +500,22 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
 pub struct HumanoidAnimator {
     phase: f32,
     air: f32,
+    /// Seconds since the controller last reported ground (hysteresis for the air pose).
+    air_time: f32,
     landing: f32,
-    was_grounded: bool,
     speed: f32,
+    blocked: f32,
     time: f32,
     /// Blend weight of the action layer and the last action pose (for fading out).
     action_weight: f32,
     last_action: Option<(HumanoidPose, PoseMask)>,
 }
 
-/// Distance covered by one full gait cycle (two steps), walking → running.
-const STRIDE_WALK: f32 = 1.5;
-const STRIDE_RUN: f32 = 2.4;
+/// Brief losses of ground shorter than this (stepping over rubble, a missed probe) don't
+/// switch to the air pose or trigger a landing.
+const AIR_GRACE: f32 = 0.1;
+/// Gait speed while pushing against a wall.
+const BLOCKED_GAIT_SPEED: f32 = 1.1;
 
 pub fn animate_humanoids(
     time: Res<Time>,
@@ -329,33 +530,46 @@ pub fn animate_humanoids(
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();
+    let smooth = |rate: f32| 1.0 - (-rate * dt).exp();
     for (spec, rig, mut anim, ctrl, action, equipped) in &mut characters {
         anim.time += dt;
-        let speed = Vec2::new(ctrl.velocity.x, ctrl.velocity.z).length();
-        // Smooth speed so the gait blends instead of popping.
-        anim.speed += (speed - anim.speed) * (1.0 - (-10.0 * dt).exp());
-        let run = ((anim.speed - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
-        let stride = STRIDE_WALK + (STRIDE_RUN - STRIDE_WALK) * run;
+        // Airborne only after a short grace period, or right away when clearly jumping.
         if ctrl.grounded {
-            anim.phase = (anim.phase + anim.speed / stride * TAU * dt) % TAU;
+            if anim.air_time > AIR_GRACE {
+                anim.landing = 1.0;
+            }
+            anim.air_time = 0.0;
+        } else {
+            anim.air_time += dt;
         }
-        let air_target = if ctrl.grounded { 0.0 } else { 1.0 };
-        anim.air += (air_target - anim.air) * (1.0 - (-14.0 * dt).exp());
-        if ctrl.grounded && !anim.was_grounded {
-            anim.landing = 1.0;
-        }
-        anim.was_grounded = ctrl.grounded;
+        let airborne = anim.air_time > AIR_GRACE || (!ctrl.grounded && ctrl.velocity.y > 1.0);
+        anim.air += (if airborne { 1.0 } else { 0.0 } - anim.air) * smooth(14.0);
         anim.landing = (anim.landing - dt / 0.22).max(0.0);
 
-        let loco = locomotion_pose(&LocomotionInput {
-            speed: anim.speed,
-            phase: anim.phase,
-            air: anim.air,
-            vertical: ctrl.velocity.y,
-            landing: bell(1.0 - anim.landing) * anim.landing.min(1.0).sqrt(),
-            time: anim.time,
-            weapon: equipped.map_or_else(WeaponClass::default, |e| e.class()),
-        });
+        // Speed actually achieved, not the controller's velocity (which jitters against walls).
+        let actual = Vec2::new(ctrl.moved.x, ctrl.moved.z).length().min(SPRINT_SPEED * 1.5);
+        // Pushing against something: wants to move, but gets almost nowhere.
+        let pushing = !airborne && ctrl.wish_speed > 1.0 && actual < ctrl.wish_speed * 0.35;
+        anim.blocked += (if pushing { 1.0 } else { 0.0 } - anim.blocked) * smooth(if pushing { 6.0 } else { 10.0 });
+        let target = actual.max(BLOCKED_GAIT_SPEED * anim.blocked);
+        anim.speed += (target - anim.speed) * smooth(10.0);
+        if !airborne {
+            anim.phase = (anim.phase + anim.speed / stride_length(anim.speed) * TAU * dt) % TAU;
+        }
+
+        let loco = locomotion_pose(
+            spec,
+            &LocomotionInput {
+                speed: anim.speed,
+                phase: anim.phase,
+                air: anim.air,
+                vertical: ctrl.velocity.y,
+                landing: bell(1.0 - anim.landing) * anim.landing.min(1.0).sqrt(),
+                blocked: anim.blocked,
+                time: anim.time,
+                weapon: equipped.map_or_else(WeaponClass::default, |e| e.class()),
+            },
+        );
 
         // Action layer: snaps in fast (so swings and hitboxes agree), fades out a bit slower.
         let current = action.current.as_ref().and_then(action_pose);
@@ -456,13 +670,62 @@ mod tests {
         }
     }
 
+    /// Lowest sole point of the pose, in model space.
+    fn lowest_sole(spec: &HumanoidSpec, pose: &HumanoidPose) -> f32 {
+        let model = pose.model_transform(0.0);
+        [Bone::FootL, Bone::FootR]
+            .into_iter()
+            .flat_map(|f| {
+                let t = model * bone_model_transform(spec, pose, f);
+                spec.sole_points().map(|q| t.transform_point(q).y)
+            })
+            .fold(f32::INFINITY, f32::min)
+    }
+
     #[test]
     fn walking_moves_the_feet_apart() {
         let spec = HumanoidSpec::human();
-        let pose = locomotion_pose(&LocomotionInput { speed: WALK_SPEED, phase: PI / 2.0, ..default() });
-        let l = bone_model_transform(&spec, &pose, Bone::FootL).translation;
-        let r = bone_model_transform(&spec, &pose, Bone::FootR).translation;
-        assert!(l.z < -0.2 && r.z > 0.2, "left forward, right back: {l} {r}");
+        for speed in [SLOW_WALK_SPEED, WALK_SPEED, SPRINT_SPEED] {
+            // Phase 0: left heel strikes in front, right foot behind.
+            let pose = locomotion_pose(&spec, &LocomotionInput { speed, phase: 0.0, ..default() });
+            let l = bone_model_transform(&spec, &pose, Bone::FootL).translation;
+            let r = bone_model_transform(&spec, &pose, Bone::FootR).translation;
+            assert!(l.z < -0.1 && r.z > 0.1, "{speed} m/s: left forward, right back: {l} {r}");
+        }
+    }
+
+    /// Through the whole cycle of every gait, a foot touches the floor and nothing sinks in
+    /// (flight phases may lift off a little).
+    #[test]
+    fn feet_stay_planted() {
+        let spec = HumanoidSpec::human();
+        for speed in [0.0, SLOW_WALK_SPEED, 3.0, WALK_SPEED, SPRINT_SPEED] {
+            for blocked in [0.0, 1.0] {
+                for i in 0..40 {
+                    let phase = TAU * i as f32 / 40.0;
+                    let input = LocomotionInput { speed, phase, blocked, ..default() };
+                    let low = lowest_sole(&spec, &locomotion_pose(&spec, &input));
+                    assert!((-0.005..0.07).contains(&low), "{speed} m/s, phase {phase:.2}: sole at {low:.3}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sprint_trails_the_blade_behind() {
+        let spec = HumanoidSpec::human();
+        let pose = locomotion_pose(&spec, &LocomotionInput { speed: SPRINT_SPEED, ..default() });
+        let hand = bone_model_transform(&spec, &pose, Bone::HandR);
+        let tip = hand.transform_point(Vec3::Y * 1.03);
+        assert!(tip.z > hand.translation.z + 0.4 && tip.y < hand.translation.y, "hand {} tip {tip}", hand.translation);
+    }
+
+    #[test]
+    fn braced_hand_reaches_forward() {
+        let spec = HumanoidSpec::human();
+        let pose = locomotion_pose(&spec, &LocomotionInput { speed: BLOCKED_GAIT_SPEED, blocked: 1.0, ..default() });
+        let hand = bone_model_transform(&spec, &pose, Bone::HandL).translation;
+        assert!(hand.z < -0.4 && hand.y > 1.0, "{hand}");
     }
 
     #[test]

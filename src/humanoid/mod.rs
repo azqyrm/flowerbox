@@ -162,6 +162,18 @@ impl HumanoidSpec {
         }
     }
 
+    /// Height of the ankle (the foot bone's origin) above the floor in the rest pose.
+    pub fn ankle_height(&self) -> f32 {
+        self.pelvis_height - 0.02 - self.thigh - self.shin
+    }
+
+    /// Heel and toe of the sole in the foot bone's frame (matches the boot mesh). Locomotion
+    /// keeps the lowest of these on the floor.
+    pub fn sole_points(&self) -> [Vec3; 2] {
+        let y = -self.ankle_height();
+        [Vec3::new(0.0, y, FOOT_OFFSET + FOOT_LENGTH * 0.5), Vec3::new(0.0, y, FOOT_OFFSET - FOOT_LENGTH * 0.5)]
+    }
+
     /// Rest translation of `bone` relative to its parent (Pelvis: relative to the feet).
     pub fn rest_offset(&self, bone: Bone) -> Vec3 {
         use Bone::*;
@@ -180,6 +192,10 @@ impl HumanoidSpec {
         }
     }
 }
+
+/// Boot length and how far its centre sits in front of the ankle (-Z).
+const FOOT_LENGTH: f32 = 0.27;
+const FOOT_OFFSET: f32 = -0.05;
 
 /// Entities of a spawned humanoid: the model root (child of the character) and every bone.
 #[derive(Component, Clone, Debug)]
@@ -266,7 +282,7 @@ pub fn spawn_humanoid(
     for (thigh, shin, foot) in [(Bone::ThighL, Bone::ShinL, Bone::FootL), (Bone::ThighR, Bone::ShinR, Bone::FootR)] {
         part(thigh, Capsule3d::new(s.leg_radius * 1.1, s.thigh - s.leg_radius).into(), &bottom, t(0.0, -s.thigh * 0.5, 0.0));
         part(shin, Capsule3d::new(s.leg_radius, s.shin - s.leg_radius).into(), &bottom, t(0.0, -s.shin * 0.5, 0.0));
-        part(foot, Cuboid::new(s.leg_radius * 2.0, 0.1, 0.27).into(), &boots, t(0.0, -(s.pelvis_height - 0.02 - s.thigh - s.shin) + 0.05, -0.05));
+        part(foot, Cuboid::new(s.leg_radius * 2.0, 0.1, FOOT_LENGTH).into(), &boots, t(0.0, -s.ankle_height() + 0.05, FOOT_OFFSET));
     }
 
     HumanoidRig { model, bones, root_height }
