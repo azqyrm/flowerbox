@@ -1,10 +1,12 @@
 //! Dev helpers for manual and automated checks (see ROADMAP notes N5, N7, N9).
 //!
-//! - **F3**: toggle the debug overlay (action state, timers, buffer, stats).
+//! - **F3**: toggle the debug overlay (action state, timers, buffer, stats) and the cyan
+//!   i-frame ring shown at the player's feet while `Invulnerable`.
 //! - Debug builds only: **H** = take 15 damage; **1–4** = request Roll (backstep when standing still),
 //!   Light (jump attack when airborne), Heavy, Drink (until Phases 4–6 bind the real inputs).
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
-//!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120). `FLOWERBOX_OVERLAY=1` shows the overlay at start.
+//!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120), or `FLOWERBOX_SHOT_TIME=secs`
+//!   captures at a game time instead (useful with the autopilot timeline). `FLOWERBOX_OVERLAY=1` shows the overlay at start.
 //! - `FLOWERBOX_AUTOPILOT=1` → walks forward, jumps every 2 s and runs a scripted action/damage
 //!   timeline (see `autopilot_script`); position and action changes are logged.
 
@@ -17,19 +19,21 @@ use crate::player::Player;
 use crate::player::action::{ActionKind, ActionRequest, PlayerAction};
 use crate::player::controller::CharacterController;
 use crate::player::stats::{DamageMessage, Health, Invulnerable, Stamina};
+use crate::tuning::*;
 
 pub struct DebugPlugin;
 
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_overlay)
-            .add_systems(Update, (toggle_overlay, update_overlay, log_action_changes));
+            .add_systems(Update, (toggle_overlay, update_overlay, log_action_changes, spawn_iframe_shell, show_iframe_shell));
         if cfg!(debug_assertions) {
             app.add_systems(Update, debug_keys);
         }
         if let Ok(path) = std::env::var("FLOWERBOX_SCREENSHOT") {
             let at = std::env::var("FLOWERBOX_SHOT_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
-            app.insert_resource(AutoScreenshot { path, frame: 0, at })
+            let at_time = std::env::var("FLOWERBOX_SHOT_TIME").ok().and_then(|s| s.parse().ok());
+            app.insert_resource(AutoScreenshot { path, frame: 0, at, at_time, taken_frame: None })
                 .add_systems(Update, auto_screenshot);
         }
         if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() {
@@ -126,6 +130,50 @@ fn update_overlay(
     }
 }
 
+/// Glowing ring at the player's feet, visible during i-frames while the overlay is on.
+#[derive(Component)]
+struct IframeShell;
+
+fn spawn_iframe_shell(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    players: Query<Entity, Added<Player>>,
+) {
+    for player in &players {
+        let ring = commands
+            .spawn((
+                Name::new("I-frame Ring"),
+                IframeShell,
+                Mesh3d(meshes.add(Annulus::new(0.5, 0.62))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.3, 0.9, 1.0),
+                    emissive: LinearRgba::rgb(1.5, 5.0, 6.0),
+                    unlit: true,
+                    ..default()
+                })),
+                // Lies flat just above the floor (the root sits at the capsule center).
+                Transform::from_xyz(0.0, -PLAYER_HALF_HEIGHT + 0.03, 0.0)
+                    .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                Visibility::Hidden,
+            ))
+            .id();
+        commands.entity(player).add_child(ring);
+    }
+}
+
+fn show_iframe_shell(
+    overlay: Query<&Visibility, (With<DebugOverlay>, Without<IframeShell>)>,
+    player: Query<Has<Invulnerable>, With<Player>>,
+    mut shells: Query<&mut Visibility, With<IframeShell>>,
+) {
+    let overlay_on = overlay.iter().any(|v| *v != Visibility::Hidden);
+    let invulnerable = player.iter().any(|i| i);
+    for mut v in &mut shells {
+        *v = if overlay_on && invulnerable { Visibility::Inherited } else { Visibility::Hidden };
+    }
+}
+
 // ── Debug keys (debug builds only) ───────────────────────────────────────
 
 fn debug_keys(
@@ -157,19 +205,36 @@ struct AutoScreenshot {
     path: String,
     frame: u32,
     at: u32,
+    at_time: Option<f32>,
+    taken_frame: Option<u32>,
 }
 
-fn auto_screenshot(mut commands: Commands, mut shot: ResMut<AutoScreenshot>, mut exit: MessageWriter<AppExit>) {
+fn auto_screenshot(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut shot: ResMut<AutoScreenshot>,
+    mut exit: MessageWriter<AppExit>,
+) {
     shot.frame += 1;
-    if shot.frame == shot.at {
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(shot.path.clone()));
-    } else if shot.frame == shot.at + 60 {
-        exit.write(AppExit::Success);
+    let due = match shot.at_time {
+        Some(t) => time.elapsed_secs() >= t,
+        None => shot.frame >= shot.at,
+    };
+    match shot.taken_frame {
+        None if due => {
+            commands.spawn(Screenshot::primary_window()).observe(save_to_disk(shot.path.clone()));
+            shot.taken_frame = Some(shot.frame);
+        }
+        Some(f) if shot.frame == f + 60 => {
+            exit.write(AppExit::Success);
+        }
+        _ => {}
     }
 }
 
 /// Timeline that exercises the action system. Expected log (N9): roll → damage ignored →
-/// hurt (HP 90) → light combo 0,1,2 → jump attack → death → respawn at spawn with full HP.
+/// hurt (HP 90) → light combo 0,1,2 → jump attack → death → respawn at spawn with full HP →
+/// backstep (standing still at 11 s).
 fn autopilot_script(
     time: Res<Time>,
     mut last: Local<f32>,
@@ -200,6 +265,10 @@ fn autopilot_script(
     if crossed(6.15) {
         input.buffer(ActionRequest::LightAttack);
     }
+    if crossed(11.0) {
+        info!("autopilot: roll while standing still (expect Backstep)");
+        input.buffer(ActionRequest::Roll);
+    }
     if crossed(7.5) {
         info!("autopilot: lethal damage");
         damage.write(DamageMessage { target: entity, amount: 500.0 });
@@ -208,12 +277,15 @@ fn autopilot_script(
 
 fn log_action_changes(
     mut last: Local<Option<ActionKind>>,
-    q: Query<(&PlayerAction, &Health, &Stamina), With<Player>>,
+    q: Query<(&PlayerAction, &Health, &Stamina, &Transform), With<Player>>,
 ) {
-    let Ok((action, hp, st)) = q.single() else { return };
+    let Ok((action, hp, st, tf)) = q.single() else { return };
     let now = action.current.map(|a| a.kind);
     if now != *last {
-        info!("action {:?} -> {:?}  (HP {:.0}, ST {:.0})", *last, now, hp.current, st.current);
+        info!(
+            "action {:?} -> {:?}  (HP {:.0}, ST {:.0}, pos {:.2})",
+            *last, now, hp.current, st.current, tf.translation
+        );
         *last = now;
     }
 }

@@ -178,9 +178,9 @@ claude_ds/
 - [x] Debug overlay that shows the current state and timers (F3, always compiled in; see N9)
 
 ### Phase 4 — Dodge roll with i-frames
-- [ ] Roll in the input direction (backstep with no input), using a speed curve, stamina cost, and `Invulnerable` during the i-frame window
-- [ ] Debug visual: tint the player during i-frames so the window can be checked
-- [ ] Test that damage during i-frames is ignored. Add a unit test for the timing windows.
+- [x] Roll in the input direction (backstep with no input), using a speed curve, stamina cost, and `Invulnerable` during the i-frame window
+- [x] Debug visual: tint the player during i-frames so the window can be checked (done as a cyan ring at the feet while F3 is on, which is easier to read than a tint)
+- [x] Test that damage during i-frames is ignored. Add a unit test for the timing windows.
 
 ### Phase 5 — Combat: light, heavy and jump attacks
 - [ ] Tap/hold detection on the attack action (threshold in `tuning.rs`)
@@ -273,3 +273,10 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **"Airborne" while walking (bug):** grounding used to come only from move-and-slide hits. While walking, the sweep is mostly horizontal and often misses the floor, so `grounded` flickered false. Now a downward **ground probe** (`cast_shape`, 0.08 m) runs after moving. It's skipped while rising. It snaps the capsule onto the floor, keeping a 0.01 m skin gap.
   - **Backstep:** there's no `ActionRequest::Backstep` any more. `ActionRequest::Roll` resolves to `ActionKind::Backstep` when there's no movement input (`resolve_request` takes a `moving` flag). A backstep goes against the facing direction and is also ground-only.
   - The autopilot log now prints `airborne_ticks` per 0.5 s window. Walking on flat floor should show 0. Expect about 32 for a jump window, and a few when stepping over rubble near spawn.
+- **N11 (2026-11-14) — Phase 4 (dodge roll):**
+  - **Input:** Shift *released* after less than 0.25 s (`input::is_dodge_tap`) buffers `ActionRequest::Roll`. Holding longer sprints, and releasing then does nothing (rolling happens on release, as in the Souls games).
+  - **On start:** the character turns instantly toward the action direction, for rolls and later for attacks too. A backstep keeps its facing and moves backwards.
+  - **Measured by autopilot:** the roll covers 3.6 m (target 3.5) at 8.5 m/s during the active window, and the backstep covers 1.7 m (target 1.6).
+  - **Animation:** `player/visuals.rs` does a procedural somersault. `model_pose()` returns a rotation, scale and lift that are applied around a pivot 0.9 m up. It does one forward flip with a tuck (scale 0.7) and a dip, finishing at about 0.5 s. The backstep leans back and hops a little. Phase 5 attack swings should go in this same file and function.
+  - **Debug:** while F3 is on, a cyan ring at the feet shows i-frames. `FLOWERBOX_SHOT_TIME=secs` takes the screenshot at a given game time (for example 1.2 = mid-roll in the autopilot timeline). The autopilot now walks along world -Z regardless of camera yaw, so `FLOWERBOX_CAM="1.57,0.2,5"` gives a side view. It stands still from 10.8 to 11.6 s for the backstep test.
+  - **Watch in Phase 6:** the placeholder death respawn teleports the player while `TransformInterpolation` is on, so the model may smear across the arena for one tick. When doing the Hearth respawn, check this and reset the interpolation if needed.

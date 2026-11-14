@@ -295,9 +295,9 @@ pub fn resolve_request(
 
 /// Starts a buffered action when allowed.
 pub(super) fn start_buffered_action(
-    mut q: Query<(&mut PlayerAction, &mut PlayerInput, &mut Stamina, &CharacterController)>,
+    mut q: Query<(&mut PlayerAction, &mut PlayerInput, &mut Stamina, &mut CharacterController)>,
 ) {
-    for (mut action, mut input, mut stamina, ctrl) in &mut q {
+    for (mut action, mut input, mut stamina, mut ctrl) in &mut q {
         let Some(request) = input.buffered else { continue };
         let moving = input.move_dir.length_squared() > 0.01;
         let Some(kind) = resolve_request(action.current.as_ref(), request, ctrl.grounded, moving, &stamina) else {
@@ -310,6 +310,10 @@ pub(super) fn start_buffered_action(
             _ if input.move_dir.length_squared() > 0.01 => input.move_dir.normalize(),
             _ => facing,
         };
+        // Turn instantly toward the action (roll / attack direction). A backstep keeps facing.
+        if kind != ActionKind::Backstep {
+            ctrl.facing = f32::atan2(-dir.x, -dir.z);
+        }
         stamina.spend(action_def(kind).stamina_cost);
         action.current = Some(ActiveAction::new(kind, dir));
         input.buffered = None;
