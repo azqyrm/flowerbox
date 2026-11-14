@@ -2,6 +2,7 @@
 
 mod arena;
 mod camera;
+mod combat;
 mod debug;
 mod input;
 mod player;
@@ -23,6 +24,7 @@ fn main() {
         .add_plugins((
             arena::ArenaPlugin,
             camera::CameraPlugin,
+            combat::CombatPlugin,
             input::InputPlugin,
             player::PlayerPlugin,
             debug::DebugPlugin,
