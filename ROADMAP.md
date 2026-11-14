@@ -173,9 +173,9 @@ claude_ds/
 - [x] Third-person orbit camera (mouse) with a collision pull-in so it never clips through walls. Cursor grab and release.
 
 ### Phase 3 — Stats and action state machine
-- [ ] `Health`, `Stamina` (with regen delay), `Invulnerable` components
-- [ ] `PlayerAction` state enum with timers (startup, active, recovery), an input buffer and cancel windows
-- [ ] Debug overlay that shows the current state and timers (dev feature)
+- [x] `Health`, `Stamina` (with regen delay), `Invulnerable` components
+- [x] `PlayerAction` state enum with timers (startup, active, recovery), an input buffer and cancel windows
+- [x] Debug overlay that shows the current state and timers (F3, always compiled in; see N9)
 
 ### Phase 4 — Dodge roll with i-frames
 - [ ] Roll in the input direction (backstep with no input), using a speed curve, stamina cost, and `Invulnerable` during the i-frame window
@@ -229,6 +229,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | Engine: Bevy 0.20, plus avian3d 0.8 for physics and leafwing-input-manager 0.22 for input. Custom kinematic controller. |
 | 2026-11-14 | The estus equivalent is named **Healing Ale**, with 3 charges, refilled at the **Hearth** (bonfire equivalent). |
 | 2026-11-14 | Project title: **FlowerBox** (crate `flowerbox`). |
+| 2026-11-14 | Debug overlay on F3 is always compiled in (it's cheap). Debug keys (H, 1-6) only exist in debug builds. Not tied to the `dev` feature. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, airborne = jump attack. Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -257,3 +258,12 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - The player has `RigidBody::Kinematic` and a capsule (radius 0.35, length 1.1), plus `TransformInterpolation` for smooth rendering. The camera runs in `PostUpdate` before `TransformSystems::Propagate`.
   - The model is a child `PlayerModel` whose origin is at the feet and which faces -Z. `RightHandSocket` and `LeftHandSocket` are where weapons attach (for Phase 7). The facing angle is `CharacterController::facing`.
   - Cursor: grabbed at startup, Esc releases it, and a left click grabs it again. **Phase 5:** the attack system must ignore the left click that re-grabs the cursor, and should only fire while the cursor is grabbed.
+- **N9 (2026-11-14) — Phase 3 action system** (`src/player/action.rs`, `stats.rs`):
+  - **Locomotion** (idle/walk/sprint/airborne) means `PlayerAction.current == None`. Every other state is an `ActionKind` with an `ActionDef` (startup/active/recovery, a `cancel` time, stamina cost, an i-frame window, movement mode and ground rule), defined in `action_def()`. The numbers live in `tuning.rs`. Roll, Backstep, Light(n), Heavy, JumpAttack, DrinkAle, Hurt and Dead are already defined.
+  - **Flow:** input calls `PlayerInput::buffer(ActionRequest)`, which stays valid for 0.2 s. `resolve_request` (pure, unit-tested) checks the cancel window, ground rule, stamina and the light combo index. `start_buffered_action` spends stamina and locks in the direction. `tick_action` advances time and inserts or removes `Invulnerable`.
+  - **Movement modes:** Free, Slowed(f), Locked and Scripted(speed fn). The controller obeys them. Jump and sprint only work with no action running.
+  - **Damage:** `DamageMessage { target, amount }`, sent with `MessageWriter`. It's ignored while `Invulnerable`. Otherwise the target goes to Hurt, or to Dead at 0 HP, which nothing can interrupt. Dead currently respawns at `PLAYER_SPAWN` after 3 s (Phase 6 replaces this with the Hearth).
+  - **FixedUpdate order:** `PlayerSystems::{Damage, Actions, Stats, Movement}`, chained.
+  - **What's left for Phase 4:** bind Shift tap to Roll/Backstep (release under 0.25 s, before sprint starts) and add a visual for the roll. **Phase 5:** bind LMB tap/hold and the airborne attack, and add swing visuals and hitboxes. **Phase 6:** bind R to DrinkAle, which starts healing in the active phase.
+  - **Debug:** F3 toggles the overlay. In debug builds, H deals 15 damage and 1–6 request each action. Autopilot now also runs a timeline: roll → a hit during the roll is ignored → a hit while free (Hurt, HP 90) → light combo 0,1,2 → lethal hit → respawn. Grep the log for `action`, `autopilot` and `ignored`.
+  - The default UI font has no "—" glyph, so use ASCII in UI text.
