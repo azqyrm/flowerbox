@@ -3,6 +3,8 @@
 mod arena;
 mod camera;
 mod debug;
+mod input;
+mod player;
 mod tuning;
 
 use avian3d::prelude::*;
@@ -18,6 +20,12 @@ fn main() {
             ..default()
         }))
         .add_plugins(PhysicsPlugins::default())
-        .add_plugins((arena::ArenaPlugin, camera::CameraPlugin, debug::DebugPlugin))
+        .add_plugins((
+            arena::ArenaPlugin,
+            camera::CameraPlugin,
+            input::InputPlugin,
+            player::PlayerPlugin,
+            debug::DebugPlugin,
+        ))
         .run();
 }

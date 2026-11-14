@@ -167,10 +167,10 @@ claude_ds/
 - [x] A temporary free or orbit camera to look around
 
 ### Phase 2 — Player controller and camera
-- [ ] Spawn the primitive human and the sword attached to the hand
-- [ ] Kinematic controller: WASD relative to the camera, rotation toward movement, gravity, ground check (shape cast), slide along walls
-- [ ] Jump with coyote time, plus sprint on held Shift
-- [ ] Third-person orbit camera (mouse) with a collision pull-in so it never clips through walls. Cursor grab and release.
+- [x] Spawn the primitive human and the sword attached to the hand
+- [x] Kinematic controller: WASD relative to the camera, rotation toward movement, gravity, ground check (shape cast), slide along walls
+- [x] Jump with coyote time, plus sprint on held Shift
+- [x] Third-person orbit camera (mouse) with a collision pull-in so it never clips through walls. Cursor grab and release.
 
 ### Phase 3 — Stats and action state machine
 - [ ] `Health`, `Stamina` (with regen delay), `Invulnerable` components
@@ -248,3 +248,12 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - The ring wall is made of 40 box segments, each with its own collider.
   - Some import paths differ from older docs: `bevy::camera::Hdr`, `bevy::post_process::bloom::Bloom`, `bevy::core_pipeline::tonemapping::Tonemapping`, and `GlobalAmbientLight` is a resource.
   - The temporary orbit camera uses right mouse to rotate and the wheel to zoom.
+- **N7 (2026-11-14) — automated movement test:** `FLOWERBOX_AUTOPILOT=1 timeout -s INT 12 ./target/debug/flowerbox > log 2>&1` makes the player walk camera-forward (-Z from spawn) and jump every 2 s, and logs `player pos/vel/grounded/r` every 0.5 s (`src/debug.rs`, `input.rs`).
+  - Expected result: speed 4.5 m/s, a jump of about 1.1 m, the player slides around the pillar at (0, -14), and it stops at r ≈ 17.65 (wall minus the capsule radius).
+  - Extend the autopilot when later phases need scripted input (roll, attacks).
+- **N8 (2026-11-14) — Phase 2 architecture:**
+  - Raw input (leafwing `ActionState<Action>`) is turned into the `PlayerInput` component in `Update`: a camera-relative `move_dir`, a `jump_buffer` and a `dodge_held` timer. Shift held for 0.25 s or longer means sprint; a shorter tap is reserved for the roll.
+  - The controller runs in `FixedUpdate` and only reads `PlayerInput`. It uses avian's `MoveAndSlide` system param (new in avian 0.8, in `avian3d::character_controller`). Ground is any hit with normal.y > 0.7.
+  - The player has `RigidBody::Kinematic` and a capsule (radius 0.35, length 1.1), plus `TransformInterpolation` for smooth rendering. The camera runs in `PostUpdate` before `TransformSystems::Propagate`.
+  - The model is a child `PlayerModel` whose origin is at the feet and which faces -Z. `RightHandSocket` and `LeftHandSocket` are where weapons attach (for Phase 7). The facing angle is `CharacterController::facing`.
+  - Cursor: grabbed at startup, Esc releases it, and a left click grabs it again. **Phase 5:** the attack system must ignore the left click that re-grabs the cursor, and should only fire while the cursor is grabbed.
