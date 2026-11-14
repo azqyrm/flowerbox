@@ -19,9 +19,9 @@ use crate::tuning::*;
 pub enum ActionRequest {
     Roll,
     Backstep,
+    /// Becomes a jump attack while airborne.
     LightAttack,
     HeavyAttack,
-    JumpAttack,
     DrinkAle,
 }
 
@@ -272,12 +272,12 @@ pub fn resolve_request(
     let kind = match request {
         ActionRequest::Roll => ActionKind::Roll,
         ActionRequest::Backstep => ActionKind::Backstep,
+        ActionRequest::LightAttack if !grounded => ActionKind::JumpAttack,
         ActionRequest::LightAttack => match current.map(|a| a.kind) {
             Some(ActionKind::LightAttack(n)) if n + 1 < LIGHT_COMBO_MAX => ActionKind::LightAttack(n + 1),
             _ => ActionKind::LightAttack(0),
         },
         ActionRequest::HeavyAttack => ActionKind::HeavyAttack,
-        ActionRequest::JumpAttack => ActionKind::JumpAttack,
         ActionRequest::DrinkAle => ActionKind::DrinkAle,
     };
     let def = action_def(kind);
@@ -408,8 +408,13 @@ mod tests {
         let mut empty = Stamina::new(100.0);
         empty.spend(100.0);
         assert_eq!(resolve_request(None, ActionRequest::Roll, false, &full), None, "no roll in the air");
-        assert_eq!(resolve_request(None, ActionRequest::JumpAttack, true, &full), None, "jump attack needs air");
-        assert_eq!(resolve_request(None, ActionRequest::JumpAttack, false, &full), Some(ActionKind::JumpAttack));
+        assert_eq!(resolve_request(None, ActionRequest::LightAttack, true, &full), Some(ActionKind::LightAttack(0)));
+        assert_eq!(
+            resolve_request(None, ActionRequest::LightAttack, false, &full),
+            Some(ActionKind::JumpAttack),
+            "light attack in the air = jump attack"
+        );
+        assert_eq!(resolve_request(None, ActionRequest::HeavyAttack, false, &full), None, "no heavy in the air");
         assert_eq!(resolve_request(None, ActionRequest::Roll, true, &empty), None, "no stamina");
         assert_eq!(resolve_request(None, ActionRequest::DrinkAle, true, &empty), Some(ActionKind::DrinkAle));
     }

@@ -101,7 +101,7 @@ fn move_character(
         }
 
         // Move and slide against the level geometry.
-        let mut grounded = false;
+        let filter = SpatialQueryFilter::from_excluded_entities([entity]);
         let out = move_and_slide.move_and_slide(
             collider,
             tf.translation,
@@ -109,17 +109,32 @@ fn move_character(
             horizontal + Vec3::Y * vy,
             time.delta(),
             &MoveAndSlideConfig::default(),
-            &SpatialQueryFilter::from_excluded_entities([entity]),
-            |hit| {
-                if hit.normal.y > GROUND_NORMAL_MIN_Y {
-                    grounded = true;
-                }
-                MoveAndSlideHitResponse::Accept
-            },
+            &filter,
+            |_| MoveAndSlideHitResponse::Accept,
         );
         tf.translation = out.position;
         ctrl.velocity = out.projected_velocity;
-        ctrl.grounded = grounded;
+
+        // Ground probe: a short downward cast after moving. The sweep above is mostly
+        // horizontal while walking and often misses the floor, so it can't decide grounding.
+        // Skipped while rising so a jump isn't immediately re-grounded.
+        ctrl.grounded = false;
+        if ctrl.velocity.y <= 0.0 {
+            let probe = move_and_slide.spatial_query.cast_shape(
+                collider,
+                tf.translation,
+                Quat::IDENTITY,
+                Dir3::NEG_Y,
+                &ShapeCastConfig::from_max_distance(GROUND_PROBE_DISTANCE),
+                &filter,
+            );
+            if let Some(hit) = probe.filter(|h| h.normal1.y > GROUND_NORMAL_MIN_Y) {
+                ctrl.grounded = true;
+                // Snap down onto the floor, keeping the controller's skin gap.
+                tf.translation.y -= (hit.distance - GROUND_SKIN).max(0.0);
+                ctrl.velocity.y = 0.0;
+            }
+        }
         tf.rotation = Quat::from_rotation_y(ctrl.facing);
     }
 }
