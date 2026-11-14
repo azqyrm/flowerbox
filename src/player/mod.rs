@@ -3,6 +3,7 @@
 pub mod action;
 pub mod controller;
 pub mod stats;
+pub mod visuals;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -31,7 +32,7 @@ impl Plugin for PlayerPlugin {
                     stats::update_stamina.in_set(PlayerSystems::Stats),
                 ),
             )
-            .add_plugins(controller::ControllerPlugin);
+            .add_plugins((controller::ControllerPlugin, visuals::VisualsPlugin));
     }
 }
 

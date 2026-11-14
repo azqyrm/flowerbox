@@ -98,14 +98,17 @@ fn gather_player_input(
     let dt = time.delta_secs();
 
     for (actions, mut input) in &mut players {
-        let mut stick = actions.clamped_axis_pair(&Action::Move);
+        let stick = actions.clamped_axis_pair(&Action::Move);
         let mut jump = actions.just_pressed(&Action::Jump);
+        input.move_dir = (right * stick.x + forward * stick.y).clamp_length_max(1.0);
         if autopilot.is_some() {
+            // Walk along world -Z (toward the center, then the far wall), independent of the
+            // camera so FLOWERBOX_CAM can film from any side.
             let t = time.elapsed_secs();
-            stick = Vec2::new(0.0, 1.0); // walk forward (toward the arena center, then the wall)
+            // Stands still from 10.8 s to 11.6 s so the script can test the backstep.
+            input.move_dir = if (10.8..11.6).contains(&t) { Vec3::ZERO } else { Vec3::NEG_Z };
             jump = (t % 2.0) < dt && t > 1.0;
         }
-        input.move_dir = (right * stick.x + forward * stick.y).clamp_length_max(1.0);
 
         input.jump_buffer = if jump { JUMP_BUFFER } else { (input.jump_buffer - dt).max(0.0) };
 
@@ -114,9 +117,18 @@ fn gather_player_input(
             input.buffered = None;
         }
 
+        // Shift: a short tap rolls on release, holding sprints.
+        if actions.just_released(&Action::DodgeSprint) && is_dodge_tap(input.dodge_held) {
+            input.buffer(ActionRequest::Roll);
+        }
         input.dodge_held = if actions.pressed(&Action::DodgeSprint) { input.dodge_held + dt } else { 0.0 };
         input.sprint = input.dodge_held >= SPRINT_HOLD_THRESHOLD;
     }
+}
+
+/// A Shift press released before sprint kicked in counts as a roll (Souls-style: roll on release).
+pub fn is_dodge_tap(held_seconds: f32) -> bool {
+    held_seconds < SPRINT_HOLD_THRESHOLD
 }
 
 fn set_grab(options: &mut CursorOptions, grab: bool) {
@@ -144,4 +156,17 @@ fn toggle_cursor(
 /// True while the cursor is captured by the game (camera look should only apply then).
 pub fn cursor_grabbed(cursor: &CursorOptions) -> bool {
     cursor.grab_mode != CursorGrabMode::None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_shift_press_rolls_long_press_sprints() {
+        assert!(is_dodge_tap(0.0));
+        assert!(is_dodge_tap(SPRINT_HOLD_THRESHOLD - 0.01));
+        assert!(!is_dodge_tap(SPRINT_HOLD_THRESHOLD));
+        assert!(!is_dodge_tap(2.0));
+    }
 }
