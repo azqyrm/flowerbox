@@ -1,21 +1,14 @@
-//! Kinematic character controller: camera-relative movement, turning, gravity,
-//! ground detection, jump (coyote time + buffer) and sprint. Uses avian's move-and-slide.
+//! Kinematic character controller for any character: follows its [`MoveIntent`] (turning,
+//! walking, sprinting, jumping with coyote time) unless the running action overrides movement.
+//! Gravity, ground detection and collision via avian's move-and-slide.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use super::action::{ActionMovement, ActionPhase, PlayerAction};
+use super::action::{ActionMovement, ActionPhase, CharacterAction};
+use super::MoveIntent;
 use super::stats::Stamina;
-use crate::input::PlayerInput;
 use crate::tuning::*;
-
-pub struct ControllerPlugin;
-
-impl Plugin for ControllerPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, move_character.in_set(super::PlayerSystems::Movement));
-    }
-}
 
 #[derive(Component, Debug)]
 pub struct CharacterController {
@@ -47,25 +40,31 @@ fn angle_diff(from: f32, to: f32) -> f32 {
     if d > std::f32::consts::PI { d - std::f32::consts::TAU } else { d }
 }
 
-fn move_character(
+pub(super) fn move_character(
     time: Res<Time>,
     move_and_slide: MoveAndSlide,
-    mut q: Query<(Entity, &Collider, &mut CharacterController, &mut PlayerInput, &PlayerAction, &Stamina, &mut Transform)>,
+    mut q: Query<(Entity, &Collider, &mut CharacterController, &mut MoveIntent, &CharacterAction, &Stamina, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
-    for (entity, collider, mut ctrl, mut input, action, stamina, mut tf) in &mut q {
+    for (entity, collider, mut ctrl, mut intent, action, stamina, mut tf) in &mut q {
         let free = action.current.is_none();
-        let accel = if ctrl.grounded { GROUND_ACCEL } else { AIR_ACCEL };
         let horizontal = Vec3::new(ctrl.velocity.x, 0.0, ctrl.velocity.z);
 
-        // Horizontal velocity: from input, slowed, locked, or driven by the action.
+        // Horizontal velocity: from the intent, slowed, locked, or driven by the action.
         let (wish, horizontal) = match action.movement() {
             ActionMovement::Free | ActionMovement::Slowed(_) => {
                 let factor = if let ActionMovement::Slowed(f) = action.movement() { f } else { 1.0 };
-                ctrl.sprinting = free && input.sprint && ctrl.grounded && stamina.can_spend()
-                    && input.move_dir.length_squared() > 0.01;
+                let moving = intent.dir.length_squared() > 0.01;
+                ctrl.sprinting = free && intent.sprint && ctrl.grounded && stamina.can_spend() && moving;
                 let speed = if ctrl.sprinting { SPRINT_SPEED } else { WALK_SPEED } * factor;
-                (input.move_dir, approach(horizontal, input.move_dir * speed, accel * dt))
+                let target = if ctrl.grounded {
+                    intent.dir * speed
+                } else {
+                    // In the air: keep the momentum you jumped with (a running jump stays fast).
+                    intent.dir * speed.max(horizontal.length())
+                };
+                let accel = if ctrl.grounded { GROUND_ACCEL } else { AIR_ACCEL };
+                (intent.dir, approach(horizontal, target, accel * dt))
             }
             ActionMovement::Locked => {
                 ctrl.sprinting = false;
@@ -75,9 +74,11 @@ fn move_character(
                 ctrl.sprinting = false;
                 let a = action.current.expect("scripted movement needs an action");
                 (Vec3::ZERO, a.dir * speed(a.elapsed))
-            }            ActionMovement::Plunge => {
+            }
+            ActionMovement::Plunge => {
+                // Keep the jump's horizontal momentum: a moving jump attack dives forward.
                 ctrl.sprinting = false;
-                (Vec3::ZERO, approach(horizontal, Vec3::ZERO, AIR_ACCEL * dt))
+                (Vec3::ZERO, horizontal)
             }
         };
 
@@ -105,10 +106,10 @@ fn move_character(
                 _ => {}
             }
         }
-        if free && input.jump_buffer > 0.0 && ctrl.coyote > 0.0 {
+        if free && intent.jump_buffer > 0.0 && ctrl.coyote > 0.0 {
             vy = (2.0 * GRAVITY * JUMP_HEIGHT).sqrt();
             ctrl.coyote = 0.0;
-            input.jump_buffer = 0.0;
+            intent.jump_buffer = 0.0;
         }
 
         // Move and slide against the level geometry.

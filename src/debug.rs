@@ -1,37 +1,39 @@
-//! Dev helpers for manual and automated checks (see ROADMAP notes N5, N7, N9).
+//! Dev helpers for manual and automated checks (see ROADMAP notes N5, N7, N9, N12, N13).
 //!
-//! - **F3**: toggle the debug overlay (action state, timers, buffer, stats) and the cyan
-//!   i-frame ring shown at the player's feet while `Invulnerable`.
+//! - **F3**: toggle the debug overlay (action state, timers, buffer, stats), the cyan i-frame
+//!   ring at the player's feet and the red blade hitbox during active frames.
 //! - Debug builds only: **H** = take 15 damage; **1–4** = request Roll (backstep when standing still),
-//!   Light (jump attack when airborne), Heavy, Drink (until Phases 4–6 bind the real inputs).
+//!   Light (jump attack when airborne, running attack when sprinting), Heavy, Drink.
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
 //!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120), or `FLOWERBOX_SHOT_TIME=secs`
-//!   captures at a game time instead (useful with the autopilot timeline). `FLOWERBOX_OVERLAY=1` shows the overlay at start.
-//! - `FLOWERBOX_AUTOPILOT=1` → walks forward, jumps every 2 s and runs a scripted action/damage
+//!   captures at a game time instead. `FLOWERBOX_OVERLAY=1` shows the overlay at start.
+//! - `FLOWERBOX_AUTOPILOT=1` → walks along -Z, jumps every 2 s and runs a scripted action/damage
 //!   timeline (see `autopilot_script`); position and action changes are logged.
-//! - `FLOWERBOX_AUTOPILOT=combat` → stands 1.5 m in front of the training dummy and drives the
-//!   real attack-button logic through a timeline (see `combat_attack_button`). ROADMAP N12.
+//! - `FLOWERBOX_AUTOPILOT=combat` → fights the training dummy through the real attack-button
+//!   logic (see `COMBAT_PRESSES` / `combat_movement`).
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::time::common_conditions::on_timer;
 
-use crate::combat::{Dummy, blade_world};
+use crate::character::action::{ActionKind, ActionPhase, ActionRequest, CharacterAction};
+use crate::character::controller::CharacterController;
+use crate::character::stats::{DamageMessage, Health, Invulnerable, Stamina};
+use crate::character::{ActionIntent, MoveIntent};
+use crate::combat::{Dummy, Weapon, blade_world, damage_multiplier};
+use crate::humanoid::{HumanoidRig, HumanoidSpec};
 use crate::input::{Autopilot, PlayerInput};
-use crate::player::action::ActionPhase;
-use crate::player::pose::damage_multiplier;
 use crate::player::Player;
-use crate::player::action::{ActionKind, ActionRequest, PlayerAction};
-use crate::player::controller::CharacterController;
-use crate::player::stats::{DamageMessage, Health, Invulnerable, Stamina};
 use crate::tuning::*;
 
 pub struct DebugPlugin;
 
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_overlay)
-            .add_systems(Update, (toggle_overlay, update_overlay, log_action_changes, spawn_iframe_shell, show_iframe_shell));
+        app.add_systems(Startup, spawn_overlay).add_systems(
+            Update,
+            (toggle_overlay, update_overlay, log_action_changes, spawn_iframe_ring, show_iframe_ring, draw_blade_hitbox),
+        );
         if cfg!(debug_assertions) {
             app.add_systems(Update, debug_keys);
         }
@@ -41,18 +43,21 @@ impl Plugin for DebugPlugin {
             app.insert_resource(AutoScreenshot { path, frame: 0, at, at_time, taken_frame: None })
                 .add_systems(Update, auto_screenshot);
         }
-        app.add_systems(Update, draw_blade_hitbox);
-        if std::env::var("FLOWERBOX_AUTOPILOT").as_deref() == Ok("combat") {
-            app.insert_resource(Autopilot { walk_scripted: false, attack_button: Some(combat_attack_button) })
-                .add_systems(Update, (combat_script, log_dummy));
-        } else if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() {
-            app.insert_resource(Autopilot { walk_scripted: true, ..default() })
-                .init_resource::<AirborneTicks>()
-                .add_systems(FixedLast, count_airborne)
-                .add_systems(
-                    Update,
-                    (log_player.run_if(on_timer(std::time::Duration::from_millis(500))), autopilot_script),
-                );
+        match std::env::var("FLOWERBOX_AUTOPILOT").as_deref() {
+            Ok("combat") => {
+                app.insert_resource(Autopilot { movement: Some(combat_movement), attack_button: Some(combat_attack_button) })
+                    .add_systems(Update, (combat_script, log_dummy));
+            }
+            Ok(_) => {
+                app.insert_resource(Autopilot { movement: Some(default_movement), attack_button: None })
+                    .init_resource::<AirborneTicks>()
+                    .add_systems(FixedLast, count_airborne)
+                    .add_systems(
+                        Update,
+                        (log_player.run_if(on_timer(std::time::Duration::from_millis(500))), autopilot_script),
+                    );
+            }
+            Err(_) => {}
         }
     }
 }
@@ -61,6 +66,10 @@ impl Plugin for DebugPlugin {
 
 #[derive(Component)]
 struct DebugOverlay;
+
+fn overlay_on(overlay: &Query<&Visibility, With<DebugOverlay>>) -> bool {
+    overlay.iter().any(|v| *v != Visibility::Hidden)
+}
 
 fn spawn_overlay(mut commands: Commands) {
     let visible = std::env::var("FLOWERBOX_OVERLAY").is_ok();
@@ -92,10 +101,13 @@ fn toggle_overlay(keys: Res<ButtonInput<KeyCode>>, mut q: Query<&mut Visibility,
 
 fn update_overlay(
     dummies: Query<&Health, (With<Dummy>, Without<Player>)>,
-    player: Query<(&PlayerAction, &PlayerInput, &Health, &Stamina, &CharacterController, Has<Invulnerable>), With<Player>>,
+    player: Query<
+        (&CharacterAction, &ActionIntent, &PlayerInput, &Health, &Stamina, &CharacterController, Has<Invulnerable>),
+        With<Player>,
+    >,
     mut text: Query<(&mut Text, &Visibility), With<DebugOverlay>>,
 ) {
-    let Ok((action, input, hp, st, ctrl, invuln)) = player.single() else { return };
+    let Ok((action, intent, input, hp, st, ctrl, invuln)) = player.single() else { return };
     for (mut text, vis) in &mut text {
         if *vis == Visibility::Hidden {
             continue;
@@ -122,8 +134,8 @@ fn update_overlay(
                 format!("action: - ({loco})")
             }
         };
-        let buffer = match input.buffered {
-            Some(r) => format!("{r:?} ({:.2}s)", input.buffer_left),
+        let buffer = match intent.buffered {
+            Some(r) => format!("{r:?} ({:.2}s)", intent.buffer_left),
             None => "-".into(),
         };
         text.0 = format!(
@@ -145,9 +157,9 @@ fn update_overlay(
 
 /// Glowing ring at the player's feet, visible during i-frames while the overlay is on.
 #[derive(Component)]
-struct IframeShell;
+struct IframeRing;
 
-fn spawn_iframe_shell(
+fn spawn_iframe_ring(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -157,7 +169,7 @@ fn spawn_iframe_shell(
         let ring = commands
             .spawn((
                 Name::new("I-frame Ring"),
-                IframeShell,
+                IframeRing,
                 Mesh3d(meshes.add(Annulus::new(0.5, 0.62))),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::srgb(0.3, 0.9, 1.0),
@@ -175,33 +187,32 @@ fn spawn_iframe_shell(
     }
 }
 
-fn show_iframe_shell(
-    overlay: Query<&Visibility, (With<DebugOverlay>, Without<IframeShell>)>,
+fn show_iframe_ring(
+    overlay: Query<&Visibility, With<DebugOverlay>>,
     player: Query<Has<Invulnerable>, With<Player>>,
-    mut shells: Query<&mut Visibility, With<IframeShell>>,
+    mut rings: Query<&mut Visibility, (With<IframeRing>, Without<DebugOverlay>)>,
 ) {
-    let overlay_on = overlay.iter().any(|v| *v != Visibility::Hidden);
-    let invulnerable = player.iter().any(|i| i);
-    for mut v in &mut shells {
-        *v = if overlay_on && invulnerable { Visibility::Inherited } else { Visibility::Hidden };
+    let show = overlay_on(&overlay) && player.iter().any(|i| i);
+    for mut v in &mut rings {
+        *v = if show { Visibility::Inherited } else { Visibility::Hidden };
     }
 }
 
-/// While the overlay is on, draws the blade hitbox in red during an attack's active frames.
+/// While the overlay is on, draws blade hitboxes in red during active frames (any armed humanoid).
 fn draw_blade_hitbox(
     mut gizmos: Gizmos,
     overlay: Query<&Visibility, With<DebugOverlay>>,
-    player: Query<(&Transform, &PlayerAction), With<Player>>,
+    attackers: Query<(&Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &Weapon)>,
 ) {
-    if !overlay.iter().any(|v| *v != Visibility::Hidden) {
+    if !overlay_on(&overlay) {
         return;
     }
-    for (tf, action) in &player {
+    for (tf, action, spec, rig, weapon) in &attackers {
         let Some(cur) = action.current else { continue };
         if damage_multiplier(&cur).is_none() || cur.phase() != ActionPhase::Active {
             continue;
         }
-        let (a, b) = blade_world(tf, &cur);
+        let Some((a, b)) = blade_world(tf, spec, rig, weapon, &cur) else { continue };
         gizmos.line(a, b, Color::srgb(1.0, 0.1, 0.1));
         gizmos.sphere(Isometry3d::from_translation(b), BLADE_HIT_RADIUS, Color::srgb(1.0, 0.3, 0.1));
     }
@@ -212,9 +223,9 @@ fn draw_blade_hitbox(
 fn debug_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut damage: MessageWriter<DamageMessage>,
-    mut player: Query<(Entity, &mut PlayerInput), With<Player>>,
+    mut player: Query<(Entity, &mut ActionIntent), With<Player>>,
 ) {
-    let Ok((entity, mut input)) = player.single_mut() else { return };
+    let Ok((entity, mut intent)) = player.single_mut() else { return };
     if keys.just_pressed(KeyCode::KeyH) {
         damage.write(DamageMessage { target: entity, amount: 15.0, from: None });
     }
@@ -226,12 +237,12 @@ fn debug_keys(
     ];
     for (key, request) in requests {
         if keys.just_pressed(key) {
-            input.buffer(request);
+            intent.buffer(request);
         }
     }
 }
 
-// ── Automated checks ─────────────────────────────────────────────────────
+// ── Screenshots ──────────────────────────────────────────────────────────
 
 #[derive(Resource)]
 struct AutoScreenshot {
@@ -265,61 +276,58 @@ fn auto_screenshot(
     }
 }
 
+// ── Default autopilot (FLOWERBOX_AUTOPILOT=1) ────────────────────────────
+
+/// True on the frame where time `at` is crossed.
+fn crossed(t: f32, dt: f32, at: f32) -> bool {
+    t - dt < at && t >= at
+}
+
+/// Walk along world -Z (camera-independent, so FLOWERBOX_CAM can film any side), jump every 2 s,
+/// stand still from 10.8 to 11.6 s for the backstep test.
+fn default_movement(t: f32, dt: f32) -> (Vec3, bool, bool) {
+    let dir = if (10.8..11.6).contains(&t) { Vec3::ZERO } else { Vec3::NEG_Z };
+    (dir, false, (t % 2.0) < dt && t > 1.0)
+}
+
 /// Timeline that exercises the action system. Expected log (N9): roll → damage ignored →
-/// hurt (HP 90) → light combo 0,1,2 → jump attack → death → respawn at spawn with full HP →
+/// hurt (HP 90) → light combo 0,1,2 → jump attack → death → respawn with full HP →
 /// backstep (standing still at 11 s).
 fn autopilot_script(
     time: Res<Time>,
-    mut last: Local<f32>,
     mut damage: MessageWriter<DamageMessage>,
-    mut player: Query<(Entity, &mut PlayerInput), With<Player>>,
+    mut player: Query<(Entity, &mut ActionIntent), With<Player>>,
 ) {
-    let Ok((entity, mut input)) = player.single_mut() else { return };
-    let (prev, now) = (*last, time.elapsed_secs());
-    *last = now;
-    let crossed = |t: f32| prev < t && now >= t;
-    if crossed(1.0) {
-        input.buffer(ActionRequest::Roll);
+    let Ok((entity, mut intent)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let at = |s: f32| crossed(t, dt, s);
+    if at(1.0) {
+        intent.buffer(ActionRequest::Roll);
     }
-    if crossed(1.2) {
+    if at(1.2) {
         info!("autopilot: 10 damage during roll");
         damage.write(DamageMessage { target: entity, amount: 10.0, from: None });
     }
-    if crossed(2.5) {
+    if at(2.5) {
         info!("autopilot: 10 damage while free");
         damage.write(DamageMessage { target: entity, amount: 10.0, from: None });
     }
-    for t in [2.9, 3.25, 3.6] {
-        if crossed(t) {
-            input.buffer(ActionRequest::LightAttack);
+    for s in [2.9, 3.25, 3.6] {
+        if at(s) {
+            intent.buffer(ActionRequest::LightAttack);
         }
     }
     // Autopilot jumps at t=6.0; a light attack shortly after becomes a jump attack.
-    if crossed(6.15) {
-        input.buffer(ActionRequest::LightAttack);
+    if at(6.15) {
+        intent.buffer(ActionRequest::LightAttack);
     }
-    if crossed(11.0) {
-        info!("autopilot: roll while standing still (expect Backstep)");
-        input.buffer(ActionRequest::Roll);
-    }
-    if crossed(7.5) {
+    if at(7.5) {
         info!("autopilot: lethal damage");
         damage.write(DamageMessage { target: entity, amount: 500.0, from: None });
     }
-}
-
-fn log_action_changes(
-    mut last: Local<Option<ActionKind>>,
-    q: Query<(&PlayerAction, &Health, &Stamina, &Transform), With<Player>>,
-) {
-    let Ok((action, hp, st, tf)) = q.single() else { return };
-    let now = action.current.map(|a| a.kind);
-    if now != *last {
-        info!(
-            "action {:?} -> {:?}  (HP {:.0}, ST {:.0}, pos {:.2})",
-            *last, now, hp.current, st.current, tf.translation
-        );
-        *last = now;
+    if at(11.0) {
+        info!("autopilot: roll while standing still (expect Backstep)");
+        intent.buffer(ActionRequest::Roll);
     }
 }
 
@@ -347,15 +355,39 @@ fn log_player(mut ticks: ResMut<AirborneTicks>, q: Query<(&Transform, &Character
     ticks.0 = 0;
 }
 
+fn log_action_changes(
+    mut last: Local<Option<ActionKind>>,
+    q: Query<(&CharacterAction, &Health, &Stamina, &Transform), With<Player>>,
+) {
+    let Ok((action, hp, st, tf)) = q.single() else { return };
+    let now = action.current.map(|a| a.kind);
+    if now != *last {
+        info!(
+            "action {:?} -> {:?}  (HP {:.0}, ST {:.0}, pos {:.2})",
+            *last, now, hp.current, st.current, tf.translation
+        );
+        *last = now;
+    }
+}
+
 // ── Combat autopilot (FLOWERBOX_AUTOPILOT=combat) ────────────────────────
 
 /// Attack button presses as (start, end) seconds. Expected (dummy has 120 HP):
 /// light ×3 (combo 0,1,2: 20 each) → partial heavy (~36) → jump attack (36, breaks the dummy)
-/// → dummy resets at ~8.7 s → fully charged heavy (40) → two light taps.
-const COMBAT_PRESSES: [(f32, f32); 8] =
-    [(2.0, 2.08), (2.35, 2.43), (2.7, 2.78), (3.8, 4.4), (5.62, 5.68), (9.0, 10.4), (11.4, 11.48), (11.85, 11.93)];
-/// Jump right before the jump-attack tap.
-const COMBAT_JUMP_AT: f32 = 5.5;
+/// → dummy resets at ~8.7 s → full heavy (40) → two light taps (20 each)
+/// → running attack out of a sprint (26) → walking jump attack (36, breaks it again).
+const COMBAT_PRESSES: [(f32, f32); 10] = [
+    (2.0, 2.08),
+    (2.35, 2.43),
+    (2.7, 2.78),
+    (3.8, 4.4),
+    (5.62, 5.68),
+    (9.0, 10.4),
+    (11.4, 11.48),
+    (11.85, 11.93),
+    (13.15, 13.2),
+    (14.85, 14.9),
+];
 
 fn combat_attack_button(t: f32, dt: f32) -> (bool, bool, bool) {
     let mut out = (false, false, false);
@@ -369,23 +401,33 @@ fn combat_attack_button(t: f32, dt: f32) -> (bool, bool, bool) {
     out
 }
 
-/// Puts the player 1.5 m in front of the dummy, facing it, and jumps once on cue.
+/// Stand still, except: a standing jump at 5.5 s, a sprint toward the dummy from 12.7 s
+/// (running attack), and a walk + jump toward it from 14.6 s (moving jump attack).
+fn combat_movement(t: f32, dt: f32) -> (Vec3, bool, bool) {
+    let jump = crossed(t, dt, 5.5) || crossed(t, dt, 14.7);
+    if (12.7..13.3).contains(&t) {
+        (Vec3::NEG_Z, true, false)
+    } else if (14.6..15.2).contains(&t) {
+        (Vec3::NEG_Z, false, jump)
+    } else {
+        (Vec3::ZERO, false, jump)
+    }
+}
+
+/// Teleports the player to its start marks (dummy at the origin, player on +Z facing -Z).
 fn combat_script(
     time: Res<Time>,
-    mut placed: Local<bool>,
-    mut last: Local<f32>,
-    mut player: Query<(&mut Transform, &mut PlayerInput), With<Player>>,
+    mut player: Query<(&mut Transform, &mut CharacterController, &mut MoveIntent), With<Player>>,
 ) {
-    let Ok((mut tf, mut input)) = player.single_mut() else { return };
-    let (prev, now) = (*last, time.elapsed_secs());
-    *last = now;
-    if !*placed && now > 0.2 {
-        let (x, z) = DUMMY_POSITION;
-        tf.translation = Vec3::new(x, PLAYER_HALF_HEIGHT + 0.02, z + 1.5);
-        *placed = true;
-    }
-    if prev < COMBAT_JUMP_AT && now >= COMBAT_JUMP_AT {
-        input.jump_buffer = JUMP_BUFFER;
+    let Ok((mut tf, mut ctrl, _)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let (x, z) = DUMMY_POSITION;
+    for (at, distance) in [(0.2, 1.5), (12.5, 4.4), (14.4, 4.0)] {
+        if crossed(t, dt, at) {
+            tf.translation = Vec3::new(x, PLAYER_HALF_HEIGHT + 0.02, z + distance);
+            ctrl.velocity = Vec3::ZERO;
+            ctrl.facing = 0.0;
+        }
     }
 }
 

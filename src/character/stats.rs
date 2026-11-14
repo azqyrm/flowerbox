@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use super::action::{ActionKind, PlayerAction};
+use super::action::{ActionKind, CharacterAction};
 use super::controller::CharacterController;
 use crate::tuning::*;
 
@@ -85,7 +85,7 @@ pub struct DamageTaken {
 pub fn apply_damage(
     mut messages: MessageReader<DamageMessage>,
     mut taken: MessageWriter<DamageTaken>,
-    mut q: Query<(&mut Health, Option<&mut PlayerAction>, Has<Invulnerable>)>,
+    mut q: Query<(&mut Health, Option<&mut CharacterAction>, Has<Invulnerable>)>,
 ) {
     for msg in messages.read() {
         let Ok((mut health, action, invulnerable)) = q.get_mut(msg.target) else { continue };
@@ -104,7 +104,7 @@ pub fn apply_damage(
 
 pub(super) fn update_stamina(
     time: Res<Time>,
-    mut q: Query<(&mut Stamina, &PlayerAction, &CharacterController)>,
+    mut q: Query<(&mut Stamina, &CharacterAction, &CharacterController)>,
 ) {
     let dt = time.delta_secs();
     for (mut stamina, action, ctrl) in &mut q {

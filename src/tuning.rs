@@ -93,6 +93,20 @@ pub const LIGHT_RECOVERY: f32 = 0.25;
 pub const LIGHT_CANCEL: f32 = 0.35;
 pub const LIGHT_COST: f32 = 15.0;
 pub const LIGHT_COMBO_MAX: u8 = 3;
+/// Forward step during a light attack (m).
+pub const LIGHT_LUNGE: f32 = 0.45;
+/// Forward step during the heavy swing (m).
+pub const HEAVY_LUNGE: f32 = 0.7;
+
+// Running attack = light attack while sprinting: a leaping slash.
+pub const RUN_ATTACK_STARTUP: f32 = 0.18;
+pub const RUN_ATTACK_ACTIVE: f32 = 0.16;
+pub const RUN_ATTACK_RECOVERY: f32 = 0.4;
+pub const RUN_ATTACK_COST: f32 = 20.0;
+pub const RUN_ATTACK_DISTANCE: f32 = 3.2;
+/// Upward velocity at the start of the leap (m/s).
+pub const RUN_ATTACK_HOP: f32 = 3.2;
+pub const RUN_ATTACK_DAMAGE_MULT: f32 = 1.3;
 
 pub const HEAVY_STARTUP: f32 = 0.12; // short: the charge is the wind-up
 pub const HEAVY_ACTIVE: f32 = 0.15;

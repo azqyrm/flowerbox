@@ -2,8 +2,10 @@
 
 mod arena;
 mod camera;
+mod character;
 mod combat;
 mod debug;
+mod humanoid;
 mod input;
 mod player;
 mod tuning;
@@ -26,6 +28,8 @@ fn main() {
             camera::CameraPlugin,
             combat::CombatPlugin,
             input::InputPlugin,
+            character::CharacterPlugin,
+            humanoid::HumanoidPlugin,
             player::PlayerPlugin,
             debug::DebugPlugin,
         ))
