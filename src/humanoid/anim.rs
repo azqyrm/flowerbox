@@ -14,6 +14,7 @@ use super::{Bone, HumanoidRig, HumanoidSpec};
 use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
 use crate::character::controller::CharacterController;
 use crate::tuning::*;
+use crate::weapon::{EquippedWeapon, Stance, SwingKey, WeaponClass};
 
 fn rx(a: f32) -> Quat {
     Quat::from_rotation_x(a)
@@ -50,17 +51,21 @@ pub struct LocomotionInput {
     pub landing: f32,
     /// Seconds, for idle breathing.
     pub time: f32,
+    /// Held weapon class (its guard stance).
+    pub weapon: WeaponClass,
 }
 
-/// Idle guard: sword arm bent with the blade forward and down, knees soft.
-pub fn guard_pose() -> HumanoidPose {
+/// Idle guard of a weapon class (its `GuardSpec`), knees soft.
+pub fn guard_pose(weapon: WeaponClass) -> HumanoidPose {
+    let g = weapon.moveset().guard;
+    let (arm, elbow) = (rx(g.arm_pitch), rx(g.elbow));
     let mut p = HumanoidPose::default();
-    p.set(Bone::UpperArmR, rx(0.25))
-        .set(Bone::ForearmR, rx(0.7))
-        // The grip keeps the blade pointing forward and down (low guard).
-        .set(Bone::HandR, (rx(0.25) * rx(0.7)).inverse() * Quat::from_euler(EulerRot::XYZ, -1.95, 0.0, -0.15))
-        .set(Bone::UpperArmL, rx(0.1) * rz(-0.1))
-        .set(Bone::ForearmL, rx(0.3))
+    p.set(Bone::UpperArmR, arm)
+        .set(Bone::ForearmR, elbow)
+        // The grip is given relative to the shoulder frame; undo the arm and elbow rotation.
+        .set(Bone::HandR, (arm * elbow).inverse() * Quat::from_euler(EulerRot::XYZ, g.grip.x, g.grip.y, g.grip.z))
+        .set(Bone::UpperArmL, rx(g.off_arm_pitch) * rz(-0.1))
+        .set(Bone::ForearmL, rx(g.off_elbow))
         .set(Bone::ThighL, rx(0.06))
         .set(Bone::ShinL, rx(-0.12))
         .set(Bone::ThighR, rx(0.03))
@@ -70,7 +75,7 @@ pub fn guard_pose() -> HumanoidPose {
 
 /// Walk / run cycle blended by speed, plus airborne and landing poses.
 pub fn locomotion_pose(input: &LocomotionInput) -> HumanoidPose {
-    let mut p = guard_pose();
+    let mut p = guard_pose(input.weapon);
     let walk = (input.speed / WALK_SPEED).clamp(0.0, 1.0);
     let run = ((input.speed - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
     let ph = input.phase;
@@ -100,7 +105,7 @@ pub fn locomotion_pose(input: &LocomotionInput) -> HumanoidPose {
 
     // Airborne: rising tucks one knee up, falling spreads arms and reaches the legs down.
     if input.air > 0.0 {
-        let mut air = guard_pose();
+        let mut air = guard_pose(input.weapon);
         let rising = (input.vertical / 4.0).clamp(-1.0, 1.0) * 0.5 + 0.5;
         air.set(Bone::ThighL, rx(0.3 + 0.5 * rising))
             .set(Bone::ShinL, rx(-0.4 - 0.7 * rising))
@@ -125,15 +130,15 @@ pub fn locomotion_pose(input: &LocomotionInput) -> HumanoidPose {
 
 // ── Actions ──────────────────────────────────────────────────────────────
 
-/// Arm sword-swing keyframe: chest twist/lean and the right arm (straight, blade extending it).
+/// A swing keyframe as rotations: chest twist/lean and the right arm (straight, blade extending it).
 #[derive(Clone, Copy)]
-struct SwingKey {
+struct Key {
     chest: Quat,
     shoulder: Quat,
 }
 
-fn swing_key(chest: Quat, shoulder: Quat) -> SwingKey {
-    SwingKey { chest, shoulder }
+fn key(k: &SwingKey) -> Key {
+    Key { chest: ry(k.chest_yaw) * rx(k.chest_pitch), shoulder: ry(k.arm_yaw) * rx(k.arm_pitch) }
 }
 
 /// Blade continues the arm line during swings.
@@ -141,39 +146,24 @@ fn extended_grip() -> Quat {
     rx(PI)
 }
 
-/// (wind-up, strike end) of every swing.
-fn swing_keys(kind: ActionKind) -> Option<(SwingKey, SwingKey)> {
-    Some(match kind {
-        // right → left
-        ActionKind::LightAttack(0) => (swing_key(ry(-0.45), ry(-0.95) * rx(1.45)), swing_key(ry(0.55), ry(0.75) * rx(1.45))),
-        // left → right
-        ActionKind::LightAttack(1) => (swing_key(ry(0.5), ry(0.8) * rx(1.5)), swing_key(ry(-0.45), ry(-0.95) * rx(1.4))),
-        // overhead
-        ActionKind::LightAttack(_) => (swing_key(rx(0.15), rx(2.7)), swing_key(rx(-0.3), rx(0.95))),
-        ActionKind::HeavyCharge | ActionKind::HeavyAttack => {
-            (swing_key(rx(0.2) * ry(0.15), ry(0.1) * rx(3.1)), swing_key(rx(-0.35), rx(1.1)))
-        }
-        ActionKind::JumpAttack => (swing_key(rx(0.15), rx(3.05)), swing_key(rx(-0.4), rx(0.75))),
-        // diagonal: high right → low left
-        ActionKind::RunningAttack => {
-            (swing_key(ry(-0.5) * rx(0.1), ry(-0.6) * rx(2.6)), swing_key(ry(0.3) * rx(-0.35), ry(0.35) * rx(1.1)))
-        }
-        _ => return None,
-    })
+/// (wind-up, strike end) of the action's attack, from the weapon class's moveset.
+fn swing_keys(a: &ActiveAction) -> Option<(Key, Key)> {
+    let spec = a.attack()?;
+    Some((key(&spec.windup), key(&spec.strike)))
 }
 
 /// Time of the active phase over which the swing travels (the jump attack strikes quickly,
 /// then holds the blade down while plunging).
 fn strike_duration(a: &ActiveAction) -> f32 {
     match a.kind {
-        ActionKind::JumpAttack => JUMP_ATTACK_STRIKE,
+        ActionKind::JumpAttack => a.weapon.moveset().jump_strike_time,
         _ => a.def.active,
     }
 }
 
 /// Swing progress → (from, to, t) keys for the current phase.
-fn swing_state(a: &ActiveAction, rest: SwingKey) -> Option<(SwingKey, SwingKey, f32)> {
-    let (windup, strike) = swing_keys(a.kind)?;
+fn swing_state(a: &ActiveAction, rest: Key) -> Option<(Key, Key, f32)> {
+    let (windup, strike) = swing_keys(a)?;
     let d = &a.def;
     if a.kind == ActionKind::HeavyCharge {
         return Some((rest, windup, a.elapsed / 0.2));
@@ -193,7 +183,7 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
     let d = &a.def;
     let total = d.total();
     let p01 = a.elapsed / total.max(1e-3);
-    let mut p = guard_pose();
+    let mut p = guard_pose(a.weapon);
     match a.kind {
         ActionKind::Roll => {
             // Tucked forward somersault around the body's middle, finished a bit before recovery ends.
@@ -227,14 +217,14 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
         | ActionKind::HeavyAttack
         | ActionKind::JumpAttack
         | ActionKind::RunningAttack => {
-            let rest = swing_key(Quat::IDENTITY, p.get(Bone::UpperArmR));
+            let rest = Key { chest: Quat::IDENTITY, shoulder: p.get(Bone::UpperArmR) };
             let (from, to, t) = swing_state(a, rest)?;
             let t = ease(t);
             let swinging = !(matches!(a.phase(), ActionPhase::Recovery | ActionPhase::Done)) || a.kind == ActionKind::HeavyCharge;
             p.add(Bone::Chest, from.chest.slerp(to.chest, t));
             p.set(Bone::UpperArmR, from.shoulder.slerp(to.shoulder, t));
             // Straighten the arm and extend the blade during the swing, back to the guard in recovery.
-            let guard = guard_pose();
+            let guard = guard_pose(a.weapon);
             let (fore, grip) = if swinging {
                 let k = if a.kind == ActionKind::HeavyAttack { 1.0 } else { ease(a.elapsed / 0.08) };
                 (guard.get(Bone::ForearmR).slerp(Quat::IDENTITY, k), guard.get(Bone::HandR).slerp(extended_grip(), k))
@@ -254,12 +244,12 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
                 ActionPhase::Active => 1.0,
                 _ => 1.0 - ease((a.elapsed - d.startup - d.active) / d.recovery),
             };
-            match a.kind {
-                ActionKind::JumpAttack => {
+            match a.attack().map(|spec| spec.stance) {
+                Some(Stance::Tucked) => {
                     p.set(Bone::ThighL, rx(0.7 * stance)).set(Bone::ShinL, rx(-1.1 * stance));
                     p.set(Bone::ThighR, rx(0.4 * stance)).set(Bone::ShinR, rx(-1.2 * stance));
                 }
-                ActionKind::RunningAttack => {
+                Some(Stance::Leap) => {
                     p.set(Bone::ThighL, rx(0.85 * stance)).set(Bone::ShinL, rx(-0.9 * stance));
                     p.set(Bone::ThighR, rx(-0.55 * stance)).set(Bone::ShinR, rx(-0.7 * stance));
                 }
@@ -328,11 +318,18 @@ const STRIDE_RUN: f32 = 2.4;
 
 pub fn animate_humanoids(
     time: Res<Time>,
-    mut characters: Query<(&HumanoidSpec, &HumanoidRig, &mut HumanoidAnimator, &CharacterController, &CharacterAction)>,
+    mut characters: Query<(
+        &HumanoidSpec,
+        &HumanoidRig,
+        &mut HumanoidAnimator,
+        &CharacterController,
+        &CharacterAction,
+        Option<&EquippedWeapon>,
+    )>,
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();
-    for (spec, rig, mut anim, ctrl, action) in &mut characters {
+    for (spec, rig, mut anim, ctrl, action, equipped) in &mut characters {
         anim.time += dt;
         let speed = Vec2::new(ctrl.velocity.x, ctrl.velocity.z).length();
         // Smooth speed so the gait blends instead of popping.
@@ -357,6 +354,7 @@ pub fn animate_humanoids(
             vertical: ctrl.velocity.y,
             landing: bell(1.0 - anim.landing) * anim.landing.min(1.0).sqrt(),
             time: anim.time,
+            weapon: equipped.map_or_else(WeaponClass::default, |e| e.class()),
         });
 
         // Action layer: snaps in fast (so swings and hitboxes agree), fades out a bit slower.
@@ -393,20 +391,28 @@ mod tests {
     use crate::humanoid::pose::bone_model_transform;
 
     fn at(kind: ActionKind, elapsed: f32) -> ActiveAction {
-        ActiveAction { elapsed, ..ActiveAction::new(kind, Vec3::NEG_Z) }
+        at_with(WeaponClass::LightSword, kind, elapsed)
     }
 
-    /// Sword tip (1.03 along the hand's +Y) in model space.
-    fn tip(kind: ActionKind, elapsed: f32) -> Vec3 {
+    fn at_with(class: WeaponClass, kind: ActionKind, elapsed: f32) -> ActiveAction {
+        ActiveAction { elapsed, ..ActiveAction::new(kind, Vec3::NEG_Z, class) }
+    }
+
+    /// Tip of a 1.03 m blade (along the hand's +Y) in model space.
+    fn tip_with(class: WeaponClass, kind: ActionKind, elapsed: f32) -> Vec3 {
         let spec = HumanoidSpec::human();
-        let (pose, _) = action_pose(&at(kind, elapsed)).unwrap();
+        let (pose, _) = action_pose(&at_with(class, kind, elapsed)).unwrap();
         bone_model_transform(&spec, &pose, Bone::HandR).transform_point(Vec3::Y * 1.03)
+    }
+
+    fn tip(kind: ActionKind, elapsed: f32) -> Vec3 {
+        tip_with(WeaponClass::LightSword, kind, elapsed)
     }
 
     #[test]
     fn guard_holds_the_sword_forward_and_down() {
         let spec = HumanoidSpec::human();
-        let hand = bone_model_transform(&spec, &guard_pose(), Bone::HandR);
+        let hand = bone_model_transform(&spec, &guard_pose(WeaponClass::LightSword), Bone::HandR);
         let tip = hand.transform_point(Vec3::Y * 1.03);
         assert!(tip.z < -0.5 && tip.y < hand.translation.y, "{tip}");
     }
@@ -430,6 +436,23 @@ mod tests {
             let low = tip(kind, d.startup + d.active);
             assert!(high.y > 2.0, "{kind:?} raised: {high}");
             assert!(low.y < 1.1 && low.z < -0.8, "{kind:?} lands in front: {low}");
+        }
+    }
+
+    /// Every class's strikes must end in front of the character, or they can't hit anything.
+    #[test]
+    fn every_class_strikes_in_front() {
+        for class in WeaponClass::ALL {
+            let n = class.moveset().light.len() as u8;
+            let kinds = (0..n).map(ActionKind::LightAttack).chain([ActionKind::HeavyAttack, ActionKind::RunningAttack]);
+            for kind in kinds {
+                let d = at_with(class, kind, 0.0).def;
+                // Sample the active window; some point of the swing must be well in front.
+                let best_z = (0..=10)
+                    .map(|i| tip_with(class, kind, d.startup + d.active * i as f32 / 10.0).z)
+                    .fold(f32::INFINITY, f32::min);
+                assert!(best_z < -0.9, "{class:?} {kind:?} never reaches forward (min z {best_z})");
+            }
         }
     }
 

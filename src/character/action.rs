@@ -1,4 +1,4 @@
-//! The player's action state machine — the heart of the Soulslike feel.
+//! The action state machine of any character — the heart of the Soulslike feel.
 //!
 //! An *action* (roll, attack, drink, hurt…) runs through three phases:
 //! **startup → active → recovery**. While an action runs it decides how the character
@@ -6,6 +6,9 @@
 //! ([`crate::character::ActionIntent::buffered`]) and only start when the current action reaches its
 //! **cancel window** (`ActionDef::cancel`), or when nothing is running.
 //! Locomotion (idle / walk / sprint / airborne) is simply "no action running".
+//!
+//! Attack timings, costs, lunges and damage come from the **moveset of the weapon class** held
+//! when the action starts (`crate::weapon`); `ActiveAction::weapon` remembers it.
 
 use bevy::prelude::*;
 
@@ -13,6 +16,7 @@ use super::controller::CharacterController;
 use super::stats::{Health, Invulnerable, Stamina};
 use super::{ActionIntent, MoveIntent};
 use crate::tuning::*;
+use crate::weapon::{AttackSpec, EquippedWeapon, WeaponClass};
 
 /// What the player asked for (from input). Turned into an [`ActionKind`] by [`resolve_request`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,8 +63,8 @@ pub enum ActionMovement {
     Slowed(f32),
     /// No input movement; the character decelerates.
     Locked,
-    /// The action drives the horizontal velocity: `dir * speed(elapsed)`.
-    Scripted(fn(f32) -> f32),
+    /// The action drives the horizontal velocity: `dir * curve.speed(elapsed)`.
+    Scripted(MotionCurve),
     /// Jump attack: hang in the air during startup, then dive at `PLUNGE_SPEED`.
     Plunge,
 }
@@ -94,50 +98,62 @@ impl ActionDef {
     }
 }
 
-/// Constant speed that covers `distance` over the active window, eased out in recovery.
-fn dash_speed(elapsed: f32, startup: f32, active: f32, recovery: f32, distance: f32) -> f32 {
-    // Distance split: 85% during active, 15% bleeding off in recovery.
-    let v = distance * 0.85 / active;
-    if elapsed < startup {
-        v * 0.5
-    } else if elapsed < startup + active {
-        v
-    } else {
-        let t = ((elapsed - startup - active) / recovery).clamp(0.0, 1.0);
-        v * 0.6 * (1.0 - t)
+/// Speed profile of a scripted movement (data, so weapon classes can define their own).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MotionCurve {
+    /// Dodge: half speed in startup, constant in active (85% of `distance`), easing out in recovery.
+    Dash { startup: f32, active: f32, recovery: f32, distance: f32 },
+    /// Smooth forward step (sine bell) covering `distance` between `start` and `end` seconds.
+    Lunge { start: f32, end: f32, distance: f32 },
+}
+
+impl MotionCurve {
+    pub fn speed(&self, elapsed: f32) -> f32 {
+        match *self {
+            MotionCurve::Dash { startup, active, recovery, distance } => {
+                let v = distance * 0.85 / active;
+                if elapsed < startup {
+                    v * 0.5
+                } else if elapsed < startup + active {
+                    v
+                } else {
+                    let t = ((elapsed - startup - active) / recovery).clamp(0.0, 1.0);
+                    v * 0.6 * (1.0 - t)
+                }
+            }
+            MotionCurve::Lunge { start, end, distance } => {
+                if elapsed < start || elapsed >= end {
+                    return 0.0;
+                }
+                let t = (elapsed - start) / (end - start);
+                distance * std::f32::consts::PI / (2.0 * (end - start)) * (std::f32::consts::PI * t).sin()
+            }
+        }
     }
 }
 
-/// Smooth forward step covering `distance` between `start` and `end` (seconds since action start).
-fn lunge_speed(elapsed: f32, start: f32, end: f32, distance: f32) -> f32 {
-    if elapsed < start || elapsed >= end {
-        return 0.0;
+/// An attack from a weapon moveset as an action definition; it lunges forward from 30% of the
+/// startup until the end of the active window.
+fn attack_def(spec: &AttackSpec, movement: Option<ActionMovement>, ground: GroundRule, hop: f32) -> ActionDef {
+    let lunge = MotionCurve::Lunge { start: spec.startup * 0.3, end: spec.startup + spec.active, distance: spec.lunge };
+    ActionDef {
+        startup: spec.startup,
+        active: spec.active,
+        recovery: spec.recovery,
+        cancel: spec.cancel,
+        stamina_cost: spec.stamina_cost,
+        iframes: None,
+        movement: movement.unwrap_or(if spec.lunge > 0.0 { ActionMovement::Scripted(lunge) } else { ActionMovement::Locked }),
+        ground,
+        hop,
     }
-    // Sine bell integrates to `distance` over the window.
-    let t = (elapsed - start) / (end - start);
-    distance * std::f32::consts::PI / (2.0 * (end - start)) * (std::f32::consts::PI * t).sin()
 }
 
-fn light_lunge(e: f32) -> f32 {
-    lunge_speed(e, LIGHT_STARTUP * 0.3, LIGHT_STARTUP + LIGHT_ACTIVE, LIGHT_LUNGE)
-}
-fn heavy_lunge(e: f32) -> f32 {
-    lunge_speed(e, HEAVY_STARTUP * 0.5, HEAVY_STARTUP + HEAVY_ACTIVE, HEAVY_LUNGE)
-}
-fn running_attack_leap(e: f32) -> f32 {
-    lunge_speed(e, 0.0, RUN_ATTACK_STARTUP + RUN_ATTACK_ACTIVE, RUN_ATTACK_DISTANCE)
-}
-
-fn roll_speed(e: f32) -> f32 {
-    dash_speed(e, ROLL_STARTUP, ROLL_ACTIVE, ROLL_RECOVERY, ROLL_DISTANCE)
-}
-fn backstep_speed(e: f32) -> f32 {
-    dash_speed(e, BACKSTEP_STARTUP, BACKSTEP_ACTIVE, BACKSTEP_RECOVERY, BACKSTEP_DISTANCE)
-}
-
-/// The data table for every action. Numbers live in `tuning.rs`.
-pub fn action_def(kind: ActionKind) -> ActionDef {
+/// The data table for every action. Dodge/drink/hurt numbers live in `tuning.rs`, attacks come
+/// from the `weapon` class's moveset.
+pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
     use ActionKind::*;
+    let moves = weapon.moveset();
     match kind {
         Roll => ActionDef {
             startup: ROLL_STARTUP,
@@ -146,7 +162,12 @@ pub fn action_def(kind: ActionKind) -> ActionDef {
             cancel: ROLL_CANCEL,
             stamina_cost: ROLL_COST,
             iframes: Some((ROLL_STARTUP, ROLL_STARTUP + ROLL_ACTIVE)),
-            movement: ActionMovement::Scripted(roll_speed),
+            movement: ActionMovement::Scripted(MotionCurve::Dash {
+                startup: ROLL_STARTUP,
+                active: ROLL_ACTIVE,
+                recovery: ROLL_RECOVERY,
+                distance: ROLL_DISTANCE,
+            }),
             ground: GroundRule::Ground,
             hop: 0.0,
         },
@@ -157,69 +178,31 @@ pub fn action_def(kind: ActionKind) -> ActionDef {
             cancel: BACKSTEP_CANCEL,
             stamina_cost: BACKSTEP_COST,
             iframes: Some((BACKSTEP_STARTUP, BACKSTEP_STARTUP + BACKSTEP_ACTIVE)),
-            movement: ActionMovement::Scripted(backstep_speed),
+            movement: ActionMovement::Scripted(MotionCurve::Dash {
+                startup: BACKSTEP_STARTUP,
+                active: BACKSTEP_ACTIVE,
+                recovery: BACKSTEP_RECOVERY,
+                distance: BACKSTEP_DISTANCE,
+            }),
             ground: GroundRule::Ground,
             hop: 0.0,
         },
-        LightAttack(_) => ActionDef {
-            startup: LIGHT_STARTUP,
-            active: LIGHT_ACTIVE,
-            recovery: LIGHT_RECOVERY,
-            cancel: LIGHT_CANCEL,
-            stamina_cost: LIGHT_COST,
-            iframes: None,
-            movement: ActionMovement::Scripted(light_lunge),
-            ground: GroundRule::Ground,
-            hop: 0.0,
-        },
-        RunningAttack => ActionDef {
-            startup: RUN_ATTACK_STARTUP,
-            active: RUN_ATTACK_ACTIVE,
-            recovery: RUN_ATTACK_RECOVERY,
-            cancel: RUN_ATTACK_STARTUP + RUN_ATTACK_ACTIVE + RUN_ATTACK_RECOVERY * 0.6,
-            stamina_cost: RUN_ATTACK_COST,
-            iframes: None,
-            movement: ActionMovement::Scripted(running_attack_leap),
-            ground: GroundRule::Ground,
-            hop: RUN_ATTACK_HOP,
-        },
+        LightAttack(n) => attack_def(moves.light(n), None, GroundRule::Ground, 0.0),
+        RunningAttack => attack_def(&moves.running, None, GroundRule::Ground, moves.running_hop),
         HeavyCharge => ActionDef {
             startup: 0.0,
             // Never ends by itself: `release_heavy_charge` turns it into HeavyAttack.
-            active: HEAVY_CHARGE_MAX + 10.0,
+            active: moves.heavy_charge_max + 10.0,
             recovery: 0.0,
             cancel: 0.0, // can roll out of a charge
-            stamina_cost: HEAVY_COST,
+            stamina_cost: moves.heavy_charge_cost,
             iframes: None,
             movement: ActionMovement::Slowed(HEAVY_CHARGE_MOVE_FACTOR),
             ground: GroundRule::Ground,
             hop: 0.0,
         },
-        HeavyAttack => ActionDef {
-            startup: HEAVY_STARTUP,
-            active: HEAVY_ACTIVE,
-            recovery: HEAVY_RECOVERY,
-            cancel: HEAVY_CANCEL,
-            stamina_cost: 0.0, // paid when the charge starts
-            iframes: None,
-            movement: ActionMovement::Scripted(heavy_lunge),
-            ground: GroundRule::Ground,
-            hop: 0.0,
-        },
-        JumpAttack => {
-            let total = JUMP_ATTACK_STARTUP + JUMP_ATTACK_ACTIVE + JUMP_ATTACK_RECOVERY;
-            ActionDef {
-                startup: JUMP_ATTACK_STARTUP,
-                active: JUMP_ATTACK_ACTIVE,
-                recovery: JUMP_ATTACK_RECOVERY,
-                cancel: total,
-                stamina_cost: JUMP_ATTACK_COST,
-                iframes: None,
-                movement: ActionMovement::Plunge,
-                ground: GroundRule::Air,
-                hop: 0.0,
-            }
-        }
+        HeavyAttack => attack_def(&moves.heavy, None, GroundRule::Ground, 0.0),
+        JumpAttack => attack_def(&moves.jump, Some(ActionMovement::Plunge), GroundRule::Air, 0.0),
         DrinkAle => {
             let total = DRINK_STARTUP + DRINK_ACTIVE + DRINK_RECOVERY;
             ActionDef {
@@ -269,11 +252,37 @@ pub struct ActiveAction {
     pub dir: Vec3,
     /// Heavy attack charge, 0..=1.
     pub charge: f32,
+    /// Weapon class held when the action started (its moveset drives attacks and their poses).
+    pub weapon: WeaponClass,
 }
 
 impl ActiveAction {
-    pub fn new(kind: ActionKind, dir: Vec3) -> Self {
-        Self { kind, def: action_def(kind), elapsed: 0.0, dir, charge: 0.0 }
+    pub fn new(kind: ActionKind, dir: Vec3, weapon: WeaponClass) -> Self {
+        Self { kind, def: action_def(kind, weapon), elapsed: 0.0, dir, charge: 0.0, weapon }
+    }
+
+    /// The moveset attack this action performs, if it's an attack.
+    pub fn attack(&self) -> Option<&'static AttackSpec> {
+        let moves = self.weapon.moveset();
+        Some(match self.kind {
+            ActionKind::LightAttack(n) => moves.light(n),
+            ActionKind::RunningAttack => &moves.running,
+            ActionKind::HeavyCharge | ActionKind::HeavyAttack => &moves.heavy,
+            ActionKind::JumpAttack => &moves.jump,
+            _ => return None,
+        })
+    }
+
+    /// Damage multiplier if this action hits (charged heavies scale up to the full-charge value).
+    pub fn damage_multiplier(&self) -> Option<f32> {
+        let moves = self.weapon.moveset();
+        match self.kind {
+            ActionKind::HeavyCharge => None,
+            ActionKind::HeavyAttack => {
+                Some(moves.heavy.damage_mult + (moves.heavy_full_charge_mult - moves.heavy.damage_mult) * self.charge)
+            }
+            _ => self.attack().map(|a| a.damage_mult),
+        }
     }
 
     pub fn phase(&self) -> ActionPhase {
@@ -318,7 +327,8 @@ impl CharacterAction {
         if matches!(self.current, Some(a) if a.kind == ActionKind::Dead) {
             return; // nothing interrupts death
         }
-        self.start(ActiveAction::new(kind, dir));
+        let weapon = self.current.map_or_else(WeaponClass::default, |a| a.weapon);
+        self.start(ActiveAction::new(kind, dir, weapon));
     }
 
     pub fn movement(&self) -> ActionMovement {
@@ -334,6 +344,8 @@ pub struct RequestContext {
     pub moving: bool,
     /// Sprinting right now (a light attack becomes the running attack).
     pub sprinting: bool,
+    /// Held weapon class (combo length, attack availability).
+    pub weapon: WeaponClass,
 }
 
 /// Decides whether `request` can start now. `None` = not yet (keep it buffered) or never.
@@ -343,7 +355,7 @@ pub fn resolve_request(
     ctx: RequestContext,
     stamina: &Stamina,
 ) -> Option<ActionKind> {
-    let RequestContext { grounded, moving, sprinting } = ctx;
+    let RequestContext { grounded, moving, sprinting, weapon } = ctx;
     if let Some(cur) = current {
         if !cur.can_be_cancelled() {
             return None;
@@ -355,13 +367,15 @@ pub fn resolve_request(
         ActionRequest::LightAttack if !grounded => ActionKind::JumpAttack,
         ActionRequest::LightAttack if sprinting && current.is_none() => ActionKind::RunningAttack,
         ActionRequest::LightAttack => match current.map(|a| a.kind) {
-            Some(ActionKind::LightAttack(n)) if n + 1 < LIGHT_COMBO_MAX => ActionKind::LightAttack(n + 1),
+            Some(ActionKind::LightAttack(n)) if ((n + 1) as usize) < weapon.moveset().light.len() => {
+                ActionKind::LightAttack(n + 1)
+            }
             _ => ActionKind::LightAttack(0),
         },
         ActionRequest::HeavyAttack => ActionKind::HeavyCharge,
         ActionRequest::DrinkAle => ActionKind::DrinkAle,
     };
-    let def = action_def(kind);
+    let def = action_def(kind, weapon);
     let ground_ok = match def.ground {
         GroundRule::Ground => grounded,
         GroundRule::Air => !grounded,
@@ -375,12 +389,20 @@ pub fn resolve_request(
 
 /// Starts a buffered action when allowed.
 pub(super) fn start_buffered_action(
-    mut q: Query<(&mut CharacterAction, &mut ActionIntent, &MoveIntent, &mut Stamina, &mut CharacterController)>,
+    mut q: Query<(
+        &mut CharacterAction,
+        &mut ActionIntent,
+        &MoveIntent,
+        &mut Stamina,
+        &mut CharacterController,
+        Option<&EquippedWeapon>,
+    )>,
 ) {
-    for (mut action, mut intent, movement, mut stamina, mut ctrl) in &mut q {
+    for (mut action, mut intent, movement, mut stamina, mut ctrl, equipped) in &mut q {
+        let weapon = equipped.map_or_else(WeaponClass::default, |e| e.class());
         let Some(request) = intent.buffered else { continue };
         let moving = movement.dir.length_squared() > 0.01;
-        let ctx = RequestContext { grounded: ctrl.grounded, moving, sprinting: ctrl.sprinting };
+        let ctx = RequestContext { grounded: ctrl.grounded, moving, sprinting: ctrl.sprinting, weapon };
         let Some(kind) = resolve_request(action.current.as_ref(), request, ctx, &stamina) else {
             continue;
         };
@@ -395,13 +417,13 @@ pub(super) fn start_buffered_action(
         if kind != ActionKind::Backstep {
             ctrl.facing = f32::atan2(-dir.x, -dir.z);
         }
-        let def = action_def(kind);
+        let def = action_def(kind, weapon);
         stamina.spend(def.stamina_cost);
         if def.hop > 0.0 {
             ctrl.velocity.y = def.hop;
             ctrl.grounded = false;
         }
-        action.start(ActiveAction::new(kind, dir));
+        action.start(ActiveAction::new(kind, dir, weapon));
         intent.buffered = None;
     }
 }
@@ -410,11 +432,12 @@ pub(super) fn start_buffered_action(
 pub(super) fn release_heavy_charge(mut q: Query<(&mut CharacterAction, &ActionIntent)>) {
     for (mut action, intent) in &mut q {
         let Some(cur) = action.current else { continue };
-        if cur.kind != ActionKind::HeavyCharge || (intent.attack_held && cur.elapsed < HEAVY_CHARGE_MAX) {
+        let charge_max = cur.weapon.moveset().heavy_charge_max;
+        if cur.kind != ActionKind::HeavyCharge || (intent.attack_held && cur.elapsed < charge_max) {
             continue;
         }
-        let mut heavy = ActiveAction::new(ActionKind::HeavyAttack, cur.dir);
-        heavy.charge = (cur.elapsed / HEAVY_CHARGE_MAX).clamp(0.0, 1.0);
+        let mut heavy = ActiveAction::new(ActionKind::HeavyAttack, cur.dir, cur.weapon);
+        heavy.charge = (cur.elapsed / charge_max).clamp(0.0, 1.0);
         action.start(heavy);
     }
 }
@@ -432,7 +455,7 @@ pub(super) fn tick_action(
             cur.elapsed += dt;
             // Jump attack: landing ends the plunge; the slam stays active briefly.
             // Never skip the swing itself (its hit sweep would be skipped too).
-            let swing_done = cur.elapsed >= cur.def.startup + JUMP_ATTACK_STRIKE;
+            let swing_done = cur.elapsed >= cur.def.startup + cur.weapon.moveset().jump_strike_time;
             if cur.kind == ActionKind::JumpAttack && cur.phase() == ActionPhase::Active && ctrl.grounded && swing_done {
                 let slam_start = cur.def.startup + cur.def.active - JUMP_SLAM_TIME;
                 cur.elapsed = cur.elapsed.max(slam_start);
@@ -466,38 +489,43 @@ pub(super) fn tick_action(
 mod tests {
     use super::*;
 
+    const W: WeaponClass = WeaponClass::LightSword;
+    fn moves() -> &'static crate::weapon::Moveset {
+        W.moveset()
+    }
+
     fn ctx(grounded: bool, moving: bool) -> RequestContext {
-        RequestContext { grounded, moving, sprinting: false }
+        RequestContext { grounded, moving, sprinting: false, weapon: W }
     }
 
     #[test]
     fn sprinting_light_attack_is_a_running_attack_with_a_leap() {
         let s = Stamina::new(100.0);
-        let sprint = RequestContext { grounded: true, moving: true, sprinting: true };
+        let sprint = RequestContext { grounded: true, moving: true, sprinting: true, weapon: W };
         assert_eq!(resolve_request(None, ActionRequest::LightAttack, sprint, &s), Some(ActionKind::RunningAttack));
-        let def = action_def(ActionKind::RunningAttack);
+        let def = action_def(ActionKind::RunningAttack, W);
         assert!(def.hop > 0.0);
-        let ActionMovement::Scripted(speed) = def.movement else { panic!() };
+        let ActionMovement::Scripted(curve) = def.movement else { panic!() };
         let dt = 1.0 / 64.0;
-        let dist: f32 = (0..(def.total() / dt) as usize).map(|i| speed(i as f32 * dt) * dt).sum();
-        assert!((dist - RUN_ATTACK_DISTANCE).abs() < 0.15, "leapt {dist}");
+        let dist: f32 = (0..(def.total() / dt) as usize).map(|i| curve.speed(i as f32 * dt) * dt).sum();
+        assert!((dist - moves().running.lunge).abs() < 0.15, "leapt {dist}");
     }
 
     #[test]
     fn light_attack_steps_forward() {
-        let ActionMovement::Scripted(speed) = action_def(ActionKind::LightAttack(0)).movement else { panic!() };
+        let ActionMovement::Scripted(curve) = action_def(ActionKind::LightAttack(0), W).movement else { panic!() };
         let dt = 1.0 / 64.0;
-        let dist: f32 = (0..64).map(|i| speed(i as f32 * dt) * dt).sum();
-        assert!((dist - LIGHT_LUNGE).abs() < 0.05, "stepped {dist}");
+        let dist: f32 = (0..64).map(|i| curve.speed(i as f32 * dt) * dt).sum();
+        assert!((dist - moves().light(0).lunge).abs() < 0.05, "stepped {dist}");
     }
 
     fn at(kind: ActionKind, elapsed: f32) -> ActiveAction {
-        ActiveAction { elapsed, ..ActiveAction::new(kind, Vec3::Z) }
+        ActiveAction { elapsed, ..ActiveAction::new(kind, Vec3::Z, W) }
     }
 
     #[test]
     fn phases_follow_timings() {
-        let d = action_def(ActionKind::Roll);
+        let d = action_def(ActionKind::Roll, W);
         assert_eq!(at(ActionKind::Roll, 0.0).phase(), ActionPhase::Startup);
         assert_eq!(at(ActionKind::Roll, d.startup + 0.01).phase(), ActionPhase::Active);
         assert_eq!(at(ActionKind::Roll, d.startup + d.active + 0.01).phase(), ActionPhase::Recovery);
@@ -516,9 +544,9 @@ mod tests {
     #[test]
     fn buffer_waits_for_cancel_window() {
         let s = Stamina::new(100.0);
-        let early = at(ActionKind::LightAttack(0), LIGHT_CANCEL - 0.01);
+        let early = at(ActionKind::LightAttack(0), moves().light(0).cancel - 0.01);
         assert_eq!(resolve_request(Some(&early), ActionRequest::Roll, ctx(true, true), &s), None);
-        let late = at(ActionKind::LightAttack(0), LIGHT_CANCEL);
+        let late = at(ActionKind::LightAttack(0), moves().light(0).cancel);
         assert_eq!(resolve_request(Some(&late), ActionRequest::Roll, ctx(true, true), &s), Some(ActionKind::Roll));
     }
 
@@ -527,8 +555,8 @@ mod tests {
         let s = Stamina::new(100.0);
         let mut kind = resolve_request(None, ActionRequest::LightAttack, ctx(true, true), &s).unwrap();
         let mut seen = vec![kind];
-        for _ in 0..LIGHT_COMBO_MAX {
-            kind = resolve_request(Some(&at(kind, LIGHT_CANCEL)), ActionRequest::LightAttack, ctx(true, true), &s).unwrap();
+        for _ in 0..moves().light.len() {
+            kind = resolve_request(Some(&at(kind, moves().light(0).cancel)), ActionRequest::LightAttack, ctx(true, true), &s).unwrap();
             seen.push(kind);
         }
         assert_eq!(seen[..4], [
@@ -562,7 +590,7 @@ mod tests {
     #[test]
     fn drink_and_death_cannot_be_cancelled() {
         let s = Stamina::new(100.0);
-        let d = action_def(ActionKind::DrinkAle);
+        let d = action_def(ActionKind::DrinkAle, W);
         let drinking = at(ActionKind::DrinkAle, d.total() - 0.01);
         assert_eq!(resolve_request(Some(&drinking), ActionRequest::Roll, ctx(true, true), &s), None);
         let mut pa = CharacterAction { current: Some(at(ActionKind::Dead, 0.0)), serial: 0 };
@@ -572,10 +600,10 @@ mod tests {
 
     #[test]
     fn roll_covers_roughly_its_distance() {
-        let d = action_def(ActionKind::Roll);
-        let ActionMovement::Scripted(speed) = d.movement else { panic!() };
+        let d = action_def(ActionKind::Roll, W);
+        let ActionMovement::Scripted(curve) = d.movement else { panic!() };
         let dt = 1.0 / 64.0;
-        let dist: f32 = (0..(d.total() / dt) as usize).map(|i| speed(i as f32 * dt) * dt).sum();
+        let dist: f32 = (0..(d.total() / dt) as usize).map(|i| curve.speed(i as f32 * dt) * dt).sum();
         assert!((dist - ROLL_DISTANCE).abs() < 0.4, "rolled {dist}");
     }
 }

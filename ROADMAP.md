@@ -138,7 +138,10 @@ claude_ds/
    │  └─ anim.rs        # locomotion (idle/walk/run/jump/land) + action poses, HumanoidAnimator
    ├─ player/
    │  └─ mod.rs         # Player = character_bundle + HumanoidSpec::human() + longsword + input
-   ├─ combat.rs         # Weapon, blade hitbox via FK, hitstop, camera shake, training dummy
+   ├─ weapon/          # weapon CLASSES (movesets + swing animations) and weapon DEFINITIONS (models)
+   │  ├─ mod.rs         # WeaponClass, Moveset/AttackSpec/SwingKey/GuardSpec, WeaponDef, ModelSource, EquipWeapon
+   │  └─ light_sword.rs # LightSword moveset + Longsword / Rusted Shortsword definitions
+   ├─ combat.rs         # blade hitbox via FK (uses the equipped WeaponDef), hitstop, camera shake, dummy
    ├─ debug.rs          # F3 overlay, debug keys, screenshots, autopilot scripts
    ├─ items/
    │  ├─ mod.rs         # ItemDef registry, ItemId
@@ -204,6 +207,12 @@ claude_ds/
 - [x] Full-body action poses: tucked roll, backstep, light/heavy/jump attacks with stance, hurt, death fall, and drinking (upper body)
 - [x] Attacks step forward (light 0.45 m, heavy 0.7 m). The running attack (light while sprinting) leaps 3.2 m with a hop. Jumps and jump attacks keep their horizontal momentum.
 
+### Phase 5.6 — Weapon classes (user request, 2026-11-14)
+- [x] `WeaponClass` + per-class `Moveset` (attack timings, costs, lunges, damage multipliers, swing keyframes, stance, guard pose, combo length). The current sword is class `LightSword`.
+- [x] `WeaponDef` (name, class, base damage, blade span, model source) with replaceable models. `EquipWeapon` swaps the model in the hand at runtime.
+- [x] Second model `Rusted Shortsword` (same class, shorter blade, 16 damage), with the debug key F6 to swap
+- [ ] Future classes (two-handers, daggers, …): add a variant plus `weapon/<class>.rs` (see N15)
+
 ### Phase 6 — Healing Ale, Hearth, death and HUD
 - [ ] Healing Ale: charges, drinking state, slowed movement, heal tick
 - [ ] Hearth: interact prompt, rest (restore HP, stamina and Ale), set the respawn point
@@ -225,6 +234,7 @@ claude_ds/
 - [ ] Simple enemy (a hollow-type melee AI) to test i-frames against real attacks
 
 ### Phase 9 — Polish
+- [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested).
 - [ ] Replace the primitives with a rigged glTF character (CC0). Map its skeleton onto `humanoid::Bone` so the shared poses and the FK hitbox keep working, or blend its clips in `humanoid::anim` (see N13).
 - [ ] Sound: footsteps, swings, hits, the drink gulp, Hearth ambience and torches crackling
 - [ ] Settings: mouse sensitivity, key rebinding, invert Y
@@ -248,6 +258,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | Sword hits are detected with blade shape queries that sample the same pose function the animation uses (`player::pose`), not avian sensors. This is deterministic, needs no kinematic/static sensor pairs, and keeps the visuals and hitbox identical. |
 | 2026-11-14 | Characters are generic (`character` module, driven by `MoveIntent`/`ActionIntent`) and bodies are generic (`humanoid` module: `HumanoidSpec` + shared animator). To add another humanoid (an enemy), spawn `character_bundle()` + `spawn_humanoid(spec)` + `HumanoidAnimator`, and write its intents from AI (user request). |
 | 2026-11-14 | A light attack while sprinting = running attack (a leaping slash). Light and heavy attacks lunge forward, and jump attacks keep their momentum (user request). |
+| 2026-11-14 | Weapons are split into a class (how it fights and animates: `Moveset` in `weapon/<class>.rs`) and a definition (a concrete weapon: damage, blade span, model). Attack numbers moved out of `tuning.rs` into the class files. The starting sword is class `LightSword` (user request). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -330,3 +341,21 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Bevy quirk (workaround):** frustum culling hid the posed humanoid meshes mid-roll even though their transforms were correct (verified at runtime). All humanoid and weapon meshes therefore get `NoFrustumCulling`. The root cause hasn't been found; it may be Bevy visibility caching combined with child transforms that change every frame. Revisit with real models.
   - **The combat autopilot now also tests** a running attack (sprinting from z=4.4 at 12.7 s, tap at 13.15 s, 26 damage) and a walking jump attack (walking from z=4 and jumping at 14.7 s, 36 damage, breaks the dummy). Run it for 17 s.
 - **N14 (2026-11-14) — possible improvement:** small rubble (for example the stone at (-0.5, 4.98)) lifts the capsule so it's briefly airborne, so a sprint attack over it becomes a jump attack. Consider a step-up/step-offset in the controller, treating short drops (under about 0.25 m) as grounded.
+- **N15 (2026-11-14) — weapon classes (user request):**
+  - **A class** (`WeaponClass`, `weapon/<class>.rs`) defines a `Moveset`:
+    - `light: &[AttackSpec]`, the combo; its length is the combo length.
+    - `heavy` plus charge max, cost and full-charge multiplier.
+    - `running` plus `running_hop`.
+    - `jump` plus `jump_strike_time`.
+    - `guard: GuardSpec`, the idle arm/grip pose.
+    - Each `AttackSpec` has the timings, cancel time, stamina cost, `lunge` distance, `damage_mult`, `windup`/`strike` `SwingKey`s (chest yaw/pitch, arm yaw/pitch, where pitch 0 = down, π/2 = forward, π = up) and a `Stance` (Lunge/Leap/Tucked).
+  - **How it's used:** `ActiveAction` stores the class held when it started (`weapon`). `action_def(kind, class)`, `ActiveAction::attack()/damage_multiplier()`, `humanoid::anim::action_pose` (swing keys, stance, guard) and `combat::blade_world` all read it, so the timing, motion, animation and hitbox change together.
+  - **Movement curves** are data (`MotionCurve::Dash/Lunge`) instead of fn pointers, so classes can tune them. Attack lunges run from 30% of startup to the end of active.
+  - **Adding a class:**
+    1. Add the variant and include it in `WeaponClass::ALL`.
+    2. Copy `light_sword.rs` and tune it.
+    3. Add a match arm in `moveset()`.
+
+    The tests in `weapon/mod.rs` and `humanoid/anim.rs` loop over `ALL`. They check sane timings, that lunges cover their distance, that heavy damage scales, and that the strikes reach in front. A two-hander will also want the left hand on the grip: extend `GuardSpec`/`SwingKey` with off-hand data, or add an IK step, when that class gets built.
+  - **Weapon definitions** (`WeaponDef`, static, for example `light_sword::LONGSWORD`) hold the name, class, `base_damage`, `blade: (start, end)` along the hand's +Y (the hitbox) and a `ModelSource` (`Parts(&[WeaponPart])` primitives, or `Gltf { path, transform }`). Equip with `EquipWeapon { character, def }`: the old model is despawned and the new one goes under `HandR`. The player starts with the Longsword through this message. Phase 7 items should reference `&'static WeaponDef`s.
+  - The combat autopilot now ends with an F6-style swap to the Rusted Shortsword at 16 s and a light hit for 16 at about 18.7 s. Run it for 22 s: hitstops slow game time, so it lags behind real time.

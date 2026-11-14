@@ -70,10 +70,10 @@ pub(super) fn move_character(
                 ctrl.sprinting = false;
                 (Vec3::ZERO, approach(horizontal, Vec3::ZERO, GROUND_ACCEL * dt))
             }
-            ActionMovement::Scripted(speed) => {
+            ActionMovement::Scripted(curve) => {
                 ctrl.sprinting = false;
                 let a = action.current.expect("scripted movement needs an action");
-                (Vec3::ZERO, a.dir * speed(a.elapsed))
+                (Vec3::ZERO, a.dir * curve.speed(a.elapsed))
             }
             ActionMovement::Plunge => {
                 // Keep the jump's horizontal momentum: a moving jump attack dives forward.
