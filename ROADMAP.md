@@ -37,7 +37,7 @@
 | Move | **W A S D** | Relative to the camera |
 | Camera | **Mouse** | Third-person orbit camera; the cursor is locked during gameplay |
 | Jump | **Space** | |
-| Dodge roll / sprint | **Left Shift** | Tap to roll (i-frames). Hold to sprint (familiar element). Rolling while standing still does a backstep. |
+| Dodge roll / sprint | **Left Shift** | Tap to roll (i-frames). Hold to sprint (familiar element). Rolling while standing still (no WASD input) does a backstep. There's no separate backstep input. |
 | Attack | **Left Mouse** | **Tap** (released within 0.25 s) = light attack. **Hold** (0.25 s or longer) = heavy attack, released when charged or automatically at full charge. **Tap while airborne** = jump attack (the jump attack is the airborne light attack). A heavy attack can't be done in the air. |
 | Block (later) | Right Mouse | Planned familiar element, not in the core scope |
 | Drink Healing Ale | **R** | |
@@ -229,7 +229,8 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | Engine: Bevy 0.20, plus avian3d 0.8 for physics and leafwing-input-manager 0.22 for input. Custom kinematic controller. |
 | 2026-11-14 | The estus equivalent is named **Healing Ale**, with 3 charges, refilled at the **Hearth** (bonfire equivalent). |
 | 2026-11-14 | Project title: **FlowerBox** (crate `flowerbox`). |
-| 2026-11-14 | Debug overlay on F3 is always compiled in (it's cheap). Debug keys (H, 1-5) only exist in debug builds. Not tied to the `dev` feature. |
+| 2026-11-14 | Debug overlay on F3 is always compiled in (it's cheap). Debug keys (H, 1-4) only exist in debug builds. Not tied to the `dev` feature. |
+| 2026-11-14 | Backstep = rolling with no movement input; there's no separate input or request for it (user request). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -264,10 +265,11 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Movement modes:** Free, Slowed(f), Locked and Scripted(speed fn). The controller obeys them. Jump and sprint only work with no action running.
   - **Damage:** `DamageMessage { target, amount }`, sent with `MessageWriter`. It's ignored while `Invulnerable`. Otherwise the target goes to Hurt, or to Dead at 0 HP, which nothing can interrupt. Dead currently respawns at `PLAYER_SPAWN` after 3 s (Phase 6 replaces this with the Hearth).
   - **FixedUpdate order:** `PlayerSystems::{Damage, Actions, Stats, Movement}`, chained.
-  - **What's left for Phase 4:** bind Shift tap to Roll/Backstep (release under 0.25 s, before sprint starts) and add a visual for the roll. **Phase 5:** bind LMB tap/hold and the airborne attack, and add swing visuals and hitboxes. **Phase 6:** bind R to DrinkAle, which starts healing in the active phase.
-  - **Debug:** F3 toggles the overlay. In debug builds, H deals 15 damage and 1–5 request Roll, Backstep, Light (a jump attack in the air), Heavy and Drink. Autopilot now also runs a timeline: roll → a hit during the roll is ignored → a hit while free (Hurt, HP 90) → light combo 0,1,2 → jump attack (a light attack just after the t=6 s jump) → lethal hit at 7.5 s → respawn. Grep the log for `action`, `autopilot` and `ignored`.
+  - **What's left for Phase 4:** bind Shift tap to `ActionRequest::Roll` (release under 0.25 s, before sprint starts); it becomes a Backstep automatically without movement input and add a visual for the roll. **Phase 5:** bind LMB tap/hold and the airborne attack, and add swing visuals and hitboxes. **Phase 6:** bind R to DrinkAle, which starts healing in the active phase.
+  - **Debug:** F3 toggles the overlay. In debug builds, H deals 15 damage and 1–4 request Roll (a backstep when standing still), Light (a jump attack in the air), Heavy and Drink. Autopilot now also runs a timeline: roll → a hit during the roll is ignored → a hit while free (Hurt, HP 90) → light combo 0,1,2 → jump attack (a light attack just after the t=6 s jump) → lethal hit at 7.5 s → respawn. Grep the log for `action`, `autopilot` and `ignored`.
   - The default UI font has no "—" glyph, so use ASCII in UI text.
 - **N10 (2026-11-14) — fixes from user feedback:**
   - **Jump attack:** there's no separate request for it any more. `ActionRequest::LightAttack` resolves to `ActionKind::JumpAttack` when the player isn't grounded (`resolve_request`). `HeavyAttack` in the air is rejected.
   - **"Airborne" while walking (bug):** grounding used to come only from move-and-slide hits. While walking, the sweep is mostly horizontal and often misses the floor, so `grounded` flickered false. Now a downward **ground probe** (`cast_shape`, 0.08 m) runs after moving. It's skipped while rising. It snaps the capsule onto the floor, keeping a 0.01 m skin gap.
+  - **Backstep:** there's no `ActionRequest::Backstep` any more. `ActionRequest::Roll` resolves to `ActionKind::Backstep` when there's no movement input (`resolve_request` takes a `moving` flag). A backstep goes against the facing direction and is also ground-only.
   - The autopilot log now prints `airborne_ticks` per 0.5 s window. Walking on flat floor should show 0. Expect about 32 for a jump window, and a few when stepping over rubble near spawn.

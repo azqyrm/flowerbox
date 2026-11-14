@@ -17,8 +17,8 @@ use crate::tuning::*;
 /// What the player asked for (from input). Turned into an [`ActionKind`] by [`resolve_request`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionRequest {
+    /// Becomes a backstep when there's no movement input.
     Roll,
-    Backstep,
     /// Becomes a jump attack while airborne.
     LightAttack,
     HeavyAttack,
@@ -262,6 +262,7 @@ pub fn resolve_request(
     current: Option<&ActiveAction>,
     request: ActionRequest,
     grounded: bool,
+    moving: bool,
     stamina: &Stamina,
 ) -> Option<ActionKind> {
     if let Some(cur) = current {
@@ -270,8 +271,8 @@ pub fn resolve_request(
         }
     }
     let kind = match request {
-        ActionRequest::Roll => ActionKind::Roll,
-        ActionRequest::Backstep => ActionKind::Backstep,
+        ActionRequest::Roll if moving => ActionKind::Roll,
+        ActionRequest::Roll => ActionKind::Backstep,
         ActionRequest::LightAttack if !grounded => ActionKind::JumpAttack,
         ActionRequest::LightAttack => match current.map(|a| a.kind) {
             Some(ActionKind::LightAttack(n)) if n + 1 < LIGHT_COMBO_MAX => ActionKind::LightAttack(n + 1),
@@ -298,7 +299,8 @@ pub(super) fn start_buffered_action(
 ) {
     for (mut action, mut input, mut stamina, ctrl) in &mut q {
         let Some(request) = input.buffered else { continue };
-        let Some(kind) = resolve_request(action.current.as_ref(), request, ctrl.grounded, &stamina) else {
+        let moving = input.move_dir.length_squared() > 0.01;
+        let Some(kind) = resolve_request(action.current.as_ref(), request, ctrl.grounded, moving, &stamina) else {
             continue;
         };
         // Direction: input direction if any, otherwise where the character faces.
@@ -380,18 +382,18 @@ mod tests {
     fn buffer_waits_for_cancel_window() {
         let s = Stamina::new(100.0);
         let early = at(ActionKind::LightAttack(0), LIGHT_CANCEL - 0.01);
-        assert_eq!(resolve_request(Some(&early), ActionRequest::Roll, true, &s), None);
+        assert_eq!(resolve_request(Some(&early), ActionRequest::Roll, true, true, &s), None);
         let late = at(ActionKind::LightAttack(0), LIGHT_CANCEL);
-        assert_eq!(resolve_request(Some(&late), ActionRequest::Roll, true, &s), Some(ActionKind::Roll));
+        assert_eq!(resolve_request(Some(&late), ActionRequest::Roll, true, true, &s), Some(ActionKind::Roll));
     }
 
     #[test]
     fn light_attacks_chain_and_wrap() {
         let s = Stamina::new(100.0);
-        let mut kind = resolve_request(None, ActionRequest::LightAttack, true, &s).unwrap();
+        let mut kind = resolve_request(None, ActionRequest::LightAttack, true, true, &s).unwrap();
         let mut seen = vec![kind];
         for _ in 0..LIGHT_COMBO_MAX {
-            kind = resolve_request(Some(&at(kind, LIGHT_CANCEL)), ActionRequest::LightAttack, true, &s).unwrap();
+            kind = resolve_request(Some(&at(kind, LIGHT_CANCEL)), ActionRequest::LightAttack, true, true, &s).unwrap();
             seen.push(kind);
         }
         assert_eq!(seen[..4], [
@@ -407,16 +409,18 @@ mod tests {
         let full = Stamina::new(100.0);
         let mut empty = Stamina::new(100.0);
         empty.spend(100.0);
-        assert_eq!(resolve_request(None, ActionRequest::Roll, false, &full), None, "no roll in the air");
-        assert_eq!(resolve_request(None, ActionRequest::LightAttack, true, &full), Some(ActionKind::LightAttack(0)));
+        assert_eq!(resolve_request(None, ActionRequest::Roll, false, true, &full), None, "no roll in the air");
+        assert_eq!(resolve_request(None, ActionRequest::LightAttack, true, true, &full), Some(ActionKind::LightAttack(0)));
         assert_eq!(
-            resolve_request(None, ActionRequest::LightAttack, false, &full),
+            resolve_request(None, ActionRequest::LightAttack, false, true, &full),
             Some(ActionKind::JumpAttack),
             "light attack in the air = jump attack"
         );
-        assert_eq!(resolve_request(None, ActionRequest::HeavyAttack, false, &full), None, "no heavy in the air");
-        assert_eq!(resolve_request(None, ActionRequest::Roll, true, &empty), None, "no stamina");
-        assert_eq!(resolve_request(None, ActionRequest::DrinkAle, true, &empty), Some(ActionKind::DrinkAle));
+        assert_eq!(resolve_request(None, ActionRequest::HeavyAttack, false, true, &full), None, "no heavy in the air");
+        assert_eq!(resolve_request(None, ActionRequest::Roll, true, true, &empty), None, "no stamina");
+        assert_eq!(resolve_request(None, ActionRequest::Roll, true, false, &full), Some(ActionKind::Backstep), "roll standing still = backstep");
+        assert_eq!(resolve_request(None, ActionRequest::Roll, false, false, &full), None, "no backstep in the air");
+        assert_eq!(resolve_request(None, ActionRequest::DrinkAle, true, true, &empty), Some(ActionKind::DrinkAle));
     }
 
     #[test]
@@ -424,7 +428,7 @@ mod tests {
         let s = Stamina::new(100.0);
         let d = action_def(ActionKind::DrinkAle);
         let drinking = at(ActionKind::DrinkAle, d.total() - 0.01);
-        assert_eq!(resolve_request(Some(&drinking), ActionRequest::Roll, true, &s), None);
+        assert_eq!(resolve_request(Some(&drinking), ActionRequest::Roll, true, true, &s), None);
         let mut pa = PlayerAction { current: Some(at(ActionKind::Dead, 0.0)) };
         pa.force(ActionKind::Hurt, Vec3::ZERO);
         assert_eq!(pa.current.unwrap().kind, ActionKind::Dead);

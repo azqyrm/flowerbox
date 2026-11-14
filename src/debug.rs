@@ -1,8 +1,8 @@
 //! Dev helpers for manual and automated checks (see ROADMAP notes N5, N7, N9).
 //!
 //! - **F3**: toggle the debug overlay (action state, timers, buffer, stats).
-//! - Debug builds only: **H** = take 15 damage; **1–5** = request Roll, Backstep, Light (jump attack
-//!   when airborne), Heavy, Drink (until Phases 4–6 bind the real inputs).
+//! - Debug builds only: **H** = take 15 damage; **1–4** = request Roll (backstep when standing still),
+//!   Light (jump attack when airborne), Heavy, Drink (until Phases 4–6 bind the real inputs).
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
 //!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120). `FLOWERBOX_OVERLAY=1` shows the overlay at start.
 //! - `FLOWERBOX_AUTOPILOT=1` → walks forward, jumps every 2 s and runs a scripted action/damage
@@ -139,10 +139,9 @@ fn debug_keys(
     }
     let requests = [
         (KeyCode::Digit1, ActionRequest::Roll),
-        (KeyCode::Digit2, ActionRequest::Backstep),
-        (KeyCode::Digit3, ActionRequest::LightAttack),
-        (KeyCode::Digit4, ActionRequest::HeavyAttack),
-        (KeyCode::Digit5, ActionRequest::DrinkAle),
+        (KeyCode::Digit2, ActionRequest::LightAttack),
+        (KeyCode::Digit3, ActionRequest::HeavyAttack),
+        (KeyCode::Digit4, ActionRequest::DrinkAle),
     ];
     for (key, request) in requests {
         if keys.just_pressed(key) {
