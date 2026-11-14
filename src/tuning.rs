@@ -46,6 +46,10 @@ pub const COYOTE_TIME: f32 = 0.1;
 pub const JUMP_BUFFER: f32 = 0.15;
 /// Surfaces whose normal has a y component above this count as ground (~45°).
 pub const GROUND_NORMAL_MIN_Y: f32 = 0.7;
+/// How far below the capsule the ground probe looks (also the max snap-down per tick).
+pub const GROUND_PROBE_DISTANCE: f32 = 0.08;
+/// Gap kept between capsule and floor after snapping (matches avian's default skin width).
+pub const GROUND_SKIN: f32 = 0.01;
 
 // ── Camera ───────────────────────────────────────────────────────────────
 pub const CAM_DISTANCE: f32 = 4.5;

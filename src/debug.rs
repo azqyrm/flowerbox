@@ -1,8 +1,8 @@
 //! Dev helpers for manual and automated checks (see ROADMAP notes N5, N7, N9).
 //!
 //! - **F3**: toggle the debug overlay (action state, timers, buffer, stats).
-//! - Debug builds only: **H** = take 15 damage; **1–6** = request Roll, Backstep, Light, Heavy,
-//!   Jump attack, Drink (until Phases 4–6 bind the real inputs).
+//! - Debug builds only: **H** = take 15 damage; **1–5** = request Roll, Backstep, Light (jump attack
+//!   when airborne), Heavy, Drink (until Phases 4–6 bind the real inputs).
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
 //!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120). `FLOWERBOX_OVERLAY=1` shows the overlay at start.
 //! - `FLOWERBOX_AUTOPILOT=1` → walks forward, jumps every 2 s and runs a scripted action/damage
@@ -33,10 +33,13 @@ impl Plugin for DebugPlugin {
                 .add_systems(Update, auto_screenshot);
         }
         if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() {
-            app.insert_resource(Autopilot).add_systems(
-                Update,
-                (log_player.run_if(on_timer(std::time::Duration::from_millis(500))), autopilot_script),
-            );
+            app.insert_resource(Autopilot)
+                .init_resource::<AirborneTicks>()
+                .add_systems(FixedLast, count_airborne)
+                .add_systems(
+                    Update,
+                    (log_player.run_if(on_timer(std::time::Duration::from_millis(500))), autopilot_script),
+                );
         }
     }
 }
@@ -139,8 +142,7 @@ fn debug_keys(
         (KeyCode::Digit2, ActionRequest::Backstep),
         (KeyCode::Digit3, ActionRequest::LightAttack),
         (KeyCode::Digit4, ActionRequest::HeavyAttack),
-        (KeyCode::Digit5, ActionRequest::JumpAttack),
-        (KeyCode::Digit6, ActionRequest::DrinkAle),
+        (KeyCode::Digit5, ActionRequest::DrinkAle),
     ];
     for (key, request) in requests {
         if keys.just_pressed(key) {
@@ -168,7 +170,7 @@ fn auto_screenshot(mut commands: Commands, mut shot: ResMut<AutoScreenshot>, mut
 }
 
 /// Timeline that exercises the action system. Expected log (N9): roll → damage ignored →
-/// hurt (HP 90) → light combo 0,1,2 → death → respawn at spawn with full HP.
+/// hurt (HP 90) → light combo 0,1,2 → jump attack → death → respawn at spawn with full HP.
 fn autopilot_script(
     time: Res<Time>,
     mut last: Local<f32>,
@@ -190,12 +192,16 @@ fn autopilot_script(
         info!("autopilot: 10 damage while free");
         damage.write(DamageMessage { target: entity, amount: 10.0 });
     }
-    for t in [3.5, 3.85, 4.2] {
+    for t in [2.9, 3.25, 3.6] {
         if crossed(t) {
             input.buffer(ActionRequest::LightAttack);
         }
     }
-    if crossed(6.0) {
+    // Autopilot jumps at t=6.0; a light attack shortly after becomes a jump attack.
+    if crossed(6.15) {
+        input.buffer(ActionRequest::LightAttack);
+    }
+    if crossed(7.5) {
         info!("autopilot: lethal damage");
         damage.write(DamageMessage { target: entity, amount: 500.0 });
     }
@@ -213,14 +219,26 @@ fn log_action_changes(
     }
 }
 
-fn log_player(q: Query<(&Transform, &CharacterController), With<Player>>) {
+/// Fixed ticks spent airborne since the last log line (should be ~0 unless jumping).
+#[derive(Resource, Default)]
+struct AirborneTicks(u32);
+
+fn count_airborne(mut ticks: ResMut<AirborneTicks>, q: Query<&CharacterController, With<Player>>) {
+    if q.iter().any(|c| !c.grounded) {
+        ticks.0 += 1;
+    }
+}
+
+fn log_player(mut ticks: ResMut<AirborneTicks>, q: Query<(&Transform, &CharacterController), With<Player>>) {
     for (tf, c) in &q {
         info!(
-            "player pos={:.2} vel={:.2} grounded={} r={:.2}",
+            "player pos={:.2} vel={:.2} grounded={} airborne_ticks={} r={:.2}",
             tf.translation,
             c.velocity,
             c.grounded,
+            ticks.0,
             Vec2::new(tf.translation.x, tf.translation.z).length()
         );
     }
+    ticks.0 = 0;
 }
