@@ -161,10 +161,10 @@ claude_ds/
 - [x] Open a window titled "FlowerBox" with a clear color, and confirm `cargo run` works (verified 2026-11-14: Vulkan on RX 6800 XT / RADV)
 
 ### Phase 1 — Circular dungeon arena and lighting
-- [ ] Circular floor (cylinder mesh) plus a ring wall built from segmented boxes or an inverted cylinder, with static colliders
-- [ ] Pillars and rubble with colliders
-- [ ] Torches: an emissive flame mesh plus a point light with flicker and shadows. Low ambient light, distance fog, bloom and tonemapping.
-- [ ] A temporary free or orbit camera to look around
+- [x] Circular floor (cylinder mesh) plus a ring wall built from segmented boxes or an inverted cylinder, with static colliders
+- [x] Pillars and rubble with colliders
+- [x] Torches: an emissive flame mesh plus a point light with flicker and shadows. Low ambient light, distance fog, bloom and tonemapping.
+- [x] A temporary free or orbit camera to look around
 
 ### Phase 2 — Player controller and camera
 - [ ] Spawn the primitive human and the sword attached to the hand
@@ -241,3 +241,10 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 - **N2 (2026-11-14):** `cargo run --features dev` turns on Bevy `dynamic_linking` (faster rebuilds) and bevy-inspector-egui. Don't use it for release builds.
 - **N3 (2026-11-14):** Bevy 0.20 renamed some APIs compared with older docs and examples. For example, `PointLight.shadows_enabled` is now **`shadow_maps_enabled`** (and there's also `contact_shadows_enabled`). When an API doesn't compile, check the real source under `~/.cargo/registry/src/*/bevy_*-0.20*/` instead of guessing.
 - **N4 (2026-11-14):** Bevy logs nothing when its output is piped into `head` and the process gets killed. To check a run, use `timeout -s INT 10 ./target/debug/flowerbox > log 2>&1`. The log shows the GPU adapter line and "Creating new window FlowerBox".
+- **N5 (2026-11-14) — visual checks without a human:** `FLOWERBOX_SCREENSHOT=/path/x.png ./target/debug/flowerbox` saves a screenshot after 120 frames and exits after 180 (`src/debug.rs`). `FLOWERBOX_CAM="yaw,pitch,dist"` sets the camera pose of the temporary orbit camera. Read the PNG to check the look. Phase 2 has to keep this camera override working for the player camera (for example as an offset).
+- **N6 (2026-11-14) — Phase 1 result:**
+  - Lighting values were tuned by screenshot: torches at 600k lm with range 20, moon spotlight at 30M lm, ambient brightness 30, TonyMcMapface tonemapping, `Bloom::NATURAL` and linear fog from 12 to 55 m. They all live in `tuning.rs`.
+  - All 8 torches and the moon cast shadows; reduce this if FPS drops later.
+  - The ring wall is made of 40 box segments, each with its own collider.
+  - Some import paths differ from older docs: `bevy::camera::Hdr`, `bevy::post_process::bloom::Bloom`, `bevy::core_pipeline::tonemapping::Tonemapping`, and `GlobalAmbientLight` is a resource.
+  - The temporary orbit camera uses right mouse to rotate and the wheel to zoom.
