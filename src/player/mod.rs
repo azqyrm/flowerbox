@@ -1,9 +1,11 @@
 //! The player: a generic character (`crate::character`) with a humanoid body
-//! (`crate::humanoid`), a starting weapon (`crate::weapon`), keyboard/mouse input and the camera's attention.
+//! (`crate::humanoid`), a starting weapon (`crate::weapon`), Healing Ale (`crate::healing`),
+//! keyboard/mouse input and the camera's attention. It respawns at the Hearth (`crate::hearth`).
 
 use bevy::prelude::*;
 
 use crate::character::character_bundle;
+use crate::healing::HealingAle;
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::input::{PlayerInput, default_input_map};
@@ -34,6 +36,7 @@ fn spawn_player(
             Name::new("Player"),
             Player,
             PlayerInput::default(),
+            HealingAle::new(ALE_CHARGES),
             default_input_map(),
             character_bundle(Transform::from_xyz(sx, sy, sz), PLAYER_MAX_HP, PLAYER_MAX_STAMINA),
         ))

@@ -99,8 +99,11 @@ pub const DRINK_RECOVERY: f32 = 0.40;
 pub const DRINK_MOVE_FACTOR: f32 = 0.35;
 
 pub const HURT_DURATION: f32 = 0.45;
-/// Placeholder until Phase 6 (Hearth respawn): time on the floor before respawning.
-pub const DEAD_DURATION: f32 = 3.0;
+
+/// Resting at a Hearth: kneel down, rest (restores everything at its start), stand up.
+pub const REST_STARTUP: f32 = 0.7;
+pub const REST_ACTIVE: f32 = 0.6;
+pub const REST_RECOVERY: f32 = 0.8;
 
 // ── Combat ───────────────────────────────────────────────────────────────
 /// LMB held at least this long = heavy attack (charging starts), shorter = light attack.
@@ -124,3 +127,26 @@ pub const DUMMY_HP: f32 = 120.0;
 pub const DUMMY_POSITION: (f32, f32) = (0.0, 0.0);
 /// Seconds the broken dummy lies on the floor before it resets.
 pub const DUMMY_RESET_TIME: f32 = 3.0;
+
+// ── Healing Ale ──────────────────────────────────────────────────────────
+pub const ALE_CHARGES: u32 = 3;
+/// Fraction of max HP one drink restores, spread over `ALE_HEAL_TIME` from the swallow.
+pub const ALE_HEAL_FRACTION: f32 = 0.4;
+pub const ALE_HEAL_TIME: f32 = 0.5;
+
+// ── Hearth ───────────────────────────────────────────────────────────────
+/// Hearth position on the floor (x, z): in front of the pillar behind the player's start.
+pub const HEARTH_POSITION: (f32, f32) = (0.0, 12.0);
+/// How close (m, from the Hearth's centre) the player must be to rest.
+pub const HEARTH_RANGE: f32 = 2.3;
+/// Respawn spot: this far from the Hearth toward the arena centre, facing the centre.
+pub const HEARTH_RESPAWN_OFFSET: f32 = 1.6;
+
+// ── Death screen (seconds since death) ───────────────────────────────────
+pub const DEATH_TEXT_DELAY: f32 = 1.1;
+pub const DEATH_TEXT_FADE: f32 = 0.7;
+/// Fade to black starts here; the player respawns when it's fully black.
+pub const DEATH_FADE_OUT_AT: f32 = 3.6;
+pub const DEATH_FADE_OUT: f32 = 0.9;
+/// Fade back in after respawning.
+pub const RESPAWN_FADE_IN: f32 = 0.9;

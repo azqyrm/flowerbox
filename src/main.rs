@@ -5,10 +5,13 @@ mod camera;
 mod character;
 mod combat;
 mod debug;
+mod healing;
+mod hearth;
 mod humanoid;
 mod input;
 mod player;
 mod tuning;
+mod ui;
 mod weapon;
 
 use avian3d::prelude::*;
@@ -33,6 +36,9 @@ fn main() {
             humanoid::HumanoidPlugin,
             weapon::WeaponPlugin,
             player::PlayerPlugin,
+            healing::HealingPlugin,
+            hearth::HearthPlugin,
+            ui::UiPlugin,
             debug::DebugPlugin,
         ))
         .run();
