@@ -48,6 +48,10 @@ pub const JUMP_BUFFER: f32 = 0.15;
 pub const GROUND_NORMAL_MIN_Y: f32 = 0.7;
 /// How far below the capsule the ground probe looks (also the max snap-down per tick).
 pub const GROUND_PROBE_DISTANCE: f32 = 0.08;
+/// The ground probe starts this far above the capsule so it never begins in contact.
+pub const GROUND_PROBE_LIFT: f32 = 0.05;
+/// Ground probe sphere radius relative to the capsule radius (thinner, so walls don't touch it).
+pub const GROUND_PROBE_RADIUS_FACTOR: f32 = 0.8;
 /// Gap kept between capsule and floor after snapping (matches avian's default skin width).
 pub const GROUND_SKIN: f32 = 0.01;
 

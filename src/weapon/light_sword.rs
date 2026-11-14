@@ -82,6 +82,10 @@ pub const MOVESET: Moveset = Moveset {
         grip: Vec3::new(-1.95, 0.0, -0.15),
         off_arm_pitch: 0.1,
         off_elbow: 0.3,
+        // Sprint: arm low and back, blade trailing behind and down.
+        run_arm_pitch: -0.3,
+        run_elbow: 0.35,
+        run_grip: Vec3::new(2.05, 0.0, 0.3),
     },
 };
 

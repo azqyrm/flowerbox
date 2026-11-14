@@ -20,11 +20,24 @@ pub struct CharacterController {
     pub facing: f32,
     /// Actually sprinting this tick (drains stamina).
     pub sprinting: bool,
+    /// Velocity actually achieved last tick (displacement / dt). Unlike `velocity` it doesn't
+    /// jitter while pressing against or sliding along walls, so animation reads this.
+    pub moved: Vec3,
+    /// Horizontal speed the character is trying to move at (0 while an action drives movement).
+    pub wish_speed: f32,
 }
 
 impl Default for CharacterController {
     fn default() -> Self {
-        Self { velocity: Vec3::ZERO, grounded: false, coyote: 0.0, facing: 0.0, sprinting: false }
+        Self {
+            velocity: Vec3::ZERO,
+            grounded: false,
+            coyote: 0.0,
+            facing: 0.0,
+            sprinting: false,
+            moved: Vec3::ZERO,
+            wish_speed: 0.0,
+        }
     }
 }
 
@@ -64,20 +77,24 @@ pub(super) fn move_character(
                     intent.dir * speed.max(horizontal.length())
                 };
                 let accel = if ctrl.grounded { GROUND_ACCEL } else { AIR_ACCEL };
+                ctrl.wish_speed = intent.dir.length() * speed;
                 (intent.dir, approach(horizontal, target, accel * dt))
             }
             ActionMovement::Locked => {
                 ctrl.sprinting = false;
+                ctrl.wish_speed = 0.0;
                 (Vec3::ZERO, approach(horizontal, Vec3::ZERO, GROUND_ACCEL * dt))
             }
             ActionMovement::Scripted(curve) => {
                 ctrl.sprinting = false;
+                ctrl.wish_speed = 0.0;
                 let a = action.current.expect("scripted movement needs an action");
                 (Vec3::ZERO, a.dir * curve.speed(a.elapsed))
             }
             ActionMovement::Plunge => {
                 // Keep the jump's horizontal momentum: a moving jump attack dives forward.
                 ctrl.sprinting = false;
+                ctrl.wish_speed = 0.0;
                 (Vec3::ZERO, horizontal)
             }
         };
@@ -114,6 +131,7 @@ pub(super) fn move_character(
 
         // Move and slide against the level geometry.
         let filter = SpatialQueryFilter::from_excluded_entities([entity]);
+        let start = tf.translation;
         let out = move_and_slide.move_and_slide(
             collider,
             tf.translation,
@@ -129,25 +147,38 @@ pub(super) fn move_character(
 
         // Ground probe: a short downward cast after moving. The sweep above is mostly
         // horizontal while walking and often misses the floor, so it can't decide grounding.
-        // Skipped while rising so a jump isn't immediately re-grounded.
+        // Skipped while rising (by intent: the slide's projected velocity can come back with a
+        // tiny +y in the wall/floor crease) so a jump isn't immediately re-grounded.
+        //
+        // The probe is a sphere a bit thinner than the capsule, centred on its bottom
+        // hemisphere and lifted slightly: a cast that starts touching something (the floor, or
+        // a wall the character is pressing into) returns nothing or a garbage normal, which
+        // made grounding flicker and the animation stutter against walls (N16).
         ctrl.grounded = false;
-        if ctrl.velocity.y <= 0.0 {
+        if vy <= 0.0 {
+            let radius = PLAYER_RADIUS * GROUND_PROBE_RADIUS_FACTOR;
+            let foot = tf.translation - Vec3::Y * (PLAYER_CAPSULE_LENGTH * 0.5);
+            // Probe bottom sits this far above the capsule bottom before the cast.
+            let gap = GROUND_PROBE_LIFT + (PLAYER_RADIUS - radius);
             let probe = move_and_slide.spatial_query.cast_shape(
-                collider,
-                tf.translation,
+                &Collider::sphere(radius),
+                foot + Vec3::Y * GROUND_PROBE_LIFT,
                 Quat::IDENTITY,
                 Dir3::NEG_Y,
-                &ShapeCastConfig::from_max_distance(GROUND_PROBE_DISTANCE),
+                &ShapeCastConfig::from_max_distance(gap + GROUND_PROBE_DISTANCE),
                 &filter,
             );
             if let Some(hit) = probe.filter(|h| h.normal1.y > GROUND_NORMAL_MIN_Y) {
                 ctrl.grounded = true;
                 // Snap down onto the floor, keeping the controller's skin gap.
-                tf.translation.y -= (hit.distance - GROUND_SKIN).max(0.0);
+                tf.translation.y -= (hit.distance - gap - GROUND_SKIN).max(0.0);
                 ctrl.velocity.y = 0.0;
             }
         }
         tf.rotation = Quat::from_rotation_y(ctrl.facing);
+        if dt > 0.0 {
+            ctrl.moved = (tf.translation - start) / dt;
+        }
     }
 }
 

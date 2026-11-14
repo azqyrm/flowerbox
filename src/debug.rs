@@ -50,6 +50,11 @@ impl Plugin for DebugPlugin {
                 app.insert_resource(Autopilot { movement: Some(combat_movement), attack_button: Some(combat_attack_button) })
                     .add_systems(Update, (combat_script, log_dummy));
             }
+            Ok("wall") => {
+                app.insert_resource(Autopilot { movement: Some(wall_movement), attack_button: None })
+                    .add_systems(Update, wall_script)
+                    .add_systems(FixedLast, log_wall_tick);
+            }
             Ok(_) => {
                 app.insert_resource(Autopilot { movement: Some(default_movement), attack_button: None })
                     .init_resource::<AirborneTicks>()
@@ -444,6 +449,42 @@ fn combat_script(
             ctrl.velocity = Vec3::ZERO;
             ctrl.facing = 0.0;
         }
+    }
+}
+
+// ── Wall autopilot (FLOWERBOX_AUTOPILOT=wall) ──────────────────────────
+
+/// From (-1.5, -4) heading +Z: sprint (1–2.6 s), jog into the ring wall (2.6–6 s, contact
+/// ≈ 4.75 s, so ~1.2 s of pushing), then diagonally along it (6–7.5 s). Logs every fixed tick
+/// so stutter shows up as noise in pos/vel/grounded (N16).
+fn wall_movement(t: f32, _dt: f32) -> (Vec3, bool, bool) {
+    if (1.0..2.6).contains(&t) {
+        (Vec3::Z, true, false)
+    } else if (2.6..6.0).contains(&t) {
+        (Vec3::Z, false, false)
+    } else if (6.0..7.5).contains(&t) {
+        (Vec3::new(1.0, 0.0, 1.0).normalize(), false, false)
+    } else {
+        (Vec3::ZERO, false, false)
+    }
+}
+
+fn wall_script(time: Res<Time>, mut player: Query<(&mut Transform, &mut CharacterController), With<Player>>) {
+    let Ok((mut tf, mut ctrl)) = player.single_mut() else { return };
+    if crossed(time.elapsed_secs(), time.delta_secs(), 0.2) {
+        tf.translation = Vec3::new(-1.5, PLAYER_HALF_HEIGHT + 0.02, -4.0); // a lane clear of rubble
+        ctrl.velocity = Vec3::ZERO;
+        ctrl.facing = std::f32::consts::PI;
+    }
+}
+
+fn log_wall_tick(time: Res<Time>, q: Query<(&Transform, &CharacterController), With<Player>>) {
+    let t = time.elapsed_secs();
+    if !(0.9..7.7).contains(&t) {
+        return;
+    }
+    for (tf, c) in &q {
+        info!("wall t={t:.3} pos={:.3} vel={:.3} grounded={}", tf.translation, c.velocity, c.grounded);
     }
 }
 

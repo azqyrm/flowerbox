@@ -213,6 +213,11 @@ claude_ds/
 - [x] Second model `Rusted Shortsword` (same class, shorter blade, 16 damage), with the debug key F6 to swap
 - [ ] Future classes (two-handers, daggers, …): add a variant plus `weapon/<class>.rs` (see N15)
 
+### Phase 5.7 — Locomotion polish (user request, 2026-11-14)
+- [x] Walking into a wall no longer stutters: the ground probe was flickering (N16)
+- [x] Slow, braced walk while pushing against an obstacle (free hand on the wall)
+- [x] New gait: slow walk / jog / sprint blended by speed, with heel strike, toe-off, hip sway and counter-twist; feet planted on the floor; the sprint trails the weapon (per-class `GuardSpec::run_*`)
+
 ### Phase 6 — Healing Ale, Hearth, death and HUD
 - [ ] Healing Ale: charges, drinking state, slowed movement, heal tick
 - [ ] Hearth: interact prompt, rest (restore HP, stamina and Ale), set the respawn point
@@ -259,6 +264,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | Characters are generic (`character` module, driven by `MoveIntent`/`ActionIntent`) and bodies are generic (`humanoid` module: `HumanoidSpec` + shared animator). To add another humanoid (an enemy), spawn `character_bundle()` + `spawn_humanoid(spec)` + `HumanoidAnimator`, and write its intents from AI (user request). |
 | 2026-11-14 | A light attack while sprinting = running attack (a leaping slash). Light and heavy attacks lunge forward, and jump attacks keep their momentum (user request). |
 | 2026-11-14 | Weapons are split into a class (how it fights and animates: `Moveset` in `weapon/<class>.rs`) and a definition (a concrete weapon: damage, blade span, model). Attack numbers moved out of `tuning.rs` into the class files. The starting sword is class `LightSword` (user request). |
+| 2026-11-14 | Locomotion animation reads the movement actually achieved (`CharacterController::moved`), not the controller's velocity. Wanting to move but barely moving = "blocked" → braced slow walk. The normal move speed (4.5 m/s) animates as a jog and sprint as a run (user request). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -359,3 +365,12 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
     The tests in `weapon/mod.rs` and `humanoid/anim.rs` loop over `ALL`. They check sane timings, that lunges cover their distance, that heavy damage scales, and that the strikes reach in front. A two-hander will also want the left hand on the grip: extend `GuardSpec`/`SwingKey` with off-hand data, or add an IK step, when that class gets built.
   - **Weapon definitions** (`WeaponDef`, static, for example `light_sword::LONGSWORD`) hold the name, class, `base_damage`, `blade: (start, end)` along the hand's +Y (the hitbox) and a `ModelSource` (`Parts(&[WeaponPart])` primitives, or `Gltf { path, transform }`). Equip with `EquipWeapon { character, def }`: the old model is despawned and the new one goes under `HandR`. The player starts with the Longsword through this message. Phase 7 items should reference `&'static WeaponDef`s.
   - The combat autopilot now ends with an F6-style swap to the Rusted Shortsword at 16 s and a light hit for 16 at about 18.7 s. Run it for 22 s: hitstops slow game time, so it lags behind real time.
+- **N16 (2026-11-14) — wall stutter and the new gait (user request):**
+  - **Cause:** pressed against the wall, `grounded` flickered almost every tick (logged with `FLOWERBOX_AUTOPILOT=wall`), so the air pose blended in and the landing crouch retriggered. There were three causes:
+    1. `cast_shape` starting in contact with the wall returned no hit.
+    2. A cast starting in contact with the floor can return a bad normal.
+    3. `move_and_slide` sometimes returns a tiny +y velocity in the wall/floor crease, which skipped the probe.
+  - **Fix** (`character/controller.rs`): the probe is now a sphere 0.8× the capsule radius, centred on the bottom hemisphere and lifted 5 cm (`GROUND_PROBE_*`). It's gated on the *intended* vertical velocity. The probe uses `PLAYER_RADIUS`/`PLAYER_CAPSULE_LENGTH`; make it per-character when enemies get other sizes.
+  - **Animator:** 0.1 s air grace (`AIR_GRACE`), so a lost tick never shows. Speed comes from `ctrl.moved`. `blocked` = `wish_speed > 1` and actual speed < 35 % of it; this forces a slow-walk gait at 1.1 m/s with the free hand braced forward.
+  - **Gait** (`humanoid/anim.rs`): the `Gait` params `SLOW_WALK`/`JOG`/`SPRINT` are blended by speed. `leg_cycle(u)` handles stance and swing with a duty factor (< 0.5 gives flight phases plus a bounce). Foot = knee − thigh keeps the feet level. Planting shifts the pelvis so the lowest heel or toe (`HumanoidSpec::sole_points`) touches the floor. Stride length comes from the gait. Tests: feet stay planted at every speed and phase, the sprint trails the blade, the braced hand reaches forward.
+  - **`FLOWERBOX_AUTOPILOT=wall`:** starts at (-1.5, -4) in a lane clear of rubble. It sprints, jogs into the wall (contact at ≈ 4.75 s), pushes, then slides diagonally along it, logging every fixed tick. Expect `grounded=false` never to appear. For side-view shots use `FLOWERBOX_CAM="1.5708,-0.05,5.0"`, and run at most 2 instances in parallel or the shots time out.

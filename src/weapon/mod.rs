@@ -111,6 +111,11 @@ pub struct GuardSpec {
     /// Left arm forward swing and elbow bend (a two-hander would bring it to the grip).
     pub off_arm_pitch: f32,
     pub off_elbow: f32,
+    /// While sprinting: right arm swing, elbow and weapon orientation (same frame as `grip`),
+    /// e.g. a sword trailing low behind.
+    pub run_arm_pitch: f32,
+    pub run_elbow: f32,
+    pub run_grip: Vec3,
 }
 
 /// Everything a weapon class does differently.
