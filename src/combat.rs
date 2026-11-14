@@ -18,6 +18,7 @@ use crate::character::stats::{DamageMessage, DamageTaken, Health};
 use crate::humanoid::anim::action_pose;
 use crate::humanoid::pose::bone_character_transform;
 use crate::humanoid::{Bone, HumanoidRig, HumanoidSpec};
+use crate::hearth::WorldReset;
 use crate::player::Player;
 use crate::weapon::{EquippedWeapon, WeaponDef};
 use crate::tuning::*;
@@ -30,7 +31,7 @@ impl Plugin for CombatPlugin {
             .init_resource::<CameraShake>()
             .add_systems(Startup, spawn_dummy)
             .add_systems(FixedUpdate, sword_hits.in_set(CharacterSystems::Combat))
-            .add_systems(Update, (hit_feedback, run_hitstop, dummy_react, dummy_animate).chain());
+            .add_systems(Update, (hit_feedback, run_hitstop, dummy_react, dummy_reset, dummy_animate).chain());
     }
 }
 
@@ -228,6 +229,18 @@ fn dummy_react(mut taken: MessageReader<DamageTaken>, mut dummies: Query<(&mut D
             dummy.fallen_tilt = tilt_away * 1.45;
             info!("training dummy broken, resets in {DUMMY_RESET_TIME}s");
         }
+    }
+}
+
+/// Resting or respawning stands the dummy back up at full health.
+fn dummy_reset(mut resets: MessageReader<WorldReset>, mut dummies: Query<(&mut Dummy, &mut Health)>) {
+    if resets.read().count() == 0 {
+        return;
+    }
+    for (mut dummy, mut health) in &mut dummies {
+        dummy.broken = None;
+        dummy.fallen_tilt = Vec2::ZERO;
+        *health = Health::new(health.max);
     }
 }
 

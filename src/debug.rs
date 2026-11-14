@@ -4,6 +4,7 @@
 //!   ring at the player's feet and the red blade hitbox during active frames.
 //! - Debug builds only: **H** = take 15 damage; **1–4** = request Roll (backstep when standing still),
 //!   Light (jump attack when airborne, running attack when sprinting), Heavy, Drink;
+//!   **K** = die (tests YOU DIED and the Hearth respawn);
 //!   **F6** = swap the weapon (Longsword ↔ Rusted Shortsword) until the inventory exists.
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
 //!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120), or `FLOWERBOX_SHOT_TIME=secs`
@@ -12,6 +13,8 @@
 //!   timeline (see `autopilot_script`); position and action changes are logged.
 //! - `FLOWERBOX_AUTOPILOT=combat` → fights the training dummy through the real attack-button
 //!   logic (see `COMBAT_PRESSES` / `combat_movement`).
+//! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
+//! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -22,6 +25,7 @@ use crate::character::controller::CharacterController;
 use crate::character::stats::{DamageMessage, Health, Invulnerable, Stamina};
 use crate::character::{ActionIntent, MoveIntent};
 use crate::combat::{Dummy, blade_world};
+use crate::healing::HealingAle;
 use crate::weapon::{EquipWeapon, EquippedWeapon, light_sword};
 use crate::humanoid::{HumanoidRig, HumanoidSpec};
 use crate::input::{Autopilot, PlayerInput};
@@ -49,6 +53,10 @@ impl Plugin for DebugPlugin {
             Ok("combat") => {
                 app.insert_resource(Autopilot { movement: Some(combat_movement), attack_button: Some(combat_attack_button) })
                     .add_systems(Update, (combat_script, log_dummy));
+            }
+            Ok("hearth") => {
+                app.insert_resource(Autopilot { movement: Some(hearth_movement), attack_button: None })
+                    .add_systems(Update, (hearth_script, log_ale));
             }
             Ok("wall") => {
                 app.insert_resource(Autopilot { movement: Some(wall_movement), attack_button: None })
@@ -109,12 +117,12 @@ fn toggle_overlay(keys: Res<ButtonInput<KeyCode>>, mut q: Query<&mut Visibility,
 fn update_overlay(
     dummies: Query<&Health, (With<Dummy>, Without<Player>)>,
     player: Query<
-        (&CharacterAction, &ActionIntent, &PlayerInput, &Health, &Stamina, &CharacterController, Has<Invulnerable>),
+        (&CharacterAction, &ActionIntent, &PlayerInput, &Health, &Stamina, &CharacterController, Has<Invulnerable>, Option<&HealingAle>),
         With<Player>,
     >,
     mut text: Query<(&mut Text, &Visibility), With<DebugOverlay>>,
 ) {
-    let Ok((action, intent, input, hp, st, ctrl, invuln)) = player.single() else { return };
+    let Ok((action, intent, input, hp, st, ctrl, invuln, ale)) = player.single() else { return };
     for (mut text, vis) in &mut text {
         if *vis == Visibility::Hidden {
             continue;
@@ -146,12 +154,13 @@ fn update_overlay(
             None => "-".into(),
         };
         text.0 = format!(
-            "[F3] DEBUG\n{action_line}\nbuffer: {buffer}\nHP {:.0}/{:.0}   ST {:.0}/{:.0}{}\n{}grounded {}  speed {:.1} m/s\nLMB held {:.2}s{}\ndummy HP {}",
+            "[F3] DEBUG\n{action_line}\nbuffer: {buffer}\nHP {:.0}/{:.0}   ST {:.0}/{:.0}{}   Ale {}\n{}grounded {}  speed {:.1} m/s\nLMB held {:.2}s{}\ndummy HP {}",
             hp.current,
             hp.max,
             st.current,
             st.max,
             if st.regen_delay > 0.0 { format!(" (delay {:.1})", st.regen_delay) } else { String::new() },
+            ale.map_or("-".into(), |a| format!("{}/{}", a.charges, a.max)),
             if invuln { "** INVULNERABLE **\n" } else { "" },
             ctrl.grounded,
             Vec2::new(ctrl.velocity.x, ctrl.velocity.z).length(),
@@ -244,6 +253,9 @@ fn debug_keys(
     if keys.just_pressed(KeyCode::KeyH) {
         damage.write(DamageMessage { target: entity, amount: 15.0, from: None });
     }
+    if keys.just_pressed(KeyCode::KeyK) {
+        damage.write(DamageMessage { target: entity, amount: f32::MAX, from: None });
+    }
     let requests = [
         (KeyCode::Digit1, ActionRequest::Roll),
         (KeyCode::Digit2, ActionRequest::LightAttack),
@@ -299,15 +311,15 @@ fn crossed(t: f32, dt: f32, at: f32) -> bool {
 }
 
 /// Walk along world -Z (camera-independent, so FLOWERBOX_CAM can film any side), jump every 2 s,
-/// stand still from 10.8 to 11.6 s for the backstep test.
+/// stand still from 13.3 to 14.1 s for the backstep test (after the Hearth respawn at ~12 s).
 fn default_movement(t: f32, dt: f32) -> (Vec3, bool, bool) {
-    let dir = if (10.8..11.6).contains(&t) { Vec3::ZERO } else { Vec3::NEG_Z };
+    let dir = if (13.3..14.1).contains(&t) { Vec3::ZERO } else { Vec3::NEG_Z };
     (dir, false, (t % 2.0) < dt && t > 1.0)
 }
 
 /// Timeline that exercises the action system. Expected log (N9): roll → damage ignored →
-/// hurt (HP 90) → light combo 0,1,2 → jump attack → death → respawn with full HP →
-/// backstep (standing still at 11 s).
+/// hurt (HP 90) → light combo 0,1,2 → jump attack → death → YOU DIED → respawn at the Hearth
+/// with full HP (~12 s) → backstep (standing still at 13.5 s).
 fn autopilot_script(
     time: Res<Time>,
     mut damage: MessageWriter<DamageMessage>,
@@ -340,7 +352,7 @@ fn autopilot_script(
         info!("autopilot: lethal damage");
         damage.write(DamageMessage { target: entity, amount: 500.0, from: None });
     }
-    if at(11.0) {
+    if at(13.5) {
         info!("autopilot: roll while standing still (expect Backstep)");
         intent.buffer(ActionRequest::Roll);
     }
@@ -485,6 +497,51 @@ fn log_wall_tick(time: Res<Time>, q: Query<(&Transform, &CharacterController), W
     }
     for (tf, c) in &q {
         info!("wall t={t:.3} pos={:.3} vel={:.3} grounded={}", tf.translation, c.velocity, c.grounded);
+    }
+}
+
+// ── Hearth autopilot (FLOWERBOX_AUTOPILOT=hearth) ───────────────────────
+
+/// Stand still; walk toward the Hearth (+Z from the spawn) from 8.8 to 9.4 s.
+fn hearth_movement(t: f32, _dt: f32) -> (Vec3, bool, bool) {
+    (if (8.8..9.4).contains(&t) { Vec3::Z } else { Vec3::ZERO }, false, false)
+}
+
+/// Healing Ale, Hearth and death flow. Expected log:
+/// 1.0 dmg 50 (HP 50) → 2.0 drink (HP 90, 2 left) → 3.5 drink interrupted by a hit at 3.7
+/// (HP 80, still 2 left) → 4.5 drink (HP 100, 1 left) → 6.0 drink (0 left) → 7.5 drink:
+/// "the tankard is empty" → 8.5 dmg 40 (HP 60) → walk to the Hearth → 9.8 E: Rest →
+/// "hearth kindled", HP 100, 3 Ale → 12.0 lethal → YOU DIED → respawn at the Hearth
+/// (~16.5 s) with full HP and Ale.
+fn hearth_script(
+    time: Res<Time>,
+    mut damage: MessageWriter<DamageMessage>,
+    mut player: Query<(Entity, &mut ActionIntent, &mut PlayerInput), With<Player>>,
+) {
+    let Ok((entity, mut intent, mut input)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let at = |s: f32| crossed(t, dt, s);
+    for (when, amount) in [(1.0, 50.0), (3.7, 10.0), (8.5, 40.0), (12.0, 500.0)] {
+        if at(when) {
+            info!("autopilot: {amount} damage");
+            damage.write(DamageMessage { target: entity, amount, from: None });
+        }
+    }
+    for when in [2.0, 3.5, 4.5, 6.0, 7.5] {
+        if at(when) {
+            info!("autopilot: drink");
+            intent.buffer(ActionRequest::DrinkAle);
+        }
+    }
+    if at(9.8) {
+        info!("autopilot: press E");
+        input.interact = true;
+    }
+}
+
+fn log_ale(player: Query<(&HealingAle, &Health), (With<Player>, Or<(Changed<HealingAle>, Changed<Health>)>)>) {
+    for (ale, hp) in &player {
+        info!("ale {}/{}  HP {:.0}", ale.charges, ale.max, hp.current);
     }
 }
 

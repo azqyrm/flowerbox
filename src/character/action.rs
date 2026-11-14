@@ -13,7 +13,7 @@
 use bevy::prelude::*;
 
 use super::controller::CharacterController;
-use super::stats::{Health, Invulnerable, Stamina};
+use super::stats::{Invulnerable, Stamina};
 use super::{ActionIntent, MoveIntent};
 use crate::tuning::*;
 use crate::weapon::{AttackSpec, EquippedWeapon, WeaponClass};
@@ -27,6 +27,8 @@ pub enum ActionRequest {
     LightAttack,
     HeavyAttack,
     DrinkAle,
+    /// Kneel at a Hearth (the Hearth decides when this is allowed and what resting does).
+    Rest,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,7 +44,10 @@ pub enum ActionKind {
     HeavyAttack,
     JumpAttack,
     DrinkAle,
+    /// Kneeling at a Hearth; its effect lands at the start of the active phase.
+    Rest,
     Hurt,
+    /// Lasts until something revives the character (the Hearth respawns the player).
     Dead,
 }
 
@@ -217,6 +222,17 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
                 hop: 0.0,
             }
         }
+        Rest => ActionDef {
+            startup: REST_STARTUP,
+            active: REST_ACTIVE,
+            recovery: REST_RECOVERY,
+            cancel: REST_STARTUP + REST_ACTIVE + REST_RECOVERY,
+            stamina_cost: 0.0,
+            iframes: None,
+            movement: ActionMovement::Locked,
+            ground: GroundRule::Ground,
+            hop: 0.0,
+        },
         Hurt => ActionDef {
             startup: 0.0,
             active: 0.0,
@@ -231,7 +247,7 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
         Dead => ActionDef {
             startup: 0.0,
             active: 0.0,
-            recovery: DEAD_DURATION,
+            recovery: f32::INFINITY, // never ends by itself
             cancel: f32::INFINITY,
             stamina_cost: 0.0,
             iframes: None,
@@ -322,6 +338,12 @@ impl CharacterAction {
         self.serial = self.serial.wrapping_add(1);
     }
 
+    /// Ends any action, including Dead (respawning).
+    pub fn revive(&mut self) {
+        self.current = None;
+        self.serial = self.serial.wrapping_add(1);
+    }
+
     /// Starts an action immediately, interrupting anything (used for Hurt / Dead).
     pub fn force(&mut self, kind: ActionKind, dir: Vec3) {
         if matches!(self.current, Some(a) if a.kind == ActionKind::Dead) {
@@ -374,6 +396,7 @@ pub fn resolve_request(
         },
         ActionRequest::HeavyAttack => ActionKind::HeavyCharge,
         ActionRequest::DrinkAle => ActionKind::DrinkAle,
+        ActionRequest::Rest => ActionKind::Rest,
     };
     let def = action_def(kind, weapon);
     let ground_ok = match def.ground {
@@ -446,10 +469,10 @@ pub(super) fn release_heavy_charge(mut q: Query<(&mut CharacterAction, &ActionIn
 pub(super) fn tick_action(
     time: Res<Time>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut CharacterAction, Has<Invulnerable>, &mut Health, &mut Stamina, &mut Transform, &mut CharacterController)>,
+    mut q: Query<(Entity, &mut CharacterAction, Has<Invulnerable>, &CharacterController)>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut action, invulnerable, mut health, mut stamina, mut tf, mut ctrl) in &mut q {
+    for (entity, mut action, invulnerable, ctrl) in &mut q {
         let mut iframes = false;
         if let Some(cur) = action.current.as_mut() {
             cur.elapsed += dt;
@@ -462,14 +485,6 @@ pub(super) fn tick_action(
             }
             iframes = cur.in_iframes();
             if cur.phase() == ActionPhase::Done {
-                if cur.kind == ActionKind::Dead {
-                    // Placeholder respawn until the Hearth exists (Phase 6).
-                    let (x, y, z) = PLAYER_SPAWN;
-                    tf.translation = Vec3::new(x, y, z);
-                    ctrl.velocity = Vec3::ZERO;
-                    *health = Health::new(health.max);
-                    *stamina = Stamina::new(stamina.max);
-                }
                 action.current = None;
             }
         }
@@ -596,6 +611,20 @@ mod tests {
         let mut pa = CharacterAction { current: Some(at(ActionKind::Dead, 0.0)), serial: 0 };
         pa.force(ActionKind::Hurt, Vec3::ZERO);
         assert_eq!(pa.current.unwrap().kind, ActionKind::Dead);
+        // Death never ends by itself; only `revive` ends it.
+        let long_dead = at(ActionKind::Dead, 1000.0);
+        assert_eq!(long_dead.phase(), ActionPhase::Recovery);
+        pa.revive();
+        assert!(pa.current.is_none());
+    }
+
+    #[test]
+    fn rest_is_grounded_and_uninterruptible() {
+        let s = Stamina::new(0.0);
+        assert_eq!(resolve_request(None, ActionRequest::Rest, ctx(true, false), &s), Some(ActionKind::Rest), "no stamina needed");
+        assert_eq!(resolve_request(None, ActionRequest::Rest, ctx(false, false), &s), None, "not in the air");
+        let resting = at(ActionKind::Rest, 0.5);
+        assert_eq!(resolve_request(Some(&resting), ActionRequest::Roll, ctx(true, true), &Stamina::new(100.0)), None);
     }
 
     #[test]

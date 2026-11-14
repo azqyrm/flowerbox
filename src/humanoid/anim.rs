@@ -470,6 +470,23 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
                 .set(Bone::Head, rx(0.35 * up * if a.phase() == ActionPhase::Active { 1.0 } else { 0.4 }));
             Some((p, PoseMask::UpperBody))
         }
+        ActionKind::Rest => {
+            // Down on the right knee, left foot planted forward, hands held to the fire.
+            let k = match a.phase() {
+                ActionPhase::Startup => ease(a.elapsed / d.startup),
+                ActionPhase::Active => 1.0,
+                _ => 1.0 - ease((a.elapsed - d.startup - d.active) / d.recovery),
+            };
+            p.pelvis_offset.y = -0.42 * k;
+            p.set(Bone::ThighR, rx(-0.08 * k)).set(Bone::ShinR, rx(-1.5 * k)).set(Bone::FootR, rx(-0.35 * k));
+            p.set(Bone::ThighL, rx(1.55 * k)).set(Bone::ShinL, rx(-1.55 * k));
+            p.add(Bone::Chest, rx(-0.18 * k)).set(Bone::Head, rx(0.12 * k));
+            p.set(Bone::UpperArmL, Quat::IDENTITY.slerp(rx(0.85) * rz(0.2), k)).set(Bone::ForearmL, rx(0.45 * k));
+            // Sword arm drops, the blade resting point-down beside the knee.
+            let g = guard_pose(a.weapon);
+            p.set(Bone::UpperArmR, g.get(Bone::UpperArmR).slerp(rx(0.15) * rz(0.12), k));
+            Some((p, PoseMask::Full))
+        }
         ActionKind::Hurt => {
             let b = bell(p01.powf(0.6));
             p.add(Bone::Chest, rx(0.4 * b)).set(Bone::Head, rx(0.3 * b));
@@ -744,6 +761,22 @@ mod tests {
         }
     }
 
+    /// Kneeling at the Hearth puts a knee near the floor, but nothing below it.
+    #[test]
+    fn rest_kneels_on_the_floor() {
+        let spec = HumanoidSpec::human();
+        let d = at(ActionKind::Rest, 0.0).def;
+        let (pose, _) = action_pose(&at(ActionKind::Rest, d.startup + 0.1)).unwrap();
+        let model = pose.model_transform(0.0);
+        let y = |b: Bone| (model * bone_model_transform(&spec, &pose, b)).translation.y;
+        let ankle = spec.ankle_height();
+        assert!((0.04..0.16).contains(&y(Bone::ShinR)), "right knee down: {}", y(Bone::ShinR));
+        assert!((y(Bone::FootL) - ankle).abs() < 0.04, "left foot on the floor: ankle at {}", y(Bone::FootL));
+        for bone in Bone::ALL {
+            assert!(y(bone) > -0.05, "{bone:?} below the floor: {}", y(bone));
+        }
+    }
+
     #[test]
     fn every_action_has_a_pose() {
         for kind in [
@@ -755,6 +788,7 @@ mod tests {
             ActionKind::HeavyAttack,
             ActionKind::JumpAttack,
             ActionKind::DrinkAle,
+            ActionKind::Rest,
             ActionKind::Hurt,
             ActionKind::Dead,
         ] {

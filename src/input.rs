@@ -65,6 +65,8 @@ pub struct PlayerInput {
     /// How long Shift has been held (for tap-vs-hold).
     pub dodge_held: f32,
     pub attack: AttackTracker,
+    /// E was pressed and nothing has used it yet (the Hearth consumes it).
+    pub interact: bool,
 }
 
 /// Tap-vs-hold logic of the attack button. Pure so it can be unit tested.
@@ -168,6 +170,13 @@ fn gather_player_input(
             intent.buffer(request);
         }
         intent.attack_held = attack.0 && input.attack.is_holding();
+
+        if actions.just_pressed(&Action::DrinkAle) {
+            intent.buffer(ActionRequest::DrinkAle);
+        }
+        if actions.just_pressed(&Action::Interact) {
+            input.interact = true;
+        }
     }
 }
 

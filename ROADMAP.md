@@ -147,11 +147,12 @@ claude_ds/
    │  ├─ mod.rs         # ItemDef registry, ItemId
    │  ├─ inventory.rs   # Inventory, Equipment components, equip/unequip events
    │  └─ pickup.rs      # world pickups
-   ├─ healing.rs        # Healing Ale charges, drinking
-   ├─ hearth.rs         # rest point, replenish, respawn
+   ├─ healing.rs        # HealingAle charges, swallow + heal over time, tankard prop
+   ├─ hearth.rs         # Hearth (kindle/rest), RespawnPoint, WorldReset, DeathSequence → respawn
    └─ ui/
-      ├─ hud.rs
-      └─ inventory_ui.rs
+      ├─ mod.rs         # UiPlugin, Banner message, display font path
+      ├─ hud.rs         # bars, Ale, equipment quadrant, prompt, banner, YOU DIED + fades
+      └─ inventory_ui.rs  (Phase 7)
 ```
 
 **Principles**
@@ -219,10 +220,10 @@ claude_ds/
 - [x] New gait: slow walk / jog / sprint blended by speed, with heel strike, toe-off, hip sway and counter-twist; feet planted on the floor; the sprint trails the weapon (per-class `GuardSpec::run_*`)
 
 ### Phase 6 — Healing Ale, Hearth, death and HUD
-- [ ] Healing Ale: charges, drinking state, slowed movement, heal tick
-- [ ] Hearth: interact prompt, rest (restore HP, stamina and Ale), set the respawn point
-- [ ] Death: "YOU DIED" overlay, then respawn at the Hearth (debug key `K` kills the player for testing)
-- [ ] HUD: HP and stamina bars, Ale counter, equipped-items quadrant
+- [x] Healing Ale: charges, drinking state, slowed movement, heal tick (R; the charge is used at the swallow, an empty tankard does nothing)
+- [x] Hearth: interact prompt, rest (restore HP, stamina and Ale), set the respawn point (E; the first rest kindles it; resting also resets the dummy)
+- [x] Death: "YOU DIED" overlay, then respawn at the Hearth (debug key `K` kills the player for testing)
+- [x] HUD: HP and stamina bars, Ale counter, equipped-items quadrant (plus the HP "damage chunk", the interact prompt and banners)
 
 ### Phase 7 — Inventory and equipment
 - [ ] Item registry (in code first, `assets/items.ron` later), `Inventory`, `Equipment`
@@ -258,13 +259,17 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | Engine: Bevy 0.20, plus avian3d 0.8 for physics and leafwing-input-manager 0.22 for input. Custom kinematic controller. |
 | 2026-11-14 | The estus equivalent is named **Healing Ale**, with 3 charges, refilled at the **Hearth** (bonfire equivalent). |
 | 2026-11-14 | Project title: **FlowerBox** (crate `flowerbox`). |
-| 2026-11-14 | Debug overlay on F3 is always compiled in (it's cheap). Debug keys (H, 1-4) only exist in debug builds. Not tied to the `dev` feature. |
+| 2026-11-14 | Debug overlay on F3 is always compiled in (it's cheap). Debug keys (H, K, 1-4, F6) only exist in debug builds. Not tied to the `dev` feature. |
 | 2026-11-14 | Backstep = rolling with no movement input; there's no separate input or request for it (user request). |
 | 2026-11-14 | Sword hits are detected with blade shape queries that sample the same pose function the animation uses (`player::pose`), not avian sensors. This is deterministic, needs no kinematic/static sensor pairs, and keeps the visuals and hitbox identical. |
 | 2026-11-14 | Characters are generic (`character` module, driven by `MoveIntent`/`ActionIntent`) and bodies are generic (`humanoid` module: `HumanoidSpec` + shared animator). To add another humanoid (an enemy), spawn `character_bundle()` + `spawn_humanoid(spec)` + `HumanoidAnimator`, and write its intents from AI (user request). |
 | 2026-11-14 | A light attack while sprinting = running attack (a leaping slash). Light and heavy attacks lunge forward, and jump attacks keep their momentum (user request). |
 | 2026-11-14 | Weapons are split into a class (how it fights and animates: `Moveset` in `weapon/<class>.rs`) and a definition (a concrete weapon: damage, blade span, model). Attack numbers moved out of `tuning.rs` into the class files. The starting sword is class `LightSword` (user request). |
 | 2026-11-14 | Locomotion animation reads the movement actually achieved (`CharacterController::moved`), not the controller's velocity. Wanting to move but barely moving = "blocked" → braced slow walk. The normal move speed (4.5 m/s) animates as a jog and sprint as a run (user request). |
+| 2026-11-14 | Healing Ale is used at the **swallow** (the start of the drink's active phase): a hit during the wind-up keeps the charge. Drinking with 0 charges still plays the drink and does nothing. |
+| 2026-11-14 | Hearths start **unlit** (smouldering); the first rest kindles them ("HEARTH KINDLED"). Resting = the `Rest` action (kneel 0.7 s, rest, stand 0.8 s); its effect lands at the start of the active phase. Death respawns at the last Hearth rested at, or the first Hearth if none. |
+| 2026-11-14 | `Dead` never ends by itself (infinite recovery). Whoever owns revival (the Hearth's `DeathSequence` for the player) calls `CharacterAction::revive()`. Future enemies stay dead until a `WorldReset`. |
+| 2026-11-14 | UI display font: PT Serif (ParaType Free Font License, `assets/fonts/PTSerif-LICENSE.txt`), for banners and YOU DIED. Body text uses Bevy's default font. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -313,7 +318,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Measured by autopilot:** the roll covers 3.6 m (target 3.5) at 8.5 m/s during the active window, and the backstep covers 1.7 m (target 1.6).
   - **Animation:** `player/visuals.rs` does a procedural somersault. `model_pose()` returns a rotation, scale and lift that are applied around a pivot 0.9 m up. It does one forward flip with a tuck (scale 0.7) and a dip, finishing at about 0.5 s. The backstep leans back and hops a little. Phase 5 attack swings should go in this same file and function.
   - **Debug:** while F3 is on, a cyan ring at the feet shows i-frames. `FLOWERBOX_SHOT_TIME=secs` takes the screenshot at a given game time (for example 1.2 = mid-roll in the autopilot timeline). The autopilot now walks along world -Z regardless of camera yaw, so `FLOWERBOX_CAM="1.57,0.2,5"` gives a side view. It stands still from 10.8 to 11.6 s for the backstep test.
-  - **Watch in Phase 6:** the placeholder death respawn teleports the player while `TransformInterpolation` is on, so the model may smear across the arena for one tick. When doing the Hearth respawn, check this and reset the interpolation if needed.
+  - **Watch in Phase 6:** the placeholder death respawn teleports the player while `TransformInterpolation` is on, so the model may smear across the arena for one tick. When doing the Hearth respawn, check this and reset the interpolation if needed. **Resolved in Phase 6 (N17):** the respawn now teleports in `Update` while the screen is black. bevy_transform_interpolation resets easing when `Transform` changes outside the fixed schedules, so there's no smear.
 - **N12 (2026-11-14) — Phase 5 (combat):**
   - **Attack input** (`input::AttackTracker`, unit-tested):
     - The press must start while the cursor is grabbed, so the click that re-grabs it never attacks.
@@ -374,3 +379,29 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Animator:** 0.1 s air grace (`AIR_GRACE`), so a lost tick never shows. Speed comes from `ctrl.moved`. `blocked` = `wish_speed > 1` and actual speed < 35 % of it; this forces a slow-walk gait at 1.1 m/s with the free hand braced forward.
   - **Gait** (`humanoid/anim.rs`): the `Gait` params `SLOW_WALK`/`JOG`/`SPRINT` are blended by speed. `leg_cycle(u)` handles stance and swing with a duty factor (< 0.5 gives flight phases plus a bounce). Foot = knee − thigh keeps the feet level. Planting shifts the pelvis so the lowest heel or toe (`HumanoidSpec::sole_points`) touches the floor. Stride length comes from the gait. Tests: feet stay planted at every speed and phase, the sprint trails the blade, the braced hand reaches forward.
   - **`FLOWERBOX_AUTOPILOT=wall`:** starts at (-1.5, -4) in a lane clear of rubble. It sprints, jogs into the wall (contact at ≈ 4.75 s), pushes, then slides diagonally along it, logging every fixed tick. Expect `grounded=false` never to appear. For side-view shots use `FLOWERBOX_CAM="1.5708,-0.05,5.0"`, and run at most 2 instances in parallel or the shots time out.
+- **N17 (2026-11-14) — Phase 6 (Healing Ale, Hearth, death, HUD):**
+  - **Healing Ale** (`healing.rs`):
+    - `HealingAle { charges, max }` lives on the player.
+    - `drink_ale` runs in FixedUpdate between Actions and Stats. When `DrinkAle` enters Active, it uses the charge once per action serial and heals 40 % of max HP over 0.5 s. It only writes `Health` while healing, so `Changed<Health>` stays meaningful.
+    - The tankard prop is a child of `HandL` and only visible while drinking.
+  - **Hearth** (`hearth.rs`):
+    - `Hearth { kindled }` is at `HEARTH_POSITION` (0, 12), in front of the pillar behind the spawn. It has a static collider (r 0.75) and a flickering fire; unlit, it only smoulders.
+    - `hearth_interaction` (Update) sets `InteractPrompt` within `HEARTH_RANGE`, when grounded and with no action. E sets `PlayerInput::interact`, which is consumed here and turned into `ActionRequest::Rest`.
+    - `rest_at_hearth` (FixedUpdate) turns the player toward the fire. At the start of Rest's active phase it restores everything, sets `RespawnPoint`, writes `WorldReset` (the dummy resets) and, the first time, a `Banner("HEARTH KINDLED")`.
+  - **Death:**
+    - `DeathSequence { t }` is added when the player is Dead. `death_screen(t)` gives the text and black alphas: the text from 1.1 s, black from 3.6 s, and the respawn at 4.5 s, while fully black.
+    - On respawn the player teleports to `RespawnPoint`, or to the Hearth's `respawn_spot`: 1.6 m toward the centre, facing it. Then `revive()`, replenish and `WorldReset` run, followed by a 0.9 s fade-in.
+  - **HUD** (`ui/hud.rs`):
+    - The HP bar width scales with max HP (3.2 px per point). It has a lagging amber "damage chunk" that holds 0.7 s, then drains.
+    - Stamina bar, plus an Ale icon and count (greyed out at 0).
+    - Quadrant slots: top = spells, left = left hand (empty), right = a sword icon and the weapon name, bottom = Ale ×N.
+    - Banner, YOU DIED band (PT Serif) and a full-screen black fade.
+  - **Assets:** `cargo run` finds `assets/`. When running `./target/debug/flowerbox` directly (autopilots, screenshots), set `BEVY_ASSET_ROOT=.`, or the display font is missing.
+  - **`FLOWERBOX_AUTOPILOT=hearth`** (run for about 24 s) gives this expected log:
+    1. damage 50, then drink: HP 90 and "2 left".
+    2. A drink interrupted by a hit keeps 2 charges.
+    3. Two more drinks leave 0. The fifth drink logs "the tankard is empty".
+    4. Damage 40, walk to the Hearth, E: "hearth kindled" and "rested…", HP 100, Ale 3/3.
+    5. Lethal damage: "YOU DIED", then "respawned at [0, 0.91, 10.40]" with full HP and Ale.
+  - **Default autopilot:** death at 7.5 s, respawn at the Hearth at about 12 s, backstep test at 13.5 s (standing still 13.3–14.1 s).
+  - In this environment the log fills with audio (rodio/ALSA) errors; they're harmless, so filter them out.
