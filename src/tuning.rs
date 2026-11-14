@@ -55,3 +55,57 @@ pub const CAM_PITCH_MIN: f32 = -0.6;
 pub const CAM_PITCH_MAX: f32 = 1.2;
 /// Radius of the sphere cast that keeps the camera from clipping through walls.
 pub const CAM_COLLISION_RADIUS: f32 = 0.25;
+
+// ── Stats ────────────────────────────────────────────────────────────────
+pub const PLAYER_MAX_HP: f32 = 100.0;
+pub const PLAYER_MAX_STAMINA: f32 = 100.0;
+pub const STAMINA_REGEN: f32 = 35.0; // per second
+/// Regen pause after any stamina spend.
+pub const STAMINA_REGEN_DELAY: f32 = 0.6;
+pub const SPRINT_STAMINA_PER_SEC: f32 = 12.0;
+
+// ── Action timings (seconds) ─────────────────────────────────────────────
+// Each action = startup → active → recovery. `cancel` = time since start after
+// which a buffered action may interrupt it. See `player::action::action_def`.
+pub const INPUT_BUFFER: f32 = 0.2;
+
+pub const ROLL_STARTUP: f32 = 0.05;
+pub const ROLL_ACTIVE: f32 = 0.35; // = i-frames 0.05..0.40
+pub const ROLL_RECOVERY: f32 = 0.20;
+pub const ROLL_CANCEL: f32 = 0.45;
+pub const ROLL_COST: f32 = 20.0;
+pub const ROLL_DISTANCE: f32 = 3.5;
+
+pub const BACKSTEP_STARTUP: f32 = 0.05;
+pub const BACKSTEP_ACTIVE: f32 = 0.20;
+pub const BACKSTEP_RECOVERY: f32 = 0.15;
+pub const BACKSTEP_CANCEL: f32 = 0.30;
+pub const BACKSTEP_COST: f32 = 15.0;
+pub const BACKSTEP_DISTANCE: f32 = 1.6;
+
+pub const LIGHT_STARTUP: f32 = 0.15;
+pub const LIGHT_ACTIVE: f32 = 0.12;
+pub const LIGHT_RECOVERY: f32 = 0.25;
+pub const LIGHT_CANCEL: f32 = 0.35;
+pub const LIGHT_COST: f32 = 15.0;
+pub const LIGHT_COMBO_MAX: u8 = 3;
+
+pub const HEAVY_STARTUP: f32 = 0.35;
+pub const HEAVY_ACTIVE: f32 = 0.15;
+pub const HEAVY_RECOVERY: f32 = 0.40;
+pub const HEAVY_CANCEL: f32 = 0.70;
+pub const HEAVY_COST: f32 = 30.0;
+
+pub const JUMP_ATTACK_STARTUP: f32 = 0.20;
+pub const JUMP_ATTACK_ACTIVE: f32 = 0.25;
+pub const JUMP_ATTACK_RECOVERY: f32 = 0.35;
+pub const JUMP_ATTACK_COST: f32 = 25.0;
+
+pub const DRINK_STARTUP: f32 = 0.50;
+pub const DRINK_ACTIVE: f32 = 0.20;
+pub const DRINK_RECOVERY: f32 = 0.40;
+pub const DRINK_MOVE_FACTOR: f32 = 0.35;
+
+pub const HURT_DURATION: f32 = 0.45;
+/// Placeholder until Phase 6 (Hearth respawn): time on the floor before respawning.
+pub const DEAD_DURATION: f32 = 3.0;

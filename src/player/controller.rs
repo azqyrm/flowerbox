@@ -4,6 +4,8 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
+use super::action::{ActionMovement, PlayerAction};
+use super::stats::Stamina;
 use crate::input::PlayerInput;
 use crate::tuning::*;
 
@@ -11,7 +13,7 @@ pub struct ControllerPlugin;
 
 impl Plugin for ControllerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, move_character);
+        app.add_systems(FixedUpdate, move_character.in_set(super::PlayerSystems::Movement));
     }
 }
 
@@ -23,11 +25,13 @@ pub struct CharacterController {
     pub coyote: f32,
     /// Facing angle around Y; the model looks along -Z at 0.
     pub facing: f32,
+    /// Actually sprinting this tick (drains stamina).
+    pub sprinting: bool,
 }
 
 impl Default for CharacterController {
     fn default() -> Self {
-        Self { velocity: Vec3::ZERO, grounded: false, coyote: 0.0, facing: 0.0 }
+        Self { velocity: Vec3::ZERO, grounded: false, coyote: 0.0, facing: 0.0, sprinting: false }
     }
 }
 
@@ -46,18 +50,35 @@ fn angle_diff(from: f32, to: f32) -> f32 {
 fn move_character(
     time: Res<Time>,
     move_and_slide: MoveAndSlide,
-    mut q: Query<(Entity, &Collider, &mut CharacterController, &mut PlayerInput, &mut Transform)>,
+    mut q: Query<(Entity, &Collider, &mut CharacterController, &mut PlayerInput, &PlayerAction, &Stamina, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
-    for (entity, collider, mut ctrl, mut input, mut tf) in &mut q {
-        // Horizontal velocity toward the wished direction.
-        let wish = input.move_dir;
-        let speed = if input.sprint && ctrl.grounded { SPRINT_SPEED } else { WALK_SPEED };
+    for (entity, collider, mut ctrl, mut input, action, stamina, mut tf) in &mut q {
+        let free = action.current.is_none();
         let accel = if ctrl.grounded { GROUND_ACCEL } else { AIR_ACCEL };
         let horizontal = Vec3::new(ctrl.velocity.x, 0.0, ctrl.velocity.z);
-        let horizontal = approach(horizontal, wish * speed, accel * dt);
 
-        // Turn toward the move direction.
+        // Horizontal velocity: from input, slowed, locked, or driven by the action.
+        let (wish, horizontal) = match action.movement() {
+            ActionMovement::Free | ActionMovement::Slowed(_) => {
+                let factor = if let ActionMovement::Slowed(f) = action.movement() { f } else { 1.0 };
+                ctrl.sprinting = free && input.sprint && ctrl.grounded && stamina.can_spend()
+                    && input.move_dir.length_squared() > 0.01;
+                let speed = if ctrl.sprinting { SPRINT_SPEED } else { WALK_SPEED } * factor;
+                (input.move_dir, approach(horizontal, input.move_dir * speed, accel * dt))
+            }
+            ActionMovement::Locked => {
+                ctrl.sprinting = false;
+                (Vec3::ZERO, approach(horizontal, Vec3::ZERO, GROUND_ACCEL * dt))
+            }
+            ActionMovement::Scripted(speed) => {
+                ctrl.sprinting = false;
+                let a = action.current.expect("scripted movement needs an action");
+                (Vec3::ZERO, a.dir * speed(a.elapsed))
+            }
+        };
+
+        // Turn toward the move direction (actions keep their facing).
         if wish.length_squared() > 0.01 {
             let target = f32::atan2(-wish.x, -wish.z);
             let d = angle_diff(ctrl.facing, target);
@@ -73,7 +94,7 @@ fn move_character(
         } else {
             ctrl.coyote = (ctrl.coyote - dt).max(0.0);
         }
-        if input.jump_buffer > 0.0 && ctrl.coyote > 0.0 {
+        if free && input.jump_buffer > 0.0 && ctrl.coyote > 0.0 {
             vy = (2.0 * GRAVITY * JUMP_HEIGHT).sqrt();
             ctrl.coyote = 0.0;
             input.jump_buffer = 0.0;

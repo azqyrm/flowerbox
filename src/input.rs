@@ -8,6 +8,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use leafwing_input_manager::prelude::*;
 
 use crate::camera::ThirdPersonCamera;
+use crate::player::action::ActionRequest;
 use crate::tuning::*;
 
 pub struct InputPlugin;
@@ -66,6 +67,18 @@ pub struct PlayerInput {
     pub jump_buffer: f32,
     /// How long Shift has been held (for tap-vs-hold).
     pub dodge_held: f32,
+    /// Action waiting to start (input buffer). Consumed by `player::action`.
+    pub buffered: Option<ActionRequest>,
+    /// Seconds before `buffered` expires.
+    pub buffer_left: f32,
+}
+
+impl PlayerInput {
+    /// Queue an action request; it stays valid for `INPUT_BUFFER` seconds.
+    pub fn buffer(&mut self, request: ActionRequest) {
+        self.buffered = Some(request);
+        self.buffer_left = INPUT_BUFFER;
+    }
 }
 
 /// `FLOWERBOX_AUTOPILOT=1` makes the player walk on its own (for automated testing, see ROADMAP N7).
@@ -95,6 +108,11 @@ fn gather_player_input(
         input.move_dir = (right * stick.x + forward * stick.y).clamp_length_max(1.0);
 
         input.jump_buffer = if jump { JUMP_BUFFER } else { (input.jump_buffer - dt).max(0.0) };
+
+        input.buffer_left = (input.buffer_left - dt).max(0.0);
+        if input.buffer_left == 0.0 {
+            input.buffered = None;
+        }
 
         input.dodge_held = if actions.pressed(&Action::DodgeSprint) { input.dodge_held + dt } else { 0.0 };
         input.sprint = input.dodge_held >= SPRINT_HOLD_THRESHOLD;

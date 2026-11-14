@@ -1,21 +1,47 @@
 //! The player: spawning, the primitive human model and the sword.
 
+pub mod action;
 pub mod controller;
+pub mod stats;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::input::{PlayerInput, default_input_map};
 use crate::tuning::*;
+use action::PlayerAction;
 use controller::CharacterController;
+use stats::{DamageMessage, Health, Stamina};
 
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player)
+        app.add_message::<DamageMessage>()
+            .configure_sets(
+                FixedUpdate,
+                (PlayerSystems::Damage, PlayerSystems::Actions, PlayerSystems::Stats, PlayerSystems::Movement).chain(),
+            )
+            .add_systems(Startup, spawn_player)
+            .add_systems(
+                FixedUpdate,
+                (
+                    stats::apply_damage.in_set(PlayerSystems::Damage),
+                    (action::start_buffered_action, action::tick_action).chain().in_set(PlayerSystems::Actions),
+                    stats::update_stamina.in_set(PlayerSystems::Stats),
+                ),
+            )
             .add_plugins(controller::ControllerPlugin);
     }
+}
+
+/// Fixed-timestep order for player logic: damage → actions → stats → movement.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PlayerSystems {
+    Damage,
+    Actions,
+    Stats,
+    Movement,
 }
 
 #[derive(Component)]
@@ -58,6 +84,9 @@ fn spawn_player(
             Player,
             PlayerInput::default(),
             CharacterController::default(),
+            PlayerAction::default(),
+            Health::new(PLAYER_MAX_HP),
+            Stamina::new(PLAYER_MAX_STAMINA),
             default_input_map(),
             Transform::from_xyz(sx, sy, sz),
             Visibility::default(),
