@@ -3,7 +3,8 @@
 //! - **F3**: toggle the debug overlay (action state, timers, buffer, stats), the cyan i-frame
 //!   ring at the player's feet and the red blade hitbox during active frames.
 //! - Debug builds only: **H** = take 15 damage; **1–4** = request Roll (backstep when standing still),
-//!   Light (jump attack when airborne, running attack when sprinting), Heavy, Drink.
+//!   Light (jump attack when airborne, running attack when sprinting), Heavy, Drink;
+//!   **F6** = swap the weapon (Longsword ↔ Rusted Shortsword) until the inventory exists.
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
 //!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120), or `FLOWERBOX_SHOT_TIME=secs`
 //!   captures at a game time instead. `FLOWERBOX_OVERLAY=1` shows the overlay at start.
@@ -20,7 +21,8 @@ use crate::character::action::{ActionKind, ActionPhase, ActionRequest, Character
 use crate::character::controller::CharacterController;
 use crate::character::stats::{DamageMessage, Health, Invulnerable, Stamina};
 use crate::character::{ActionIntent, MoveIntent};
-use crate::combat::{Dummy, Weapon, blade_world, damage_multiplier};
+use crate::combat::{Dummy, blade_world};
+use crate::weapon::{EquipWeapon, EquippedWeapon, light_sword};
 use crate::humanoid::{HumanoidRig, HumanoidSpec};
 use crate::input::{Autopilot, PlayerInput};
 use crate::player::Player;
@@ -202,17 +204,17 @@ fn show_iframe_ring(
 fn draw_blade_hitbox(
     mut gizmos: Gizmos,
     overlay: Query<&Visibility, With<DebugOverlay>>,
-    attackers: Query<(&Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &Weapon)>,
+    attackers: Query<(&Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &EquippedWeapon)>,
 ) {
     if !overlay_on(&overlay) {
         return;
     }
-    for (tf, action, spec, rig, weapon) in &attackers {
+    for (tf, action, spec, rig, equipped) in &attackers {
         let Some(cur) = action.current else { continue };
-        if damage_multiplier(&cur).is_none() || cur.phase() != ActionPhase::Active {
+        if cur.damage_multiplier().is_none() || cur.phase() != ActionPhase::Active {
             continue;
         }
-        let Some((a, b)) = blade_world(tf, spec, rig, weapon, &cur) else { continue };
+        let Some((a, b)) = blade_world(tf, spec, rig, equipped.def, &cur) else { continue };
         gizmos.line(a, b, Color::srgb(1.0, 0.1, 0.1));
         gizmos.sphere(Isometry3d::from_translation(b), BLADE_HIT_RADIUS, Color::srgb(1.0, 0.3, 0.1));
     }
@@ -223,9 +225,17 @@ fn draw_blade_hitbox(
 fn debug_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut damage: MessageWriter<DamageMessage>,
-    mut player: Query<(Entity, &mut ActionIntent), With<Player>>,
+    mut equip: MessageWriter<EquipWeapon>,
+    mut player: Query<(Entity, &mut ActionIntent, Option<&EquippedWeapon>), With<Player>>,
 ) {
-    let Ok((entity, mut intent)) = player.single_mut() else { return };
+    let Ok((entity, mut intent, equipped)) = player.single_mut() else { return };
+    if keys.just_pressed(KeyCode::F6) {
+        let next = match equipped.map(|e| e.def.name) {
+            Some(name) if name == light_sword::LONGSWORD.name => &light_sword::SHORTSWORD,
+            _ => &light_sword::LONGSWORD,
+        };
+        equip.write(EquipWeapon { character: entity, def: next });
+    }
     if keys.just_pressed(KeyCode::KeyH) {
         damage.write(DamageMessage { target: entity, amount: 15.0, from: None });
     }
@@ -375,8 +385,9 @@ fn log_action_changes(
 /// Attack button presses as (start, end) seconds. Expected (dummy has 120 HP):
 /// light ×3 (combo 0,1,2: 20 each) → partial heavy (~36) → jump attack (36, breaks the dummy)
 /// → dummy resets at ~8.7 s → full heavy (40) → two light taps (20 each)
-/// → running attack out of a sprint (26) → walking jump attack (36, breaks it again).
-const COMBAT_PRESSES: [(f32, f32); 10] = [
+/// → running attack out of a sprint (26) → walking jump attack (36, breaks it again)
+/// → swap to the Rusted Shortsword at 16 s → light tap after the reset (16 = its base damage).
+const COMBAT_PRESSES: [(f32, f32); 11] = [
     (2.0, 2.08),
     (2.35, 2.43),
     (2.7, 2.78),
@@ -387,6 +398,7 @@ const COMBAT_PRESSES: [(f32, f32); 10] = [
     (11.85, 11.93),
     (13.15, 13.2),
     (14.85, 14.9),
+    (18.6, 18.65),
 ];
 
 fn combat_attack_button(t: f32, dt: f32) -> (bool, bool, bool) {
@@ -417,12 +429,16 @@ fn combat_movement(t: f32, dt: f32) -> (Vec3, bool, bool) {
 /// Teleports the player to its start marks (dummy at the origin, player on +Z facing -Z).
 fn combat_script(
     time: Res<Time>,
-    mut player: Query<(&mut Transform, &mut CharacterController, &mut MoveIntent), With<Player>>,
+    mut equip: MessageWriter<EquipWeapon>,
+    mut player: Query<(Entity, &mut Transform, &mut CharacterController, &mut MoveIntent), With<Player>>,
 ) {
-    let Ok((mut tf, mut ctrl, _)) = player.single_mut() else { return };
+    let Ok((entity, mut tf, mut ctrl, _)) = player.single_mut() else { return };
     let (t, dt) = (time.elapsed_secs(), time.delta_secs());
     let (x, z) = DUMMY_POSITION;
-    for (at, distance) in [(0.2, 1.5), (12.5, 4.4), (14.4, 4.0)] {
+    if crossed(time.elapsed_secs(), time.delta_secs(), 16.0) {
+        equip.write(EquipWeapon { character: entity, def: &light_sword::SHORTSWORD });
+    }
+    for (at, distance) in [(0.2, 1.5), (12.5, 4.4), (14.4, 4.0), (16.0, 1.3)] {
         if crossed(t, dt, at) {
             tf.translation = Vec3::new(x, PLAYER_HALF_HEIGHT + 0.02, z + distance);
             ctrl.velocity = Vec3::ZERO;

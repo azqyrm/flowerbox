@@ -9,6 +9,7 @@ mod humanoid;
 mod input;
 mod player;
 mod tuning;
+mod weapon;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -30,6 +31,7 @@ fn main() {
             input::InputPlugin,
             character::CharacterPlugin,
             humanoid::HumanoidPlugin,
+            weapon::WeaponPlugin,
             player::PlayerPlugin,
             debug::DebugPlugin,
         ))

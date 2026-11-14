@@ -1,7 +1,7 @@
 //! Combat: sword hit detection, hit feedback (hitstop, camera shake) and the training dummy.
 //!
 //! Hit detection doesn't use physics sensors. Each fixed tick of an attack's active phase,
-//! the blade — the [`Weapon`] in the humanoid's right hand, posed by the shared animation
+//! the blade — the equipped weapon (`crate::weapon`) in the humanoid's right hand, posed by the shared animation
 //! (`humanoid::anim::action_pose` + forward kinematics, exactly what's on screen) — is swept
 //! between the previous and current tick, and a capsule along it is tested against colliders
 //! with a [`Hurtbox`]. Each swing (`CharacterAction::serial`) hits a target once. Works for any
@@ -19,6 +19,7 @@ use crate::humanoid::anim::action_pose;
 use crate::humanoid::pose::bone_character_transform;
 use crate::humanoid::{Bone, HumanoidRig, HumanoidSpec};
 use crate::player::Player;
+use crate::weapon::{EquippedWeapon, WeaponDef};
 use crate::tuning::*;
 
 pub struct CombatPlugin;
@@ -56,45 +57,18 @@ pub struct CameraShake {
     pub trauma: f32,
 }
 
-/// The weapon a character holds in its right hand. The blade runs along the hand bone's +Y.
-#[derive(Component, Clone, Debug)]
-pub struct Weapon {
-    /// Blade span along the hand's +Y (crossguard → tip), metres.
-    pub blade_start: f32,
-    pub blade_end: f32,
-    pub base_damage: f32,
-}
-
-impl Weapon {
-    /// Placeholder stats until Phase 7 (items) provides them.
-    pub fn longsword() -> Self {
-        Self { blade_start: 0.13, blade_end: 1.03, base_damage: WEAPON_BASE_DAMAGE }
-    }
-}
-
-/// Damage multiplier of an attacking action (None = this action doesn't hit).
-pub fn damage_multiplier(a: &ActiveAction) -> Option<f32> {
-    match a.kind {
-        ActionKind::LightAttack(_) => Some(LIGHT_DAMAGE_MULT),
-        ActionKind::RunningAttack => Some(RUN_ATTACK_DAMAGE_MULT),
-        ActionKind::HeavyAttack => Some(HEAVY_DAMAGE_MULT + (HEAVY_FULL_CHARGE_MULT - HEAVY_DAMAGE_MULT) * a.charge),
-        ActionKind::JumpAttack => Some(JUMP_ATTACK_DAMAGE_MULT),
-        _ => None,
-    }
-}
-
 /// Blade (crossguard, tip) in world space for the given action state.
 pub fn blade_world(
     tf: &Transform,
     spec: &HumanoidSpec,
     rig: &HumanoidRig,
-    weapon: &Weapon,
+    weapon: &WeaponDef,
     action: &ActiveAction,
 ) -> Option<(Vec3, Vec3)> {
     let (pose, _) = action_pose(action)?;
     let hand = bone_character_transform(spec, &pose, rig.root_height, Bone::HandR);
     let world = |along: f32| tf.transform_point(hand.transform_point(Vec3::Y * along));
-    Some((world(weapon.blade_start), world(weapon.blade_end)))
+    Some((world(weapon.blade.0), world(weapon.blade.1)))
 }
 
 fn sword_hits(
@@ -102,11 +76,12 @@ fn sword_hits(
     spatial: SpatialQuery,
     hurtboxes: Query<(), With<Hurtbox>>,
     mut damage: MessageWriter<DamageMessage>,
-    mut attackers: Query<(Entity, &Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &Weapon, Option<&mut SwingHits>)>,
+    mut attackers: Query<(Entity, &Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &EquippedWeapon, Option<&mut SwingHits>)>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    for (entity, tf, action, spec, rig, weapon, hits) in &mut attackers {
+    for (entity, tf, action, spec, rig, equipped, hits) in &mut attackers {
+        let weapon = equipped.def;
         let Some(mut hits) = hits else {
             commands.entity(entity).insert(SwingHits::default());
             continue;
@@ -115,7 +90,7 @@ fn sword_hits(
             *hits = SwingHits { serial: action.serial, hit: vec![] };
         }
         let Some(cur) = action.current else { continue };
-        let Some(mult) = damage_multiplier(&cur) else { continue };
+        let Some(mult) = cur.damage_multiplier() else { continue };
         if cur.phase() != ActionPhase::Active {
             continue;
         }
