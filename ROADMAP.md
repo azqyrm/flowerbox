@@ -41,7 +41,7 @@
 | Attack | **Left Mouse** | **Tap** (released within 0.25 s) = light attack. **Hold** (0.25 s or longer) = heavy attack, released when charged or automatically at full charge. **Tap while airborne** = jump attack (the jump attack is the airborne light attack). A heavy attack can't be done in the air. |
 | Block / parry | **Right Mouse** (hold) | Needs a shield in the left hand. Raising takes 0.3 s; the last third of the raise is the parry window. Blocks frontal hits only (±57°, `GUARD_ANGLE`; hits without a direction aren't blockable); costs stamina, breaks when stamina runs out. Slower walking, no sprint |
 | Drink Healing Ale | **R** | |
-| Interact / rest at Hearth | **E** | |
+| Interact / rest at Hearth | **E** | Resting is a state: you stay kneeling; **E again or moving** stands you up. Online the rest completes only when every player rests | |
 | Lock-on target | **Q** or Middle Mouse | Locks the target nearest the view centre (≤15 m, ±63°); the camera follows it, you face it and strafe, attacks aim at it. Again = release. Nothing to lock = camera recentres behind you |
 | Gamepad | Souls-like | Left stick move, right stick camera, **R1** attack (tap/hold), **L1** block, **B/Circle** roll/sprint, **A/Cross** jump, **X/Square** drink, **Y/Triangle** interact, **R3** lock-on, **Start** inventory (inside: D-pad, L1/R1 filter, A equip, X unequip, B close) |
 | Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
@@ -327,12 +327,12 @@ Decisions:
 - Dead/broken bodies get `ColliderDisabled` (their own movement still uses the shape, so they don't fall through the floor).
 
 Steps:
-- [ ] Enemies spawn at world start, all respawn on world reset (no area trigger)
-- [ ] Rest as a state (`Rest` stays active; `StandUp` on E or movement); effects split into started / completed
-- [ ] Shared rest online (host counts resting players, waiting notifications, completion event)
-- [ ] Synced dummy (forwarded hits, broadcast hits, HP for joiners), stronger push for bigger hits, damage numbers
-- [ ] Dead bodies and the fallen dummy don't block movement
-- [ ] Two-instance tests, notes
+- [x] Enemies spawn at world start, all respawn on world reset (no area trigger)
+- [x] Rest as a state (`Rest` stays active; `StandUp` on E or movement); effects split into started / completed
+- [x] Shared rest online (host counts resting players, waiting notifications, completion event)
+- [x] Synced dummy (forwarded hits, broadcast hits, HP for joiners), stronger push for bigger hits, damage numbers
+- [x] Dead bodies and the fallen dummy don't block movement
+- [x] Two-instance tests, notes
 
 ### Phase 9 — Polish
 - [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested).
@@ -563,3 +563,12 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Camera fix:** the wall check ignores characters (other players, enemies, dummy) — before, another player standing behind you pulled the camera into their head.
   - **Autopilots:** `netfight` (guest: walks into the spawn area → the host spawns the Hollow, fights, takes the Shortsword, revives the sunflower; host logs "world event: Guest 1 picked up Rusted Shortsword / vigorated the Sun"), `pvp` (both eat a Poppy; guest hits host 3× for 20; guest eats a Camomile; further attacks do nothing; host dies → PvP off, "respawned with a fresh Poppy"), `enemy` (now steps into the spawn area first), `notify`.
   - **Still local per machine:** the training dummy; guests' rests reset only their own state (not the world).
+- **N23 (2026-11-16) — Souls-style respawns, shared rest, synced dummy, corpses (Phase 8.7):**
+  - **Reported bug explained:** the "invisible enemy" came from a guest that joined after the first Hollow had died — with the area trigger, the guest's arrival spawned a second Hollow in the host's world. Spawn points no longer trigger by area: every spawn point's enemy exists from the world's start (`trigger_spawn_points` spawns whatever is missing; never on guests), and a `WorldReset` despawns all enemies (alive or corpses) so they respawn next frame. N22's area-trigger note is superseded.
+  - **Rest:** `ActionKind::Rest` = kneel (`REST_STARTUP`) then an endless active phase; `ActionKind::StandUp` (`REST_RECOVERY`, rest pose reversed) on E or movement (`hearth_interaction`, prompt "[E] Stand up"). Once down, `rest_at_hearth` revives the sunflower (if needed) and sets the respawn point; the **completion** is `hearth::RestComplete` → `complete_rest`: `WorldReset` (enemies respawn, dummy reset) and the resting player's HP/stamina/Ale restored. Offline (`SharedRest(false)`) the completion follows at once.
+  - **Shared rest** (`net/world.rs::host_rest_circle`): the host counts resting players (itself + guests' puppets whose replicated action is `Rest` past `REST_STARTUP`). Each newcomer: `WorldEvent::RestWaiting { who, resting, total }` → "Host waiting for other players at rest site 1/2" for everyone. All resting → `WorldEvent::RestComplete` to everyone (+ "Everyone rests at the sunflower: the world stirs"). A rest completes once per gathering (only a newly sitting player arms a new completion; someone leaving the session doesn't).
+  - **Dummy sync:** `combat::DummyStruck { amount, from, killed }` drives the wobble/break (`dummy_react`) and the damage numbers; offline/host it comes from the applied `DamageTaken`, guests get it from `WorldEvent::DummyHit { amount, from, killed, hp }`. A guest's dummy is `Remote` (damage isn't applied there); its hits go to the host as `Reliable::Damage { target: DUMMY_ID }`. Joiners get the dummy's HP in `Reliable::World`. Push: `1.2 + DUMMY_PUSH_PER_DAMAGE × damage`, capped at `DUMMY_PUSH_MAX`.
+  - **Damage numbers** (`ui/damage_numbers.rs`): pop in 40 % larger, rise ~0.9 m while drifting sideways (alternating sides), fade in the last 40 % of 1.1 s; white, orange ≥ 30, red when it breaks the dummy.
+  - **Hit feedback fix:** `DamageTaken` carries `attacker`; hitstop/shake only for our own hits or hits on us (before, the host felt a guest's hits).
+  - **Corpses:** `character::corpses_dont_block` gives dead characters (enemies, players, puppets) `ColliderDisabled` and removes it on revival; the broken dummy too, until it stands up. Verified: the enemy autopilot walks the player straight over the Hollow's body ("passed the corpse").
+  - **Protocol v4.** Autopilot `netrest` (two instances): guest hits the dummy (host logs "a guest hit the dummy for 20/20/32", both see numbers), host rests ("Host waiting … 1/2"), guest rests → both "rest complete", guest walks off → `StandUp`. Hearth autopilot: E at 11 s stands up.

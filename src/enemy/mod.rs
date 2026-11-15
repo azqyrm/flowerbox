@@ -105,13 +105,13 @@ impl HollowAi {
 #[derive(Resource, Default)]
 pub struct EnemiesSuppressed(pub bool);
 
-/// A place in the world where an enemy appears when a player comes near — any player, local or
-/// an online guest. It spawns once; a world reset (rest / respawn of the world's owner) clears its
-/// enemy and arms it again. World-centred: a player joining later doesn't trigger another one.
+/// A place in the world where an enemy lives. Its enemy exists from the start; once killed it stays
+/// dead (a corpse, then gone) until the world resets — resting at the sunflower, or the world's
+/// owner dying — when every enemy respawns, Souls-style. Only the world's owner (offline player or
+/// host) spawns; guests see the host's enemies.
 #[derive(Component, Debug)]
 pub struct SpawnPoint {
     pub pos: Vec2,
-    pub radius: f32,
     /// The enemy it spawned (alive or a corpse) since the last reset.
     pub spawned: Option<Entity>,
     seed: u32,
@@ -121,13 +121,13 @@ fn create_spawn_points(mut commands: Commands) {
     for (i, (x, z)) in HOLLOW_SPAWNS.into_iter().enumerate() {
         commands.spawn((
             Name::new("Spawn point: Hollow"),
-            SpawnPoint { pos: Vec2::new(x, z), radius: HOLLOW_SPAWN_RADIUS, spawned: None, seed: 0x9E37_79B9 ^ (i as u32 * 7919 + 1) },
+            SpawnPoint { pos: Vec2::new(x, z), spawned: None, seed: 0x9E37_79B9 ^ (i as u32 * 7919 + 1) },
         ));
     }
 }
 
-/// Spawns a spawn point's enemy when a player enters its area. Not on guests: the host's world
-/// owns all enemies (`EnemiesSuppressed`).
+/// Spawns the enemy of every spawn point that has none (world start, after a reset, back from
+/// visiting another world). Not on guests (`EnemiesSuppressed`).
 #[allow(clippy::too_many_arguments)]
 fn trigger_spawn_points(
     mut commands: Commands,
@@ -136,7 +136,6 @@ fn trigger_spawn_points(
     mut equip: MessageWriter<EquipWeapon>,
     suppressed: Res<EnemiesSuppressed>,
     mut points: Query<&mut SpawnPoint>,
-    players: Query<(&Transform, &Team)>,
     alive: Query<(), With<Enemy>>,
 ) {
     if suppressed.0 {
@@ -148,10 +147,6 @@ fn trigger_spawn_points(
             point.spawned = None;
         }
         if point.spawned.is_some() {
-            continue;
-        }
-        let near = players.iter().any(|(tf, team)| *team == Team::Player && Vec2::new(tf.translation.x, tf.translation.z).distance(point.pos) < point.radius);
-        if !near {
             continue;
         }
         let home = Vec3::new(point.pos.x, 0.0, point.pos.y);
@@ -356,8 +351,8 @@ fn revive_corpses(mut commands: Commands, mut q: Query<(Entity, &CharacterAction
     }
 }
 
-/// Resting / respawning (the world's owner): every spawned enemy goes, every spawn point is armed
-/// again — the enemies come back when someone comes near.
+/// World reset (rest / the owner respawning): every enemy goes (alive or a corpse) and respawns at
+/// its spawn point next frame.
 fn enemy_reset(
     mut resets: MessageReader<WorldReset>,
     mut commands: Commands,
@@ -372,5 +367,5 @@ fn enemy_reset(
             commands.entity(e).despawn();
         }
     }
-    info!("enemies reset (spawn points armed)");
+    info!("enemies reset: all respawn");
 }

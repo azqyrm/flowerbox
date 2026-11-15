@@ -471,12 +471,12 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
                 .set(Bone::Head, rx(0.35 * up * if a.phase() == ActionPhase::Active { 1.0 } else { 0.4 }));
             Some((p, PoseMask::UpperBody))
         }
-        ActionKind::Rest => {
-            // Down on the right knee, left foot planted forward, hands held to the fire.
-            let k = match a.phase() {
-                ActionPhase::Startup => ease(a.elapsed / d.startup),
-                ActionPhase::Active => 1.0,
-                _ => 1.0 - ease((a.elapsed - d.startup - d.active) / d.recovery),
+        ActionKind::Rest | ActionKind::StandUp => {
+            // Down on the right knee, left foot planted forward, hands held to the flower.
+            let k = match (a.kind, a.phase()) {
+                (ActionKind::StandUp, _) => 1.0 - ease(a.elapsed / d.recovery.max(1e-3)),
+                (_, ActionPhase::Startup) => ease(a.elapsed / d.startup),
+                _ => 1.0,
             };
             p.pelvis_offset.y = -0.42 * k;
             p.set(Bone::ThighR, rx(-0.08 * k)).set(Bone::ShinR, rx(-1.5 * k)).set(Bone::FootR, rx(-0.35 * k));
@@ -843,6 +843,7 @@ mod tests {
             ActionKind::DrinkAle,
             ActionKind::UseItem,
             ActionKind::Rest,
+            ActionKind::StandUp,
             ActionKind::Hurt,
             ActionKind::Stunned,
             ActionKind::Dead,

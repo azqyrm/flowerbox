@@ -13,13 +13,15 @@ use crate::items::ItemId;
 use crate::weapon::WeaponClass;
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
 pub type NetId = u32;
 pub const PLAYER_ID_BASE: NetId = 1;
 pub const ENEMY_ID_BASE: NetId = 1000;
+/// The training dummy (one per world).
+pub const DUMMY_ID: NetId = 999;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyKind {
@@ -81,7 +83,7 @@ pub enum Reliable {
     /// Client → host: I parried `attacker` (stun it).
     Parried { attacker: NetId },
     /// Host → new guest: the world as it is (sunflower, items on the floor).
-    World { sun_revived: bool, pickups: Vec<PickupState> },
+    World { sun_revived: bool, pickups: Vec<PickupState>, dummy_hp: f32 },
     /// Guest → host: I'd like to take this item.
     RequestPickup { pickup: u32 },
     /// Guest → host: something happened to me / I did something (the host checks and relays).
@@ -112,6 +114,12 @@ pub enum WorldEvent {
     Died { who: NetId },
     /// `who` ate `item` and switched PvP `on`/off.
     Pvp { who: NetId, on: bool, item: ItemId },
+    /// `who` sat down at the sunflower; `resting` of `total` players are resting now.
+    RestWaiting { who: NetId, resting: u32, total: u32 },
+    /// Every player rests: enemies respawn, everyone is restored.
+    RestComplete,
+    /// The training dummy was struck (on the host): animate it, show the number.
+    DummyHit { amount: f32, from: Option<[f32; 3]>, killed: bool, hp: f32 },
 }
 
 pub fn encode<T: Serialize>(msg: &T) -> Vec<u8> {

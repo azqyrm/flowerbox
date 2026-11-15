@@ -49,10 +49,24 @@ impl Plugin for CharacterPlugin {
                     (action::start_buffered_action, action::release_heavy_charge, action::tick_action, guard::update_guard)
                         .chain()
                         .in_set(CharacterSystems::Actions),
-                    (stats::update_stamina, stats::tick_hit_immunity).in_set(CharacterSystems::Stats),
+                    (stats::update_stamina, stats::tick_hit_immunity, corpses_dont_block).in_set(CharacterSystems::Stats),
                     controller::move_character.in_set(CharacterSystems::Movement),
                 ),
             );
+    }
+}
+
+/// Dead characters (enemies, players, online puppets) stop being solid: you can walk over a body.
+/// Their own movement still uses the shape (`move_and_slide` reads `Collider` directly), so they
+/// don't sink through the floor. Reviving makes them solid again.
+fn corpses_dont_block(mut commands: Commands, q: Query<(Entity, &CharacterAction, Has<ColliderDisabled>), With<Collider>>) {
+    for (entity, action, disabled) in &q {
+        let dead = matches!(action.current, Some(a) if a.kind == action::ActionKind::Dead);
+        if dead && !disabled {
+            commands.entity(entity).insert(ColliderDisabled);
+        } else if !dead && disabled {
+            commands.entity(entity).remove::<ColliderDisabled>();
+        }
     }
 }
 

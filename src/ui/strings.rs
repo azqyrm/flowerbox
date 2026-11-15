@@ -6,6 +6,8 @@ pub const DEATH: &str = "COMPOSTED";
 pub const HEARTH_REKINDLED: &str = "SUN VIGORATED";
 /// Interaction prompt at a Hearth that is still drooping.
 pub const PROMPT_REKINDLE: &str = "[E] Tend the Sunflower";
+/// While kneeling at the sunflower.
+pub const PROMPT_STAND_UP: &str = "[E] Stand up";
 /// Interaction prompt at a Hearth that already stands.
 pub const PROMPT_REST: &str = "[E] Rest by the Sunflower";
 /// Online panel.
@@ -37,6 +39,11 @@ pub fn ate(who: &str, item: &str, pvp_on: bool) -> String {
 pub fn none_left(item: &str) -> String {
     format!("No {item} left")
 }
+/// Shared rest at the sunflower.
+pub fn rest_waiting(who: &str, resting: u32, total: u32) -> String {
+    format!("{who} waiting for other players at rest site {resting}/{total}")
+}
+pub const REST_COMPLETE: &str = "Everyone rests at the sunflower: the world stirs";
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
 /// Toast after picking something up ("Picked up: Rusted Shortsword").
