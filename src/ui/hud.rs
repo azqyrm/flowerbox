@@ -1,8 +1,8 @@
 //! In-game HUD (bevy_ui):
 //! - top left: HP (red, with a lagging "damage taken" chunk), stamina (green), Healing Ale count
 //! - bottom left: the equipment quadrant (spells / left hand / right hand / quick item)
-//! - bottom centre: the interaction prompt ("[E] Rest at Hearth")
-//! - centre: banners ("HEARTH KINDLED") and the death screen ("YOU DIED", fade to black)
+//! - bottom centre: the interaction prompt (see `ui::strings`)
+//! - centre: banners and the death screen (band text, fade to black)
 
 use bevy::prelude::*;
 
@@ -255,7 +255,7 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
         ))
         .id();
     commands.spawn((
-        Text::new("YOU DIED"),
+        Text::new(super::strings::DEATH),
         TextFont { font: display.into(), font_size: FontSize::Px(118.0), ..default() },
         TextColor(Color::NONE),
         DeathText,
