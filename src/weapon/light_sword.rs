@@ -87,6 +87,7 @@ pub const MOVESET: Moveset = Moveset {
         run_elbow: 0.35,
         run_grip: Vec3::new(2.05, 0.0, 0.3),
     },
+    pounce: None,
 };
 
 const STEEL: Color = Color::srgb(0.75, 0.76, 0.78);

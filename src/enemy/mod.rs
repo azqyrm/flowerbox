@@ -26,18 +26,22 @@ use crate::lockon::Targetable;
 use crate::tuning::*;
 use crate::weapon::{EquipWeapon, WeaponSystems, hollow_blade};
 
+pub mod beast;
+pub mod warg;
+
 pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         // The older autopilot scripts (combat, hearth, …) were written for an empty arena.
-        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| a != "enemy" && a != "net" && a != "netfight") {
+        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll")) {
             return;
         }
         app.init_resource::<EnemiesSuppressed>()
             .add_systems(Startup, create_spawn_points)
             .add_systems(Update, trigger_spawn_points.before(WeaponSystems::Equip))
-            .add_systems(FixedUpdate, hollow_ai.before(CharacterSystems::Actions))
+            .add_systems(FixedUpdate, (hollow_ai, beast::beast_ai).before(CharacterSystems::Actions))
+            .add_systems(FixedUpdate, beast::pounce_tracking.in_set(CharacterSystems::Combat))
             .add_systems(Update, (enemy_death, revive_corpses, enemy_reset));
     }
 }
@@ -48,6 +52,17 @@ impl Plugin for EnemyPlugin {
 pub struct Enemy {
     pub home: Vec3,
     pub patrol: Option<Vec3>,
+    pub kind: EnemyKind,
+}
+
+/// Which enemy a spawn point makes (level files name it; online it picks the puppet's body).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EnemyKind {
+    /// The shambling humanoid swordsman (`HollowAi`).
+    #[default]
+    Hollow,
+    /// A big wolf: a quadruped beast (`beast::BeastAi` with `warg::PROFILE`).
+    Warg,
 }
 
 /// Lying dead for this many seconds.
@@ -115,6 +130,7 @@ pub struct EnemiesSuppressed(pub bool);
 /// host) spawns; guests see the host's enemies.
 #[derive(Component, Debug)]
 pub struct SpawnPoint {
+    pub kind: EnemyKind,
     /// Floor point the enemy stands on.
     pub pos: Vec3,
     pub patrol: Option<Vec3>,
@@ -125,14 +141,14 @@ pub struct SpawnPoint {
 
 impl SpawnPoint {
     /// `n` makes each spawn point's AI rolls different (but the same every run).
-    pub fn new(pos: Vec3, patrol: Option<Vec3>, n: u32) -> Self {
-        Self { pos, patrol, spawned: None, seed: 0x9E37_79B9 ^ (n * 7919 + 1) }
+    pub fn new(kind: EnemyKind, pos: Vec3, patrol: Option<Vec3>, n: u32) -> Self {
+        Self { kind, pos, patrol, spawned: None, seed: 0x9E37_79B9 ^ (n * 7919 + 1) }
     }
 }
 
 fn create_spawn_points(mut commands: Commands) {
     for (i, (x, z)) in HOLLOW_SPAWNS.into_iter().enumerate() {
-        commands.spawn((Name::new("Spawn point: Hollow"), SpawnPoint::new(Vec3::new(x, 0.0, z), None, i as u32)));
+        commands.spawn((Name::new("Spawn point: Hollow"), SpawnPoint::new(EnemyKind::Hollow, Vec3::new(x, 0.0, z), None, i as u32)));
     }
 }
 
@@ -162,12 +178,17 @@ fn trigger_spawn_points(
         let home = point.pos;
         let to_centre = (-home).with_y(0.0).normalize_or(Vec3::NEG_Z);
         let facing = f32::atan2(-to_centre.x, -to_centre.z);
+        if point.kind == EnemyKind::Warg {
+            point.spawned = Some(warg::spawn_warg(&mut commands, &mut meshes, &mut materials, home, point.patrol, facing, point.seed));
+            info!("a warg prowls (spawn point at {:?})", point.pos);
+            continue;
+        }
         let spec = HumanoidSpec::hollow();
         let tf = Transform::from_translation(home + Vec3::Y * (PLAYER_HALF_HEIGHT + 0.05)).with_rotation(Quat::from_rotation_y(facing));
         let enemy = commands
             .spawn((
                 Name::new("Hollow"),
-                Enemy { home, patrol: point.patrol },
+                Enemy { home, patrol: point.patrol, kind: EnemyKind::Hollow },
                 HollowAi::new(point.seed),
                 Hurtbox,
                 Team::Hostile,

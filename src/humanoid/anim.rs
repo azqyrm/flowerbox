@@ -510,6 +510,21 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
             p.pelvis_offset.z = 0.08 * k;
             Some((p, PoseMask::Full))
         }
+        ActionKind::Grabbed => {
+            // Caught in a beast's jaws: bent back over it, arms flailing; slack after the bite.
+            let k = ease(a.elapsed / 0.12).min(ease((total - a.elapsed) / 0.3));
+            let bitten = ease((a.elapsed - GRAB_BITE_AT) / 0.15);
+            let thrash = (a.elapsed * 15.0).sin() * (1.0 - 0.7 * bitten);
+            p.add(Bone::Chest, rx(-0.45 * k) * rz(0.15 * thrash * k)).set(Bone::Head, rx(-0.5 * k + 0.3 * bitten));
+            p.set(Bone::UpperArmL, Quat::IDENTITY.slerp(rz(-1.3 + 0.35 * thrash) * rx(0.6), k)).set(Bone::ForearmL, rx(0.9 * k));
+            p.set(Bone::UpperArmR, Quat::IDENTITY.slerp(rz(1.2 - 0.35 * thrash) * rx(0.4), k)).set(Bone::ForearmR, rx(0.7 * k));
+            p.set(Bone::ThighL, rx(0.3 * k)).set(Bone::ShinL, rx(-0.6 * k));
+            p.set(Bone::ThighR, rx(-0.1 * k)).set(Bone::ShinR, rx(-0.5 * k));
+            p.pelvis_offset.y = -0.1 * k;
+            Some((p, PoseMask::Full))
+        }
+        // Creatures only (`crate::quadruped`).
+        ActionKind::Pounce => None,
         ActionKind::Dead => {
             // Knees buckle, then fall onto the back.
             let fall = ease(a.elapsed / 0.9);
@@ -713,7 +728,8 @@ mod tests {
     /// Every class's strikes must end in front of the character, or they can't hit anything.
     #[test]
     fn every_class_strikes_in_front() {
-        for class in WeaponClass::ALL {
+        // Natural weapons (a beast's jaws) are posed by `crate::quadruped`, tested there.
+        for class in WeaponClass::ALL.into_iter().filter(|c| !c.is_natural()) {
             let n = class.moveset().light.len() as u8;
             let kinds = (0..n).map(ActionKind::LightAttack).chain([ActionKind::HeavyAttack, ActionKind::RunningAttack]);
             for kind in kinds {

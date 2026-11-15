@@ -111,6 +111,9 @@ pub struct TorchDef {
 /// A Hollow's home; with `patrol` it walks back and forth between the two points while idle.
 #[derive(Deserialize, Debug, Clone)]
 pub struct EnemyDef {
+    /// Hollow (default) or Warg.
+    #[serde(default)]
+    pub kind: crate::enemy::EnemyKind,
     pub at: Px,
     #[serde(default)]
     pub patrol: Option<Px>,

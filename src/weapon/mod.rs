@@ -18,6 +18,7 @@
 
 pub mod hollow_blade;
 pub mod light_sword;
+pub mod warg_fangs;
 
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
@@ -50,17 +51,26 @@ pub enum WeaponClass {
     LightSword,
     /// Enemy swings with long wind-ups (the Hollow).
     HollowBlade,
+    /// A beast's jaws: quick bites and the pounce grab (the warg). A natural weapon: no model.
+    WargFangs,
 }
 
 impl WeaponClass {
     /// Every class (tests iterate over this, so new classes get checked automatically).
     #[allow(dead_code)] // only tests use it so far
-    pub const ALL: [WeaponClass; 2] = [WeaponClass::LightSword, WeaponClass::HollowBlade];
+    pub const ALL: [WeaponClass; 3] = [WeaponClass::LightSword, WeaponClass::HollowBlade, WeaponClass::WargFangs];
+
+    /// A creature's body part rather than something held (no humanoid swing animations).
+    #[allow(dead_code)] // only tests use it so far
+    pub fn is_natural(self) -> bool {
+        matches!(self, WeaponClass::WargFangs)
+    }
 
     pub fn moveset(self) -> &'static Moveset {
         match self {
             WeaponClass::LightSword => &light_sword::MOVESET,
             WeaponClass::HollowBlade => &hollow_blade::MOVESET,
+            WeaponClass::WargFangs => &warg_fangs::MOVESET,
         }
     }
 }
@@ -147,6 +157,21 @@ pub struct Moveset {
     pub jump: AttackSpec,
     pub jump_strike_time: f32,
     pub guard: GuardSpec,
+    /// A grab leap (`ActionKind::Pounce`), for creatures that have one.
+    pub pounce: Option<PounceSpec>,
+}
+
+/// A creature's grab leap: lean back (`windup`), leap `distance` metres in `leap` seconds catching
+/// whoever is in the way or at the landing spot, then bite and shake (`recovery`). The bite's damage
+/// is `damage` (it can't be blocked; only rolling through the leap avoids it).
+#[derive(Clone, Copy, Debug)]
+pub struct PounceSpec {
+    pub windup: f32,
+    pub leap: f32,
+    pub recovery: f32,
+    pub distance: f32,
+    pub stamina_cost: f32,
+    pub damage: f32,
 }
 
 impl Moveset {
@@ -210,6 +235,11 @@ pub struct EquippedWeapon {
 impl EquippedWeapon {
     pub fn class(&self) -> WeaponClass {
         self.def.class
+    }
+
+    /// A weapon that is part of the body (a beast's jaws): no model to attach.
+    pub fn natural(def: &'static WeaponDef) -> Self {
+        Self { def, model: None }
     }
 }
 

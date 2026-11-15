@@ -6,6 +6,7 @@ mod character;
 mod combat;
 mod debug;
 mod enemy;
+mod grab;
 mod healing;
 mod hearth;
 mod humanoid;
@@ -17,6 +18,7 @@ mod lockon;
 mod net;
 mod player;
 mod pvp;
+mod quadruped;
 mod save;
 mod settings;
 mod sound;
@@ -48,12 +50,14 @@ fn main() {
             lockon::LockOnPlugin,
             character::CharacterPlugin,
             humanoid::HumanoidPlugin,
+            quadruped::QuadrupedPlugin,
             weapon::WeaponPlugin,
             player::PlayerPlugin,
         ))
         .add_plugins((
             level::LevelPlugin,
             enemy::EnemyPlugin,
+            grab::GrabPlugin,
             pvp::PvpPlugin,
             save::SavePlugin,
             sound::SoundPlugin,

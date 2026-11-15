@@ -29,6 +29,10 @@
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 //! - `FLOWERBOX_AUTOPILOT=level` → walks level 1 without enemies: opens both doors, takes the
 //!   stairs, revives sunflower 1, ends in the vault (see `LEVEL_ROUTE`); logs arrivals and stalls.
+//! - `FLOWERBOX_AUTOPILOT=warg` (with `FLOWERBOX_POS` near the vault's warg, e.g. `10,-59.7,-1.57`)
+//!   → stands still: the warg bites and pounces; logs its actions, grabs and the bite's damage.
+//!   `wargroll` → rolls toward the warg as each leap starts: the i-frames carry you through it.
+//!   `FLOWERBOX_WARG_TANK=1` gives the player 1000 HP (to see several pounces).
 //! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
@@ -80,6 +84,11 @@ impl Plugin for DebugPlugin {
             app.add_systems(PostStartup, place_player);
         }
         match std::env::var("FLOWERBOX_AUTOPILOT").as_deref() {
+            Ok(mode @ ("warg" | "wargroll")) => {
+                app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
+                    .insert_resource(WargRun { roll: mode == "wargroll", ..default() })
+                    .add_systems(Update, warg_script);
+            }
             Ok("still") => {
                 app.add_systems(Update, open_all_doors);
             }
@@ -1284,5 +1293,103 @@ fn check_menu_block(
     }
     if frames.0 % 120 == 0 {
         info!("menu check: {} frames open, {} leaked", frames.0, frames.1);
+    }
+}
+
+// ── Warg test ────────────────────────────────────────────────────────────
+
+#[derive(Resource, Default)]
+struct WargRun {
+    roll: bool,
+    last_kind: Option<ActionKind>,
+    rolled_for: Option<u32>,
+    roll_until: f32,
+    pounces: u32,
+    grabs: u32,
+    player_was_grabbed: bool,
+    hp_before_grab: f32,
+    end_at: Option<f32>,
+    /// Online guest: moved back to `FLOWERBOX_POS` after joining (joining places you in the arena).
+    placed_as_guest: bool,
+    joined_at: Option<f32>,
+}
+
+#[allow(clippy::type_complexity)]
+fn warg_script(
+    time: Res<Time>,
+    mut run: ResMut<WargRun>,
+    mut exit: MessageWriter<AppExit>,
+    wargs: Query<(&Enemy, &Transform, &CharacterAction), Without<Player>>,
+    mut player: Query<(&mut Transform, &CharacterAction, &mut ActionIntent, &mut Health), With<Player>>,
+    session: Res<crate::net::NetSession>,
+    layout: Option<Res<crate::level::layout::Layout>>,
+) {
+    let t = time.elapsed_secs();
+    *LEVEL_DIR.lock().unwrap() = (Vec3::ZERO, false, false);
+    let Ok((mut ptf, paction, mut intent, mut hp)) = player.single_mut() else { return };
+    if session.is_client() && run.joined_at.is_none() {
+        run.joined_at = Some(t);
+    }
+    if run.joined_at.is_some_and(|j| t > j + 1.0) && !run.placed_as_guest {
+        run.placed_as_guest = true;
+        let v: Vec<f32> = std::env::var("FLOWERBOX_POS").unwrap_or_default().split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        if let [x, z, ..] = v[..] {
+            let floor = layout.as_ref().and_then(|l| l.floor_at(Vec2::new(x, z))).unwrap_or(0.0);
+            ptf.translation = Vec3::new(x, floor + PLAYER_HALF_HEIGHT + GROUND_SKIN, z);
+            info!("autopilot: guest placed at {:.2}", ptf.translation);
+        }
+    }
+    let ptf = ptf.into_inner().clone();
+    if (run.roll || std::env::var("FLOWERBOX_WARG_TANK").is_ok()) && hp.max < 1000.0 {
+        *hp = Health::new(1000.0); // survive the bites to face several pounces
+    }
+    let Some((_, wtf, waction)) = wargs.iter().find(|(e, _, _)| e.kind == crate::enemy::EnemyKind::Warg) else { return };
+    let kind = waction.current.map(|a| a.kind);
+    if kind != run.last_kind {
+        info!("warg: {:?} -> {:?} (distance {:.2})", run.last_kind, kind, (wtf.translation - ptf.translation).with_y(0.0).length());
+        if kind == Some(ActionKind::Pounce) {
+            run.pounces += 1;
+        }
+        run.last_kind = kind;
+    }
+    let grabbed = paction.current.is_some_and(|a| a.kind == ActionKind::Grabbed);
+    if grabbed && !run.player_was_grabbed {
+        run.grabs += 1;
+        info!("autopilot: GRABBED at HP {}", hp.current);
+    }
+    if !grabbed && run.player_was_grabbed {
+        info!("autopilot: released, HP {} (bite took {})", hp.current, run.hp_before_grab - hp.current);
+    }
+    if !grabbed {
+        run.hp_before_grab = hp.current;
+    }
+    run.player_was_grabbed = grabbed;
+    // Roll mode: roll toward the warg just before each leap.
+    if run.roll {
+        if let Some(cur) = waction.current.filter(|a| a.kind == ActionKind::Pounce && a.phase() == ActionPhase::Startup) {
+            if cur.elapsed >= cur.def.startup - 0.12 && run.rolled_for != Some(waction.serial) {
+                run.rolled_for = Some(waction.serial);
+                run.roll_until = t + 0.15;
+                info!("autopilot: roll into the leap");
+            }
+        }
+        // Keep pressing until the roll starts (a bite's stagger may still be running).
+        let rolling = paction.current.is_some_and(|a| a.kind == ActionKind::Roll);
+        if t < run.roll_until && !rolling {
+            intent.buffer(ActionRequest::Roll);
+        }
+        if t < run.roll_until {
+            let toward = (wtf.translation - ptf.translation).with_y(0.0).normalize_or_zero();
+            *LEVEL_DIR.lock().unwrap() = (toward, false, false);
+        }
+    }
+    let dead = paction.current.is_some_and(|a| a.kind == ActionKind::Dead);
+    if run.end_at.is_none() && (dead || t > 40.0 || (run.roll && run.pounces >= 3 && kind != Some(ActionKind::Pounce))) {
+        run.end_at = Some(t + 1.5);
+    }
+    if run.end_at.is_some_and(|e| t >= e) {
+        info!("warg test: {} pounces, {} grabs, HP {}, dead {dead}", run.pounces, run.grabs, hp.current);
+        exit.write(AppExit::Success);
+        run.end_at = Some(f32::INFINITY);
     }
 }

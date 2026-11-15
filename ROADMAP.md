@@ -138,6 +138,8 @@ claude_ds/
    │  ├─ controller.rs  # kinematic movement from MoveIntent, gravity, grounding, jump, air momentum
    │  ├─ action.rs      # state machine: roll, attacks, drinking, timings, lunges, running attack
    │  └─ stats.rs       # Health, Stamina, regen, Invulnerable, DamageMessage/DamageTaken
+   ├─ quadruped/       # GENERIC: four-legged bodies (QBone, QuadrupedSpec::warg, pose + FK, gaits, action poses)
+   ├─ grab.rs           # creature grabs: Pounce catches players, carry, unblockable bite, release
    ├─ humanoid/        # GENERIC: reusable humanoid body + shared animations
    │  ├─ mod.rs         # Bone enum, HumanoidSpec (proportions/look), spawn_humanoid(), HumanoidRig
    │  ├─ pose.rs        # HumanoidPose (+ blending/masks), forward kinematics
@@ -161,7 +163,9 @@ claude_ds/
    │  ├─ world.rs       # the host's world: world state for joiners, pickup/sunflower requests, events → notifications
    │  └─ ui.rs          # online panel (O) + status corner
    ├─ enemy/
-   │  └─ mod.rs         # the Hollow: spawn, AI state machine (writes MoveIntent/ActionIntent), death, reset
+   │  ├─ mod.rs         # Enemy, EnemyKind, spawn points; the Hollow: spawn, AI, death, reset
+   │  ├─ beast.rs       # reusable beast AI (BeastAi + BeastProfile): chase, bite combos, pounce, circling
+   │  └─ warg.rs        # the warg: profile, spawn_warg, attach_warg_body (also for puppets)
    ├─ items/
    │  ├─ mod.rs         # ItemId → ItemDef registry (kind, icon, weight, absorption, block, HP bonus, weapon, model)
    │  ├─ inventory.rs   # Inventory, Equipment, EquipSlot, EquipRequest, EquipStats; weapon/model sync
@@ -356,6 +360,18 @@ Plan (measured from the drawing; 1 px = 1/14 m; origin px (409.5, 1228) = world 
 - [x] Two-instance test: host (`menu` autopilot, `--host`) + guest (`level`, `--join`): host logs "Guest 1 opened door 1 / door 2 / picked up Hop Cone / vigorated the Sun"; the guest walks through the host-opened doors
 - [ ] Enemy navigation: Hollows walk straight at you and sidestep when stuck; they can snag on door frames and stair sides (no pathfinding yet)
 
+### Phase 8.9 — The warg: a quadruped enemy, grabs, player HP bars (user request, 2026-11-16)
+Request: replace the north-east enemy (the vault's) with a **warg**: more aggressive AI, light attacks (bites), and a **grab**: one second leaning back, a 3 m leap that carries everyone in its way and grabs them at the landing spot, then a bite of at least 100 damage that can't be blocked (must be dodged). Build the four-legged creature like the humanoid module so later creatures reuse its body, movement and AI. Online: an HP bar over each other player's head, shown 3 s after it changes, then fading.
+- [x] `src/quadruped/`: `QBone` skeleton, `QuadrupedSpec` (proportions + look, `warg()`), `spawn_quadruped`, `QuadrupedPose` + FK, animator with walk / trot / gallop gaits and action poses (bites, pounce, hurt, stagger, death)
+- [x] Natural weapons: `WeaponClass::WargFangs` (`weapon/warg_fangs.rs`: 3-bite combo, `PounceSpec`), `EquippedWeapon::natural`; bite hitbox = a sphere swept along the snout (`combat::bite_hits`, shared hit rules `may_hit`)
+- [x] Generic actions `Pounce` (wind-up → leap → bite and shake) and `Grabbed` (held, `ActionMovement::Held`); `grab.rs` (catch during the leap, carry, unblockable bite, release); leaping creatures pass through characters
+- [x] `enemy/beast.rs`: reusable beast AI with a `BeastProfile`; `enemy/warg.rs` (profile, spawn); `EnemyKind` in level files (`kind: Warg`); the vault enemy is a warg
+- [x] Online: `BodyKind::Warg` puppets (protocol v6); grabs decided on the victim's machine
+- [x] HP bars over other players (online), 3 s + 0.6 s fade
+- [x] Autopilots `warg` / `wargroll` (+ `FLOWERBOX_WARG_TANK`), two-instance test
+- [ ] Poise: hits still interrupt the warg's pounce (a co-op partner can save you by hitting it) — decide whether the wind-up should have hyper armour
+- [ ] Refactor the Hollow AI onto the shared helpers the beast AI uses (target pick, sight, sidestepping are duplicated)
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
@@ -397,6 +413,8 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-15 | Online: **iroh** (QUIC, direct connections with hole punching, n0's free public relays as fallback, connect by an address code) instead of Steam (needs Steam on both sides + $100 app fee to ship), matchbox/WebRTC (needs a signalling server) or plain sockets (port forwarding). Own small protocol over iroh instead of `bevy_replicon` (+ `bevy_replicon_iroh`, a tiny one-person crate): the state is small and the game already has a clean "intent → character" split. Host-authoritative world, each player authoritative over its own character; hits are decided on the victim's or the local attacker's machine. |
 | 2026-11-16 | Levels are data (`assets/levels/lvl1.ron`) in **drawing pixels** of the design sketch, built by a generic grid builder (`src/level/`): walls are generated, not drawn. One shared ceiling height (5 m), so deeper rooms are taller. Stairs = invisible convex ramp + visual steps. Doors open from either side and stay open; online the host decides (like pickups). The arena stays, with a gap in its ring wall where the level's first door sits. Hollows notice you only with a clear line of sight (and within 2.5 m height); lock-on also needs a clear view. |
 | 2026-11-16 | Hop Cone (consumable): +1 Healing Ale for good when eaten (Estus-shard equivalent, no sunflower needed). Thornbriar Ring: 10 % absorption. Sunflower 1 moved ~1 m north of the drawing's dot so its bed clears the wall; the Hop Cone beside it moved too. |
+| 2026-11-16 | Quadrupeds mirror humanoids: own skeleton/spec/pose/animator module (`quadruped/`), driven by the same character actions. A beast's jaws are a **natural weapon class** (moveset + no model) so bites reuse the action/attack pipeline; the grab is a generic `Pounce` action available to any moveset with a `PounceSpec`. Beast AI = one system + a data profile per species. |
+| 2026-11-16 | Grabs are **victim-side** (like enemy hits online): each machine checks only its own player against pouncing creatures. Rolling i-frames at the first contact = dodged for that pounce. The bite is unblockable because a held character has no guard. The warg's bite is 120 (≥ 100 after the best armour). Each declined pounce chance raises the next (`pounce_urge`). Player HP bars show only over *other* players (your own is the HUD bar). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -621,3 +639,11 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Cause:** the inventory, the pause menu and the online panel each wrote `GameplayBlocked` and grabbed/freed the cursor themselves. The *closed* inventory's toggle reset `GameplayBlocked` to false and re-grabbed the cursor every frame, while the open pause menu set it back. Depending on system order, W / attacks reached the character and the cursor kept getting locked (so menu hover/clicks didn't work).
   - **Fix** (`input.rs`): each menu only sets its own flag in `MenuInput { inventory, pause, online }` (system set `InputSystems::Menus`); `apply_menu_block` (`InputSystems::Apply`) derives `GameplayBlocked` and grabs/frees the cursor only when that changes; then `gather_player_input` (`Gather`). Order: `Cursor → Menus → Apply → Gather`. Menus don't open over each other. The frame a menu closes still counts as blocked, so clicking "Resume" doesn't swing the sword.
   - **Check:** `check_menu_block` (menu / inventory autopilots) warns on any frame a menu is open but input isn't blocked or the cursor is locked: pause menu 0 of 720 frames. The inventory autopilot shows 1 frame per opening, because the script sets `InventoryMenu.open` directly (bypassing the toggle); real Tab/I presses go through the toggle.
+- **N27 (2026-11-16) — the warg (Phase 8.9):**
+  - **Body** (`quadruped/`): 18 bones (hips root → chest → neck → head → jaw, tail, 4 × upper/lower/paw). The collider is the standard character capsule around the chest (the controller's ground probe assumes it); the hindquarters and head stick out of it, so hits on the rear don't register. Gaits by speed: walk < 2.5 m/s (lateral sequence), trot ≤ 6, gallop above (front pair, hind pair, body rock). The animator layers action poses on the gait like the humanoid one.
+  - **Bites:** `LightAttack(n)` of the `WargFangs` moveset (startup 0.26–0.42 s, 17 base damage, lunges); blockable and parryable. `combat::bite_hits` sweeps a 0.28 m sphere along the snout tip (`QuadrupedSpec::snout_tip`) with the same FK the animation uses.
+  - **Pounce** (`PounceSpec`: wind-up 1.0 s, leap 0.42 s over 3 m, recovery 1.5 s): during the wind-up `beast::pounce_tracking` keeps turning toward the target (2.6 rad/s), so stepping aside isn't enough. During the leap the warg has `PassThroughCharacters`. `grab::pounce_grabs`: the local player within `GRAB_REACH` + radius of the jaws (|Δy| < 1.2) is caught (`Grabbed`, carried at `GRAB_HOLD_DISTANCE` via `ActionMovement::Held`, walls still stop them). `GRAB_BITE_AT` (0.6 s) later the bite deals 120. If the warg stops pouncing first, the victim is dropped with a stagger. Invulnerable at first contact → dodged for that pounce (without this the roll got blocked by the warg's body and the victim was caught when the i-frames ended).
+  - **AI** (`BeastProfile` for the warg: aggro 13 m, leash 24, chases at 0.95× walk, sprints beyond 6 m, recovers 0.35–0.9 s): after a combo, with the pounce ready, it backs off into pounce range (2.2–4.8 m) and decides (55 % + 20 % per declined chance, cooldown 5 s). Without backing off it never pounced (combos end at < 1 m).
+  - **Tests:** unit tests for the skeleton, gaits, bite and pounce poses, HP bar fade. `warg` autopilot: two bites, back off, pounce, grab 0.08–0.16 s into the leap, "the jaws close: 120 damage"; with `FLOWERBOX_WARG_TANK=1`: 4 pounces, 4 grabs in 45 s. `wargroll`: 4 of 5 runs dodged every pounce; the one grab came from a roll pressed during a bite's stagger, which starts too late (fair). Online (host `warg` in the arena, guest `warg` placed in the vault after joining): the guest's machine detects the host warg's bites and grabs from its puppet ("grabbed … the jaws close: 120"). HP bar: guest screenshot 0.7 s after the host was hit shows the bar; 4.5 s after, it's gone.
+  - **Screenshots in test runs** can catch real keystrokes: the test window takes focus, and typing elsewhere opened the Online panel / Esc menu in two warg shots.
+

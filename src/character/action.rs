@@ -31,6 +31,8 @@ pub enum ActionRequest {
     UseItem,
     /// Kneel at a Hearth (the Hearth decides when this is allowed and what resting does).
     Rest,
+    /// A creature's grab leap (only movesets with a `pounce`, e.g. the warg).
+    Pounce,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -58,6 +60,11 @@ pub enum ActionKind {
     Stunned,
     /// Lasts until something revives the character (the Hearth respawns the player).
     Dead,
+    /// Grab leap: wind-up (leaning back), the leap (`active`, carries whoever it catches), then
+    /// the bite and shake (`recovery`). See `crate::grab`.
+    Pounce,
+    /// Held in a creature's jaws: no control; bitten, then let go (`crate::grab`).
+    Grabbed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +88,9 @@ pub enum ActionMovement {
     Scripted(MotionCurve),
     /// Jump attack: hang in the air during startup, then dive at `PLUNGE_SPEED`.
     Plunge,
+    /// Moved by someone else: the horizontal velocity is whatever was put in
+    /// `CharacterController::velocity` (a grab carries its victim; walls still stop it).
+    Held,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -287,6 +297,31 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             ground: GroundRule::Any,
             hop: 0.0,
         },
+        Pounce => {
+            let p = moves.pounce.unwrap_or(crate::weapon::warg_fangs::POUNCE);
+            ActionDef {
+                startup: p.windup,
+                active: p.leap,
+                recovery: p.recovery,
+                cancel: p.windup + p.leap + p.recovery, // committed
+                stamina_cost: p.stamina_cost,
+                iframes: None,
+                movement: ActionMovement::Scripted(MotionCurve::Lunge { start: p.windup, end: p.windup + p.leap, distance: p.distance }),
+                ground: GroundRule::Ground,
+                hop: 0.0,
+            }
+        }
+        Grabbed => ActionDef {
+            startup: 0.0,
+            active: GRAB_HOLD,
+            recovery: GRAB_RELEASE,
+            cancel: GRAB_HOLD + GRAB_RELEASE, // no escape: you had to dodge
+            stamina_cost: 0.0,
+            iframes: None,
+            movement: ActionMovement::Held,
+            ground: GroundRule::Any,
+            hop: 0.0,
+        },
         Dead => ActionDef {
             startup: 0.0,
             active: 0.0,
@@ -488,6 +523,8 @@ pub fn resolve_request(
         ActionRequest::DrinkAle => ActionKind::DrinkAle,
         ActionRequest::UseItem => ActionKind::UseItem,
         ActionRequest::Rest => ActionKind::Rest,
+        ActionRequest::Pounce if weapon.moveset().pounce.is_some() => ActionKind::Pounce,
+        ActionRequest::Pounce => return None,
     };
     let def = action_def(kind, weapon);
     let ground_ok = match def.ground {

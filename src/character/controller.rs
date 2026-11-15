@@ -54,14 +54,30 @@ fn angle_diff(from: f32, to: f32) -> f32 {
     if d > std::f32::consts::PI { d - std::f32::consts::TAU } else { d }
 }
 
+/// Moves through other characters (not walls) while present: a leaping creature carries whoever
+/// it catches instead of stopping at them (`crate::grab`).
+#[derive(Component, Debug, Default)]
+pub struct PassThroughCharacters;
+
 #[allow(clippy::type_complexity)]
 pub(super) fn move_character(
     time: Res<Time>,
     move_and_slide: MoveAndSlide,
-    mut q: Query<(Entity, &Collider, &mut CharacterController, &mut MoveIntent, &CharacterAction, &Stamina, Option<&Guard>, &mut Transform)>,
+    characters: Query<Entity, With<CharacterController>>,
+    mut q: Query<(
+        Entity,
+        &Collider,
+        &mut CharacterController,
+        &mut MoveIntent,
+        &CharacterAction,
+        &Stamina,
+        Option<&Guard>,
+        &mut Transform,
+        Has<PassThroughCharacters>,
+    )>,
 ) {
     let dt = time.delta_secs();
-    for (entity, collider, mut ctrl, mut intent, action, stamina, guard, mut tf) in &mut q {
+    for (entity, collider, mut ctrl, mut intent, action, stamina, guard, mut tf, pass_through) in &mut q {
         let guarding = guard.is_some_and(Guard::is_up);
         let free = action.current.is_none();
         let horizontal = Vec3::new(ctrl.velocity.x, 0.0, ctrl.velocity.z);
@@ -97,8 +113,9 @@ pub(super) fn move_character(
                 let a = action.current.expect("scripted movement needs an action");
                 (Vec3::ZERO, a.dir * curve.speed(a.elapsed))
             }
-            ActionMovement::Plunge => {
-                // Keep the jump's horizontal momentum: a moving jump attack dives forward.
+            ActionMovement::Plunge | ActionMovement::Held => {
+                // Plunge: keep the jump's horizontal momentum (a moving jump attack dives forward).
+                // Held: whoever holds us set the velocity (`crate::grab`).
                 ctrl.sprinting = false;
                 ctrl.wish_speed = 0.0;
                 (Vec3::ZERO, horizontal)
@@ -141,7 +158,11 @@ pub(super) fn move_character(
         }
 
         // Move and slide against the level geometry.
-        let filter = SpatialQueryFilter::from_excluded_entities([entity]);
+        let filter = if pass_through {
+            SpatialQueryFilter::from_excluded_entities(characters.iter())
+        } else {
+            SpatialQueryFilter::from_excluded_entities([entity])
+        };
         let start = tf.translation;
         let out = move_and_slide.move_and_slide(
             collider,

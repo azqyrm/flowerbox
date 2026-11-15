@@ -19,6 +19,9 @@ use crate::character::stats::{DamageMessage, DamageTaken, Health};
 use crate::humanoid::anim::action_pose;
 use crate::humanoid::pose::bone_character_transform;
 use crate::humanoid::{Bone, HumanoidRig, HumanoidSpec};
+use crate::quadruped::anim::action_pose as quadruped_action_pose;
+use crate::quadruped::pose::bone_character_transform as quadruped_bone;
+use crate::quadruped::{QBone, QuadrupedRig, QuadrupedSpec};
 use crate::hearth::WorldReset;
 use crate::lockon::Targetable;
 use crate::player::Player;
@@ -33,7 +36,7 @@ impl Plugin for CombatPlugin {
         app.init_resource::<Hitstop>()
             .init_resource::<CameraShake>()
             .add_systems(Startup, spawn_dummy)
-            .add_systems(FixedUpdate, sword_hits.in_set(CharacterSystems::Combat))
+            .add_systems(FixedUpdate, (sword_hits, bite_hits).in_set(CharacterSystems::Combat))
             .add_message::<DummyStruck>()
             .add_systems(Update, (hit_feedback, parry_feedback, run_hitstop, dummy_struck, dummy_react, dummy_reset, dummy_animate).chain());
     }
@@ -132,20 +135,9 @@ fn sword_hits(
             let blade = Collider::capsule_endpoints(BLADE_HIT_RADIUS, a, b);
             for target in spatial.shape_intersections(&blade, Vec3::ZERO, Quat::IDENTITY, &filter) {
                 let Ok((target_team, target_action, target_remote, target_is_us, target_pvp)) = hurtboxes.get(target) else { continue };
-                // Same side never hurts each other, except two players who both opted into PvP.
-                let duel = pvp.is_some_and(|p| p.0) && target_pvp.is_some_and(|p| p.0);
-                if hits.hit.contains(&target) || (team.is_some() && team == target_team && !duel) {
-                    continue;
-                }
-                // Online PvP: a hit on another player is decided on *their* machine (from our puppet).
-                if target_remote && target_team == Some(&Team::Player) {
-                    continue;
-                }
-                // Online: a remote body is only hit by *our* player (the damage is forwarded to its
-                // owner), and a remote body's swing only hits *our* player (its own machine handles
-                // the rest). So every hit is detected exactly once, by the machine of the victim or
-                // of the local attacker.
-                if (target_remote && !local_player) || (remote && !target_is_us) {
+                let me = Striker { team, pvp, local_player, remote };
+                let them = Struck { team: target_team, pvp: target_pvp, remote: target_remote, is_us: target_is_us };
+                if hits.hit.contains(&target) || !may_hit(&me, &them) {
                     continue;
                 }
                 hits.hit.push(target);
@@ -153,6 +145,102 @@ fn sword_hits(
                 let riposte = target_action.and_then(|a| a.current).is_some_and(|a| a.kind == ActionKind::Stunned);
                 let amount = (weapon.base_damage * mult * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
                 info!("{} {target} with {:?} for {amount}", if riposte { "RIPOSTE on" } else { "hit" }, cur.kind);
+                damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
+            }
+        }
+    }
+}
+
+/// The attacking side of a hit check.
+struct Striker<'a> {
+    team: Option<&'a Team>,
+    pvp: Option<&'a Pvp>,
+    /// The attacker is this machine's player.
+    local_player: bool,
+    /// The attacker is simulated on another machine (a puppet).
+    remote: bool,
+}
+
+/// The side being hit.
+struct Struck<'a> {
+    team: Option<&'a Team>,
+    pvp: Option<&'a Pvp>,
+    remote: bool,
+    /// The target is this machine's player.
+    is_us: bool,
+}
+
+/// Whether this machine decides that `me` hits `them` (teams, PvP, online ownership). Shared by
+/// sword and bite hits.
+fn may_hit(me: &Striker, them: &Struck) -> bool {
+    // Same side never hurts each other, except two players who both opted into PvP.
+    let duel = me.pvp.is_some_and(|p| p.0) && them.pvp.is_some_and(|p| p.0);
+    if me.team.is_some() && me.team == them.team && !duel {
+        return false;
+    }
+    // Online PvP: a hit on another player is decided on *their* machine (from our puppet).
+    if them.remote && them.team == Some(&Team::Player) {
+        return false;
+    }
+    // Online: a remote body is only hit by *our* player (the damage is forwarded to its owner),
+    // and a remote body's attack only hits *our* player (its own machine handles the rest). So
+    // every hit is detected exactly once, by the machine of the victim or of the local attacker.
+    !((them.remote && !me.local_player) || (me.remote && !them.is_us))
+}
+
+/// Radius of the sphere swept with a biting creature's snout.
+const BITE_RADIUS: f32 = 0.28;
+
+/// Snout tip in world space for the given action state (where bites land).
+pub fn snout_world(tf: &Transform, spec: &QuadrupedSpec, rig: &QuadrupedRig, action: &ActiveAction) -> Option<Vec3> {
+    let pose = quadruped_action_pose(action)?;
+    let head = quadruped_bone(spec, &pose, rig.root_height, QBone::Head);
+    Some(tf.transform_point(head.transform_point(spec.snout_tip())))
+}
+
+/// Bites of quadrupeds: like [`sword_hits`], with a sphere swept along the snout's path during an
+/// attack's active phase (the same pose the animation shows). Natural weapons give the damage.
+#[allow(clippy::type_complexity)]
+fn bite_hits(
+    time: Res<Time>,
+    spatial: SpatialQuery,
+    hurtboxes: Query<(Option<&Team>, Option<&CharacterAction>, Has<Remote>, Has<Player>, Option<&Pvp>), With<Hurtbox>>,
+    mut damage: MessageWriter<DamageMessage>,
+    mut biters: Query<(Entity, &Transform, &CharacterAction, &QuadrupedSpec, &QuadrupedRig, &EquippedWeapon, Option<&Team>, Option<&mut SwingHits>, Has<Remote>)>,
+    mut commands: Commands,
+) {
+    let dt = time.delta_secs();
+    for (entity, tf, action, spec, rig, equipped, team, hits, remote) in &mut biters {
+        let Some(mut hits) = hits else {
+            commands.entity(entity).insert(SwingHits::default());
+            continue;
+        };
+        if hits.serial != action.serial {
+            *hits = SwingHits { serial: action.serial, hit: vec![] };
+        }
+        let Some(cur) = action.current else { continue };
+        let Some(mult) = cur.damage_multiplier() else { continue };
+        if cur.phase() != ActionPhase::Active {
+            continue;
+        }
+        let from = (cur.elapsed - dt).max(cur.def.startup);
+        let steps = (((cur.elapsed - from) / 0.004).ceil() as usize).clamp(1, 64);
+        let filter = SpatialQueryFilter::from_excluded_entities([entity]);
+        for i in 0..=steps {
+            let mut sample = cur;
+            sample.elapsed = from + (cur.elapsed - from) * i as f32 / steps as f32;
+            let Some(snout) = snout_world(tf, spec, rig, &sample) else { continue };
+            for target in spatial.shape_intersections(&Collider::sphere(BITE_RADIUS), snout, Quat::IDENTITY, &filter) {
+                let Ok((target_team, target_action, target_remote, target_is_us, target_pvp)) = hurtboxes.get(target) else { continue };
+                let me = Striker { team, pvp: None, local_player: false, remote };
+                let them = Struck { team: target_team, pvp: target_pvp, remote: target_remote, is_us: target_is_us };
+                if hits.hit.contains(&target) || !may_hit(&me, &them) {
+                    continue;
+                }
+                hits.hit.push(target);
+                let riposte = target_action.and_then(|a| a.current).is_some_and(|a| a.kind == ActionKind::Stunned);
+                let amount = (equipped.def.base_damage * mult * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
+                info!("bite on {target} with {:?} for {amount}", cur.kind);
                 damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
             }
         }

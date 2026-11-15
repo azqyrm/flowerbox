@@ -187,7 +187,8 @@ fn spawn_level(
         spawn_sunflower(&mut commands, &mut meshes, &mut materials, f.id, layout.ground(f.at), f.facing.yaw());
     }
     for (n, e) in layout.file.enemies.iter().enumerate() {
-        commands.spawn((Name::new("Spawn point: Hollow"), SpawnPoint::new(layout.ground(e.at), e.patrol.map(|p| layout.ground(p)), 100 + n as u32)));
+        let point = SpawnPoint::new(e.kind, layout.ground(e.at), e.patrol.map(|p| layout.ground(p)), 100 + n as u32);
+        commands.spawn((Name::new(format!("Spawn point: {:?}", e.kind)), point));
     }
 }
 

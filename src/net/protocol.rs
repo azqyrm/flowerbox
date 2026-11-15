@@ -13,7 +13,7 @@ use crate::items::ItemId;
 use crate::weapon::WeaponClass;
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -27,6 +27,7 @@ pub const DUMMY_ID: NetId = 999;
 pub enum BodyKind {
     Player,
     Hollow,
+    Warg,
 }
 
 /// A running action, enough to pose it identically on the other side.

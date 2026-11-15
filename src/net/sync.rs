@@ -25,7 +25,7 @@ use crate::character::controller::CharacterController;
 use crate::character::guard::{Guard, Parried};
 use crate::character::stats::{DamageMessage, Health};
 use crate::combat::{Dummy, Hitstop, Hurtbox, Team};
-use crate::enemy::{Enemy, EnemiesSuppressed};
+use crate::enemy::{Enemy, EnemiesSuppressed, EnemyKind, warg};
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::items::inventory::{EquipSlot, EquipStats, EquipVisuals, Equipment, Inventory};
@@ -33,7 +33,7 @@ use crate::lockon::Targetable;
 use crate::player::Player;
 use crate::pvp::Pvp;
 use crate::tuning::*;
-use crate::weapon::{EquipWeapon, WeaponSystems, hollow_blade};
+use crate::weapon::{EquipWeapon, EquippedWeapon, WeaponSystems, hollow_blade, warg_fangs};
 
 pub struct SyncPlugin;
 
@@ -256,9 +256,10 @@ fn spawn_puppet(
     body: BodyState,
 ) {
     let pos = Vec3::from_array(body.pos);
-    let (spec, name) = match body.kind {
-        BodyKind::Player => (guest_look(body.id), format!("Player {}", body.id)),
-        BodyKind::Hollow => (HumanoidSpec::hollow(), "Hollow (remote)".to_string()),
+    let name = match body.kind {
+        BodyKind::Player => format!("Player {}", body.id),
+        BodyKind::Hollow => "Hollow (remote)".to_string(),
+        BodyKind::Warg => "Warg (remote)".to_string(),
     };
     let e = commands
         .spawn((
@@ -276,10 +277,13 @@ fn spawn_puppet(
             Collider::capsule(PLAYER_RADIUS, PLAYER_CAPSULE_LENGTH),
         ))
         .id();
-    let rig = spawn_humanoid(commands, meshes, materials, e, &spec, PLAYER_HALF_HEIGHT);
-    commands.entity(e).insert((spec, rig, HumanoidAnimator::default()));
+    let humanoid = |commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, spec: HumanoidSpec| {
+        let rig = spawn_humanoid(commands, meshes, materials, e, &spec, PLAYER_HALF_HEIGHT);
+        commands.entity(e).insert((spec, rig, HumanoidAnimator::default()));
+    };
     match body.kind {
         BodyKind::Player => {
+            humanoid(commands, meshes, materials, guest_look(body.id));
             commands.entity(e).insert((
                 Team::Player,
                 Pvp(body.pvp),
@@ -290,13 +294,25 @@ fn spawn_puppet(
             ));
         }
         BodyKind::Hollow => {
+            humanoid(commands, meshes, materials, HumanoidSpec::hollow());
             commands.entity(e).insert((
                 Team::Hostile,
                 Hurtbox,
                 Targetable { height: 0.55 },
-                Enemy { home: pos, patrol: None },
+                Enemy { home: pos, patrol: None, kind: EnemyKind::Hollow },
             ));
             equip_weapon.write(EquipWeapon { character: e, def: &hollow_blade::HOLLOW_SWORD });
+        }
+        BodyKind::Warg => {
+            // Its bites and pounce run from the replicated actions; they only catch *our* player.
+            warg::attach_warg_body(commands, meshes, materials, e);
+            commands.entity(e).insert((
+                Team::Hostile,
+                Hurtbox,
+                Targetable { height: warg::WARG_TARGET_HEIGHT },
+                Enemy { home: pos, patrol: None, kind: EnemyKind::Warg },
+                EquippedWeapon::natural(&warg_fangs::WARG_FANGS),
+            ));
         }
     }
     info!("puppet {} appeared", body.id);
@@ -394,7 +410,7 @@ fn send_states(
     session: Res<NetSession>,
     player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment, &Pvp), With<Player>>,
     puppets: Query<&Puppet>,
-    enemies: Query<(Entity, &Transform, &CharacterController, &CharacterAction, &Health), (With<Enemy>, Without<Remote>)>,
+    enemies: Query<(Entity, &Enemy, &Transform, &CharacterController, &CharacterAction, &Health), Without<Remote>>,
 ) {
     if !session.online() {
         return;
@@ -410,8 +426,12 @@ fn send_states(
     if session.is_host() {
         let mut bodies = vec![me];
         bodies.extend(puppets.iter().filter(|p| p.state.kind == BodyKind::Player).map(|p| p.state.clone()));
-        for (e, tf, ctrl, action, health) in &enemies {
-            bodies.push(body_state(enemy_id(e), BodyKind::Hollow, tf, ctrl, action, None, health, [None; 3], false));
+        for (e, enemy, tf, ctrl, action, health) in &enemies {
+            let kind = match enemy.kind {
+                EnemyKind::Hollow => BodyKind::Hollow,
+                EnemyKind::Warg => BodyKind::Warg,
+            };
+            bodies.push(body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; 3], false));
         }
         link.send(NetCmd::Datagram { to: None, bytes: encode(&Datagram::Snapshot(bodies)) });
     } else if session.role == super::Role::Client {

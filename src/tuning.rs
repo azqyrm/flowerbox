@@ -225,6 +225,21 @@ pub const HOLLOW_MOVE_FACTOR: f32 = 0.6;
 pub const HOLLOW_HEAVY_CHANCE: f32 = 0.25;
 /// Pause between attacks (min, max seconds), spent circling.
 pub const HOLLOW_RECOVER_TIME: (f32, f32) = (1.0, 2.0);
+// ── Grabs (see grab.rs; the warg's pounce timings are in weapon/warg_fangs.rs) ─────────
+/// How long a grabbed character is held (from the moment it's caught), and the stagger after.
+pub const GRAB_HOLD: f32 = 1.3;
+pub const GRAB_RELEASE: f32 = 0.35;
+/// The bite lands this long after being caught (the shake). It can't be blocked: you're held.
+pub const GRAB_BITE_AT: f32 = 0.6;
+/// Caught when within this distance (horizontal, m) of the leaping creature's jaws.
+pub const GRAB_REACH: f32 = 0.85;
+/// A held victim is kept this far in front of the creature's centre.
+pub const GRAB_HOLD_DISTANCE: f32 = 1.2;
+
+// ── The warg (a quadruped beast, see enemy/beast.rs + enemy/warg.rs) ─────
+pub const WARG_HP: f32 = 160.0;
+pub const WARG_STAMINA: f32 = 140.0;
+
 /// A dead Hollow lies there this long before vanishing.
 pub const CORPSE_TIME: f32 = 4.0;
 
