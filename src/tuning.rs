@@ -166,6 +166,42 @@ pub const GUARD_MOVE_FACTOR: f32 = 0.55;
 /// Stamina regeneration multiplier while the guard is up.
 pub const GUARD_REGEN_FACTOR: f32 = 0.35;
 
+/// How long a parried attacker reels (open to a riposte).
+pub const PARRY_STUN_TIME: f32 = 1.8;
+/// Damage multiplier for hitting a stunned (parried) character: the riposte.
+pub const RIPOSTE_MULT: f32 = 2.5;
+
+// ── Lock-on and gamepad camera ─────────────────────────────────────────
+/// Max distance to lock onto a target, and the cone (radians either side of the view) to look in.
+pub const LOCK_RANGE: f32 = 15.0;
+pub const LOCK_CONE: f32 = 1.1;
+/// The lock breaks beyond this distance.
+pub const LOCK_BREAK_RANGE: f32 = 20.0;
+/// How fast the camera turns toward the locked target (1/s), and its pitch while locked.
+pub const CAM_LOCK_TURN: f32 = 8.0;
+pub const CAM_LOCK_PITCH: f32 = 0.3;
+/// Right-stick camera speed (rad/s at full tilt).
+pub const CAM_STICK_SPEED: f32 = 3.0;
+
+// ── Enemies (the Hollow, see enemy/mod.rs) ───────────────────────────────
+/// Where Hollows stand (floor x, z): across the arena from the player's start, past the dummy.
+pub const HOLLOW_SPAWNS: [(f32, f32); 1] = [(-4.0, -10.0)];
+pub const HOLLOW_HP: f32 = 70.0;
+pub const HOLLOW_STAMINA: f32 = 90.0;
+/// Notices the player within this distance; gives up beyond `HOLLOW_LEASH` from home.
+pub const HOLLOW_AGGRO_RANGE: f32 = 9.0;
+pub const HOLLOW_LEASH: f32 = 16.0;
+/// Starts an attack within this distance.
+pub const HOLLOW_ATTACK_RANGE: f32 = 2.0;
+/// Walking speed as a fraction of the player's.
+pub const HOLLOW_MOVE_FACTOR: f32 = 0.6;
+/// Chance an attack is a charged heavy instead of a light combo.
+pub const HOLLOW_HEAVY_CHANCE: f32 = 0.25;
+/// Pause between attacks (min, max seconds), spent circling.
+pub const HOLLOW_RECOVER_TIME: (f32, f32) = (1.0, 2.0);
+/// A dead Hollow lies there this long before vanishing.
+pub const CORPSE_TIME: f32 = 4.0;
+
 // ── Items ────────────────────────────────────────────────────────────────
 /// How close (m) the player must be to pick an item up.
 pub const PICKUP_RANGE: f32 = 1.4;

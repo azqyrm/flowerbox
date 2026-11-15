@@ -15,4 +15,4 @@ pub const PICKED_UP: &str = "Picked up";
 /// Inventory screen title and key hints.
 pub const INVENTORY_TITLE: &str = "Inventory";
 pub const INVENTORY_HINTS: &str =
-    "[Enter] Equip / Unequip    [Backspace] Unequip    [Q] [E] Filter    [Arrows / WASD] Move    [Tab] Close";
+    "[Enter / A] Equip / Unequip    [Backspace / X] Unequip    [Q] [E] / L1 R1 Filter    [Arrows / D-pad] Move    [Tab / B] Close";

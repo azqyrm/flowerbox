@@ -5,12 +5,14 @@ mod camera;
 mod character;
 mod combat;
 mod debug;
+mod enemy;
 mod healing;
 mod hearth;
 mod humanoid;
 mod input;
 mod interact;
 mod items;
+mod lockon;
 mod player;
 mod tuning;
 mod ui;
@@ -36,10 +38,14 @@ fn main() {
             input::InputPlugin,
             interact::InteractPlugin,
             items::ItemsPlugin,
+            lockon::LockOnPlugin,
             character::CharacterPlugin,
             humanoid::HumanoidPlugin,
             weapon::WeaponPlugin,
             player::PlayerPlugin,
+        ))
+        .add_plugins((
+            enemy::EnemyPlugin,
             healing::HealingPlugin,
             hearth::HearthPlugin,
             ui::UiPlugin,

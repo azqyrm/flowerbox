@@ -16,6 +16,7 @@
 //! the new one attached to the right hand. Blade span (`blade`) is part of the definition, so the
 //! hitbox matches the model.
 
+pub mod hollow_blade;
 pub mod light_sword;
 
 use bevy::camera::visibility::NoFrustumCulling;
@@ -40,16 +41,19 @@ pub enum WeaponClass {
     /// One-handed sword (the starting longsword).
     #[default]
     LightSword,
+    /// Enemy swings with long wind-ups (the Hollow).
+    HollowBlade,
 }
 
 impl WeaponClass {
     /// Every class (tests iterate over this, so new classes get checked automatically).
     #[allow(dead_code)] // only tests use it so far
-    pub const ALL: [WeaponClass; 1] = [WeaponClass::LightSword];
+    pub const ALL: [WeaponClass; 2] = [WeaponClass::LightSword, WeaponClass::HollowBlade];
 
     pub fn moveset(self) -> &'static Moveset {
         match self {
             WeaponClass::LightSword => &light_sword::MOVESET,
+            WeaponClass::HollowBlade => &hollow_blade::MOVESET,
         }
     }
 }

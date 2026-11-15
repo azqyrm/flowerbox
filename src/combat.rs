@@ -20,6 +20,7 @@ use crate::humanoid::anim::action_pose;
 use crate::humanoid::pose::bone_character_transform;
 use crate::humanoid::{Bone, HumanoidRig, HumanoidSpec};
 use crate::hearth::WorldReset;
+use crate::lockon::Targetable;
 use crate::player::Player;
 use crate::weapon::{EquippedWeapon, WeaponDef};
 use crate::tuning::*;
@@ -36,9 +37,17 @@ impl Plugin for CombatPlugin {
     }
 }
 
-/// Marks an entity the player's weapon can hit. Needs a `Collider` and `Health`.
+/// Marks an entity weapons can hit. Needs a `Collider` and `Health`.
 #[derive(Component)]
 pub struct Hurtbox;
+
+/// Sides in a fight: weapons don't hit their own team. Entities without a team (the training
+/// dummy) can be hit by anyone.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Team {
+    Player,
+    Hostile,
+}
 
 /// Entities already hit by the current swing.
 #[derive(Component, Default)]
@@ -76,13 +85,22 @@ pub fn blade_world(
 fn sword_hits(
     time: Res<Time>,
     spatial: SpatialQuery,
-    hurtboxes: Query<(), With<Hurtbox>>,
+    hurtboxes: Query<(Option<&Team>, Option<&CharacterAction>), With<Hurtbox>>,
     mut damage: MessageWriter<DamageMessage>,
-    mut attackers: Query<(Entity, &Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &EquippedWeapon, Option<&mut SwingHits>)>,
+    mut attackers: Query<(
+        Entity,
+        &Transform,
+        &CharacterAction,
+        &HumanoidSpec,
+        &HumanoidRig,
+        &EquippedWeapon,
+        Option<&Team>,
+        Option<&mut SwingHits>,
+    )>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    for (entity, tf, action, spec, rig, equipped, hits) in &mut attackers {
+    for (entity, tf, action, spec, rig, equipped, team, hits) in &mut attackers {
         let weapon = equipped.def;
         let Some(mut hits) = hits else {
             commands.entity(entity).insert(SwingHits::default());
@@ -107,18 +125,22 @@ fn sword_hits(
             let Some((a, b)) = blade_world(tf, spec, rig, weapon, &sample) else { continue };
             let blade = Collider::capsule_endpoints(BLADE_HIT_RADIUS, a, b);
             for target in spatial.shape_intersections(&blade, Vec3::ZERO, Quat::IDENTITY, &filter) {
-                if hurtboxes.contains(target) && !hits.hit.contains(&target) {
-                    hits.hit.push(target);
-                    let amount = (weapon.base_damage * mult).round();
-                    info!("hit {target} with {:?} for {amount}", cur.kind);
-                    damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
+                let Ok((target_team, target_action)) = hurtboxes.get(target) else { continue };
+                if hits.hit.contains(&target) || (team.is_some() && team == target_team) {
+                    continue;
                 }
+                hits.hit.push(target);
+                // Hitting a parried (stunned) character is a riposte.
+                let riposte = target_action.and_then(|a| a.current).is_some_and(|a| a.kind == ActionKind::Stunned);
+                let amount = (weapon.base_damage * mult * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
+                info!("{} {target} with {:?} for {amount}", if riposte { "RIPOSTE on" } else { "hit" }, cur.kind);
+                damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
             }
         }
     }
 }
 
-/// A parry: a hard hitstop and a jolt. (Stunning the attacker comes with enemies, ROADMAP N19.)
+/// A parry: a hard hitstop and a jolt (the attacker's stun happens in `guard::stun_parried`).
 fn parry_feedback(mut parries: MessageReader<Parried>, mut hitstop: ResMut<Hitstop>, mut shake: ResMut<CameraShake>) {
     for p in parries.read() {
         info!("parry! defender {} attacker {:?}", p.defender, p.attacker);
@@ -194,6 +216,7 @@ fn spawn_dummy(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
             Name::new("Training Dummy"),
             Dummy { tilt: Vec2::ZERO, tilt_vel: Vec2::ZERO, flash: 0.0, broken: None, fallen_tilt: Vec2::ZERO },
             Hurtbox,
+            Targetable { height: 0.5 },
             Health::new(DUMMY_HP),
             Transform::from_xyz(x, DUMMY_HALF_HEIGHT, z),
             Visibility::default(),

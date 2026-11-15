@@ -1,19 +1,20 @@
 //! Screen UI. `hud` = bars, Healing Ale, equipment quadrant, interaction prompt, banners and
-//! the death screen. `inventory_ui` = the Tab/I inventory and equipment screen. `icons` = item
-//! icons drawn from nodes. `strings` = all player-facing wording.
+//! the death screen. `inventory_ui` = the Tab/I inventory and equipment screen. `markers` = lock-on dot and
+//! enemy health bars. `icons` = item icons drawn from nodes. `strings` = all player-facing wording.
 
 use bevy::prelude::*;
 
 pub mod hud;
 pub mod icons;
 pub mod inventory_ui;
+pub mod markers;
 pub mod strings;
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<Banner>().add_plugins((hud::HudPlugin, inventory_ui::InventoryUiPlugin));
+        app.add_message::<Banner>().add_plugins((hud::HudPlugin, inventory_ui::InventoryUiPlugin, markers::MarkersPlugin));
     }
 }
 

@@ -385,7 +385,7 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
     match a.kind {
         ActionKind::Roll => {
             // Tucked forward somersault around the body's middle, finished a bit before recovery ends.
-            let t = a.elapsed / (ROLL_STARTUP + ROLL_ACTIVE + ROLL_RECOVERY * 0.5);
+            let t = a.elapsed / (d.startup + d.active + ROLL_RECOVERY * 0.5);
             let tuck = bell(t);
             // Curl into a ball (hips drop) and turn around the ball's centre so nothing dips
             // below the floor.
@@ -494,6 +494,20 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
             p.add(Bone::UpperArmL, rz(-0.6 * b)).add(Bone::UpperArmR, rz(0.4 * b));
             p.set(Bone::ShinL, rx(-0.4 * b)).set(Bone::ShinR, rx(-0.4 * b));
             p.pelvis_offset.y = -0.06 * b;
+            Some((p, PoseMask::Full))
+        }
+        ActionKind::Stunned => {
+            // Parried: thrown off balance, weapon arm flung out, reeling back on bent knees.
+            let k = (a.elapsed / 0.15).min(1.0).min((total - a.elapsed) / 0.4).clamp(0.0, 1.0);
+            let k = ease(k);
+            let sway = (a.elapsed * 5.0).sin() * 0.08 * k;
+            p.add(Bone::Chest, rx(-0.35 * k) * rz(sway)).set(Bone::Head, rx(-0.35 * k));
+            p.set(Bone::UpperArmR, Quat::IDENTITY.slerp(rz(1.15) * rx(0.5), k)).set(Bone::ForearmR, rx(0.3 * k));
+            p.set(Bone::UpperArmL, Quat::IDENTITY.slerp(rz(-0.9) * rx(0.3), k)).set(Bone::ForearmL, rx(0.4 * k));
+            p.set(Bone::ThighL, rx(0.45 * k)).set(Bone::ShinL, rx(-0.7 * k));
+            p.set(Bone::ThighR, rx(-0.15 * k)).set(Bone::ShinR, rx(-0.45 * k));
+            p.pelvis_offset.y = -0.12 * k;
+            p.pelvis_offset.z = 0.08 * k;
             Some((p, PoseMask::Full))
         }
         ActionKind::Dead => {
@@ -829,6 +843,7 @@ mod tests {
             ActionKind::DrinkAle,
             ActionKind::Rest,
             ActionKind::Hurt,
+            ActionKind::Stunned,
             ActionKind::Dead,
         ] {
             assert!(action_pose(&at(kind, 0.1)).is_some(), "{kind:?}");

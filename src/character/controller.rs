@@ -105,9 +105,14 @@ pub(super) fn move_character(
             }
         };
 
-        // Turn toward the move direction (actions keep their facing).
-        if wish.length_squared() > 0.01 {
-            let target = f32::atan2(-wish.x, -wish.z);
+        // Turn toward the move direction (actions keep their facing). Locked on (`face`), turn
+        // toward the target instead and strafe; sprinting still runs where you steer.
+        let look = match intent.face {
+            Some(f) if action.current.is_none() && !ctrl.sprinting && f.length_squared() > 0.01 => f,
+            _ => wish,
+        };
+        if look.length_squared() > 0.01 {
+            let target = f32::atan2(-look.x, -look.z);
             let d = angle_diff(ctrl.facing, target);
             let step = TURN_SPEED * dt;
             ctrl.facing += d.clamp(-step, step);

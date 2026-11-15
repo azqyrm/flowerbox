@@ -1,0 +1,333 @@
+//! Enemies. For now one kind: the **Hollow**, a shambling melee enemy built from the same parts as
+//! the player — a generic character (`crate::character`) with a humanoid body
+//! (`HumanoidSpec::hollow`), a weapon with a telegraphed moveset (`weapon::hollow_blade`) and an
+//! AI that writes the same `MoveIntent` / `ActionIntent` the player's input does.
+//!
+//! AI states: **Idle** at home → notices the player within `HOLLOW_AGGRO_RANGE` (or when hit) →
+//! **Chase** → in range: **Attack** (a one- or two-swing combo, or a charged heavy) → **Recover**
+//! (keeps its distance, circles) → Chase … It gives up and walks **Home** when the player dies or
+//! drags it farther than `HOLLOW_LEASH` from home.
+//!
+//! Death: the Hollow collapses, lies there for `CORPSE_TIME`, then vanishes. Resting at the Hearth
+//! or respawning ([`WorldReset`]) brings every enemy back at home with full health — Souls rules.
+
+use avian3d::prelude::*;
+use bevy::prelude::*;
+
+use crate::character::action::{ActionKind, ActionRequest, CharacterAction};
+use crate::character::controller::CharacterController;
+use crate::character::stats::{Health, Stamina};
+use crate::character::{ActionIntent, CharacterSystems, MoveIntent, character_bundle};
+use crate::combat::{Hurtbox, Team};
+use crate::hearth::WorldReset;
+use crate::humanoid::anim::HumanoidAnimator;
+use crate::humanoid::{HumanoidSpec, spawn_humanoid};
+use crate::lockon::Targetable;
+use crate::player::Player;
+use crate::tuning::*;
+use crate::weapon::{EquipWeapon, hollow_blade};
+
+pub struct EnemyPlugin;
+
+impl Plugin for EnemyPlugin {
+    fn build(&self, app: &mut App) {
+        // The older autopilot scripts (combat, hearth, …) were written for an empty arena.
+        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| a != "enemy") {
+            return;
+        }
+        app.add_systems(Startup, spawn_enemies)
+            .add_systems(FixedUpdate, hollow_ai.before(CharacterSystems::Actions))
+            .add_systems(Update, (enemy_death, enemy_reset));
+    }
+}
+
+/// An enemy and where it lives.
+#[derive(Component, Debug)]
+pub struct Enemy {
+    pub home: Vec3,
+    pub home_facing: f32,
+}
+
+/// Lying dead for this many seconds.
+#[derive(Component)]
+struct Corpse(f32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AiState {
+    Idle,
+    Chase,
+    Attack,
+    Recover,
+    Home,
+}
+
+#[derive(Component, Debug)]
+pub struct HollowAi {
+    pub state: AiState,
+    /// Recover: seconds left; Attack: seconds the heavy is still held.
+    timer: f32,
+    /// More swings to chain onto the current combo.
+    combo_left: u8,
+    /// Circling direction while recovering, and the side to step around obstacles (+1 / -1).
+    strafe: f32,
+    /// Seconds spent walking into something (wants to move, barely moves).
+    stuck: f32,
+    /// Seconds left of sidestepping around an obstacle.
+    detour: f32,
+    rng: u32,
+}
+
+impl HollowAi {
+    fn new(seed: u32) -> Self {
+        Self { state: AiState::Idle, timer: 0.0, combo_left: 0, strafe: 1.0, stuck: 0.0, detour: 0.0, rng: seed.max(1) }
+    }
+
+    /// xorshift: deterministic, so autopilot runs repeat.
+    fn roll(&mut self) -> f32 {
+        let mut x = self.rng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.rng = x;
+        (x & 0xFFFF) as f32 / 65536.0
+    }
+
+    fn set(&mut self, state: AiState) {
+        if self.state != state {
+            debug!("hollow: {:?} -> {:?}", self.state, state);
+            self.state = state;
+        }
+    }
+}
+
+fn spawn_enemies(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut equip: MessageWriter<EquipWeapon>,
+) {
+    for (i, (x, z)) in HOLLOW_SPAWNS.into_iter().enumerate() {
+        let home = Vec3::new(x, 0.0, z);
+        let to_centre = (-home).normalize_or(Vec3::NEG_Z);
+        let facing = f32::atan2(-to_centre.x, -to_centre.z);
+        let spec = HumanoidSpec::hollow();
+        let mut tf = Transform::from_xyz(x, PLAYER_HALF_HEIGHT + 0.05, z);
+        tf.rotation = Quat::from_rotation_y(facing);
+        let enemy = commands
+            .spawn((
+                Name::new("Hollow"),
+                Enemy { home, home_facing: facing },
+                HollowAi::new(0x9E37_79B9 ^ (i as u32 * 7919 + 1)),
+                Hurtbox,
+                Team::Hostile,
+                Targetable { height: 0.55 },
+                character_bundle(tf, HOLLOW_HP, HOLLOW_STAMINA),
+            ))
+            .id();
+        let rig = spawn_humanoid(&mut commands, &mut meshes, &mut materials, enemy, &spec, PLAYER_HALF_HEIGHT);
+        commands.entity(enemy).insert((spec, rig, HumanoidAnimator::default()));
+        commands.entity(enemy).insert(CharacterController { facing, ..default() });
+        equip.write(EquipWeapon { character: enemy, def: &hollow_blade::HOLLOW_SWORD });
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn hollow_ai(
+    time: Res<Time>,
+    player: Query<(&Transform, &CharacterAction), With<Player>>,
+    mut q: Query<
+        (&Enemy, &mut HollowAi, &Transform, &CharacterController, &CharacterAction, &Health, &mut MoveIntent, &mut ActionIntent),
+        Without<Player>,
+    >,
+) {
+    let dt = time.delta_secs();
+    let Ok((ptf, paction)) = player.single() else { return };
+    let player_alive = !matches!(paction.current, Some(a) if a.kind == ActionKind::Dead);
+    for (enemy, mut ai, tf, ctrl, action, health, mut movement, mut intent) in &mut q {
+        intent.tick(dt);
+        movement.dir = Vec3::ZERO;
+        movement.sprint = false;
+        movement.face = None;
+        if health.is_dead() {
+            intent.attack_held = false;
+            continue;
+        }
+        let to_player = (ptf.translation - tf.translation).with_y(0.0);
+        let dist = to_player.length();
+        let toward = to_player.normalize_or_zero();
+        let to_home = (enemy.home - tf.translation).with_y(0.0);
+        let busy = action.current.is_some();
+        ai.timer -= dt;
+
+        // Hit while idle: turn on the attacker.
+        if ai.state == AiState::Idle && health.current < health.max && player_alive {
+            ai.set(AiState::Chase);
+        }
+        if matches!(ai.state, AiState::Chase | AiState::Attack | AiState::Recover)
+            && (!player_alive || to_home.length() > HOLLOW_LEASH)
+        {
+            intent.attack_held = false;
+            ai.set(AiState::Home);
+        }
+
+        match ai.state {
+            AiState::Idle => {
+                if player_alive && dist < HOLLOW_AGGRO_RANGE {
+                    info!("a Hollow notices you");
+                    ai.set(AiState::Chase);
+                }
+            }
+            AiState::Chase => {
+                movement.face = Some(toward);
+                if dist > HOLLOW_ATTACK_RANGE * 0.8 {
+                    movement.dir = toward * HOLLOW_MOVE_FACTOR;
+                }
+                if dist < HOLLOW_ATTACK_RANGE && !busy && ai.timer <= 0.0 {
+                    if ai.roll() < HOLLOW_HEAVY_CHANCE {
+                        intent.buffer(ActionRequest::HeavyAttack);
+                        intent.attack_held = true;
+                        ai.timer = 0.35 + 0.3 * ai.roll();
+                        ai.combo_left = 0;
+                    } else {
+                        intent.buffer(ActionRequest::LightAttack);
+                        ai.combo_left = u8::from(ai.roll() < 0.5);
+                    }
+                    ai.set(AiState::Attack);
+                }
+            }
+            AiState::Attack => {
+                movement.face = Some(toward);
+                intent.attack_held = intent.attack_held && ai.timer > 0.0;
+                if let Some(cur) = action.current {
+                    // Chain the next swing just before the cancel window (the buffer is short).
+                    let chaining = matches!(cur.kind, ActionKind::LightAttack(_))
+                        && ai.combo_left > 0
+                        && cur.elapsed >= cur.def.cancel - 0.1;
+                    if chaining {
+                        ai.combo_left -= 1;
+                        intent.buffer(ActionRequest::LightAttack);
+                    }
+                    if matches!(cur.kind, ActionKind::Hurt | ActionKind::Stunned) {
+                        intent.attack_held = false;
+                        intent.buffered = None;
+                        ai.combo_left = 0;
+                    }
+                } else if intent.buffered.is_none() {
+                    ai.timer = HOLLOW_RECOVER_TIME.0 + (HOLLOW_RECOVER_TIME.1 - HOLLOW_RECOVER_TIME.0) * ai.roll();
+                    ai.strafe = if ai.roll() < 0.5 { -1.0 } else { 1.0 };
+                    ai.set(AiState::Recover);
+                }
+            }
+            AiState::Recover => {
+                movement.face = Some(toward);
+                if !busy {
+                    let side = Vec3::new(-toward.z, 0.0, toward.x) * ai.strafe;
+                    movement.dir = if dist < 1.6 {
+                        -toward * 0.5
+                    } else if dist < 3.5 {
+                        side * 0.4
+                    } else {
+                        toward * HOLLOW_MOVE_FACTOR
+                    };
+                }
+                if ai.timer <= 0.0 {
+                    ai.set(AiState::Chase);
+                }
+            }
+            AiState::Home => {
+                if to_home.length() > 0.4 {
+                    movement.dir = to_home.normalize() * HOLLOW_MOVE_FACTOR;
+                } else {
+                    ai.set(AiState::Idle);
+                }
+                if player_alive && dist < HOLLOW_AGGRO_RANGE * 0.6 && to_home.length() < HOLLOW_LEASH * 0.7 {
+                    ai.set(AiState::Chase);
+                }
+            }
+        }
+
+        // Walking into something (rubble, a pillar): sidestep around it for a moment.
+        let wants = movement.dir.length() * WALK_SPEED;
+        let moved = Vec2::new(ctrl.moved.x, ctrl.moved.z).length();
+        ai.stuck = if wants > 1.0 && moved < wants * 0.3 { ai.stuck + dt } else { 0.0 };
+        if ai.stuck > 0.4 {
+            ai.stuck = 0.0;
+            ai.detour = 0.7;
+            if ai.roll() < 0.5 {
+                ai.strafe = -ai.strafe;
+            }
+        }
+        if ai.detour > 0.0 && movement.dir.length_squared() > 0.01 {
+            ai.detour -= dt;
+            let d = movement.dir;
+            let side = Vec3::new(-d.z, 0.0, d.x) * ai.strafe;
+            movement.dir = (side * 0.8 + d * 0.3).normalize_or_zero() * d.length();
+        }
+    }
+}
+
+/// Dead enemies stop being targets, lie there a while, then vanish (until the world resets).
+#[allow(clippy::type_complexity)]
+fn enemy_death(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &CharacterAction, Option<&mut Corpse>, &mut Visibility), With<Enemy>>,
+) {
+    for (entity, action, corpse, mut vis) in &mut q {
+        let dead = matches!(action.current, Some(a) if a.kind == ActionKind::Dead);
+        match corpse {
+            None if dead => {
+                info!("a Hollow falls");
+                commands.entity(entity).insert(Corpse(0.0)).remove::<(Hurtbox, Targetable)>();
+            }
+            Some(mut c) => {
+                c.0 += time.delta_secs();
+                if c.0 >= CORPSE_TIME && *vis != Visibility::Hidden {
+                    *vis = Visibility::Hidden;
+                    commands.entity(entity).insert(ColliderDisabled);
+                }
+            }
+            None => {}
+        }
+    }
+}
+
+/// Resting / respawning: every enemy back at home, alive and unhurt.
+#[allow(clippy::type_complexity)]
+fn enemy_reset(
+    mut resets: MessageReader<WorldReset>,
+    mut commands: Commands,
+    mut q: Query<(
+        Entity,
+        &Enemy,
+        &mut HollowAi,
+        &mut Transform,
+        &mut CharacterController,
+        &mut CharacterAction,
+        &mut ActionIntent,
+        &mut Health,
+        &mut Stamina,
+        &mut Visibility,
+    )>,
+) {
+    if resets.read().count() == 0 {
+        return;
+    }
+    for (entity, enemy, mut ai, mut tf, mut ctrl, mut action, mut intent, mut health, mut stamina, mut vis) in &mut q {
+        tf.translation = enemy.home + Vec3::Y * (PLAYER_HALF_HEIGHT + 0.05);
+        tf.rotation = Quat::from_rotation_y(enemy.home_facing);
+        *ctrl = CharacterController { facing: enemy.home_facing, ..default() };
+        action.revive();
+        *intent = ActionIntent::default();
+        *health = Health::new(health.max);
+        *stamina = Stamina::new(stamina.max);
+        *vis = Visibility::Inherited;
+        ai.state = AiState::Idle;
+        ai.timer = 0.0;
+        commands
+            .entity(entity)
+            .remove::<(Corpse, ColliderDisabled)>()
+            .insert((Hurtbox, Targetable { height: 0.55 }));
+    }
+    info!("enemies reset");
+}

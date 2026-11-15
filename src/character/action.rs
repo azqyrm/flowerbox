@@ -47,6 +47,8 @@ pub enum ActionKind {
     /// Kneeling at a Hearth; its effect lands at the start of the active phase.
     Rest,
     Hurt,
+    /// Parried: reeling, open to a riposte.
+    Stunned,
     /// Lasts until something revives the character (the Hearth respawns the player).
     Dead,
 }
@@ -244,6 +246,17 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             ground: GroundRule::Any,
             hop: 0.0,
         },
+        Stunned => ActionDef {
+            startup: 0.0,
+            active: 0.0,
+            recovery: PARRY_STUN_TIME,
+            cancel: PARRY_STUN_TIME,
+            stamina_cost: 0.0,
+            iframes: None,
+            movement: ActionMovement::Locked,
+            ground: GroundRule::Any,
+            hop: 0.0,
+        },
         Dead => ActionDef {
             startup: 0.0,
             active: 0.0,
@@ -255,6 +268,53 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             ground: GroundRule::Any,
             hop: 0.0,
         },
+    }
+}
+
+/// Roll weight class from the equip load (Souls-style): light gear rolls fast and far, heavy
+/// gear slowly, overloaded is a short "fat roll" with few i-frames. Backsteps don't change.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RollWeight {
+    Light,
+    #[default]
+    Medium,
+    Heavy,
+    Overloaded,
+}
+
+impl RollWeight {
+    /// From the equip load ratio (worn weight / max load).
+    pub fn from_load(ratio: f32) -> Self {
+        match ratio {
+            r if r <= LOAD_LIGHT => RollWeight::Light,
+            r if r <= LOAD_MEDIUM => RollWeight::Medium,
+            r if r <= 1.0 => RollWeight::Heavy,
+            _ => RollWeight::Overloaded,
+        }
+    }
+
+    /// The roll for this weight class. Medium is the base roll (`ROLL_*`).
+    pub fn roll_def(self) -> ActionDef {
+        // (time scale, distance scale, i-frames as a fraction of the base roll's, extra recovery).
+        // The fast roll keeps the full i-frames in a shorter roll.
+        let (time, dist, iframes, extra) = match self {
+            RollWeight::Light => (0.85, 1.1, 1.0, 0.0),
+            RollWeight::Medium => (1.0, 1.0, 1.0, 0.0),
+            RollWeight::Heavy => (1.2, 0.8, 0.8, 0.12),
+            RollWeight::Overloaded => (1.4, 0.45, 0.45, 0.45),
+        };
+        let (startup, active, recovery) = (ROLL_STARTUP * time, ROLL_ACTIVE * time, ROLL_RECOVERY * time + extra);
+        ActionDef {
+            startup,
+            active,
+            recovery,
+            cancel: ROLL_CANCEL * time + extra,
+            stamina_cost: ROLL_COST,
+            iframes: Some((startup, startup + ROLL_ACTIVE * iframes)),
+            movement: ActionMovement::Scripted(MotionCurve::Dash { startup, active, recovery, distance: ROLL_DISTANCE * dist }),
+            ground: GroundRule::Ground,
+            hop: 0.0,
+        }
     }
 }
 
@@ -419,9 +479,10 @@ pub(super) fn start_buffered_action(
         &mut Stamina,
         &mut CharacterController,
         Option<&EquippedWeapon>,
+        Option<&RollWeight>,
     )>,
 ) {
-    for (mut action, mut intent, movement, mut stamina, mut ctrl, equipped) in &mut q {
+    for (mut action, mut intent, movement, mut stamina, mut ctrl, equipped, roll_weight) in &mut q {
         let weapon = equipped.map_or_else(WeaponClass::default, |e| e.class());
         let Some(request) = intent.buffered else { continue };
         let moving = movement.dir.length_squared() > 0.01;
@@ -431,8 +492,14 @@ pub(super) fn start_buffered_action(
         };
         // Direction: input direction if any, otherwise where the character faces.
         let facing = Vec3::new(-ctrl.facing.sin(), 0.0, -ctrl.facing.cos());
+        let is_attack = matches!(
+            kind,
+            ActionKind::LightAttack(_) | ActionKind::HeavyCharge | ActionKind::RunningAttack | ActionKind::JumpAttack
+        );
         let dir = match kind {
             ActionKind::Backstep => -facing,
+            // Locked on: attacks go at the target, whatever the stick says.
+            _ if is_attack && movement.face.is_some() => movement.face.unwrap_or(facing),
             _ if moving => movement.dir.normalize(),
             _ => facing,
         };
@@ -440,13 +507,17 @@ pub(super) fn start_buffered_action(
         if kind != ActionKind::Backstep {
             ctrl.facing = f32::atan2(-dir.x, -dir.z);
         }
-        let def = action_def(kind, weapon);
+        let mut started = ActiveAction::new(kind, dir, weapon);
+        if let (ActionKind::Roll, Some(w)) = (kind, roll_weight) {
+            started.def = w.roll_def();
+        }
+        let def = started.def;
         stamina.spend(def.stamina_cost);
         if def.hop > 0.0 {
             ctrl.velocity.y = def.hop;
             ctrl.grounded = false;
         }
-        action.start(ActiveAction::new(kind, dir, weapon));
+        action.start(started);
         intent.buffered = None;
     }
 }
@@ -511,6 +582,24 @@ mod tests {
 
     fn ctx(grounded: bool, moving: bool) -> RequestContext {
         RequestContext { grounded, moving, sprinting: false, weapon: W }
+    }
+
+    #[test]
+    fn heavier_loads_roll_slower_and_shorter() {
+        let dist = |w: RollWeight| match w.roll_def().movement {
+            ActionMovement::Scripted(MotionCurve::Dash { distance, .. }) => distance,
+            _ => panic!(),
+        };
+        let order = [RollWeight::Light, RollWeight::Medium, RollWeight::Heavy, RollWeight::Overloaded];
+        for pair in order.windows(2) {
+            let (a, b) = (pair[0].roll_def(), pair[1].roll_def());
+            assert!(a.total() < b.total() && dist(pair[0]) > dist(pair[1]), "{pair:?}");
+            let i = |d: ActionDef| d.iframes.map_or(0.0, |(s, e)| e - s);
+            assert!(i(a) >= i(b), "{pair:?}");
+        }
+        assert_eq!(RollWeight::Medium.roll_def().total(), action_def(ActionKind::Roll, W).total(), "medium = base roll");
+        assert_eq!(RollWeight::from_load(0.1), RollWeight::Light);
+        assert_eq!(RollWeight::from_load(1.2), RollWeight::Overloaded);
     }
 
     #[test]

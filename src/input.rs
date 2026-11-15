@@ -30,6 +30,9 @@ pub enum Action {
     Move,
     #[actionlike(DualAxis)]
     Look,
+    /// Gamepad right stick (rate-based look; the mouse is `Look`).
+    #[actionlike(DualAxis)]
+    LookStick,
     Jump,
     /// Tap = roll, hold = sprint.
     DodgeSprint,
@@ -60,6 +63,19 @@ pub fn default_input_map() -> InputMap<Action> {
     .with(Action::LockOn, MouseButton::Middle)
     .with_dual_axis(Action::Move, VirtualDPad::wasd())
     .with_dual_axis(Action::Look, MouseMove::default())
+    // Gamepad (Souls-like layout): left stick move, right stick camera, R1 attack (tap/hold),
+    // L1 block, B/Circle roll/sprint, A/Cross jump, X/Square drink, Y/Triangle interact,
+    // R3 lock-on, Start inventory.
+    .with_dual_axis(Action::Move, GamepadStick::LEFT)
+    .with_dual_axis(Action::LookStick, GamepadStick::RIGHT)
+    .with(Action::Attack, GamepadButton::RightTrigger)
+    .with(Action::Block, GamepadButton::LeftTrigger)
+    .with(Action::DodgeSprint, GamepadButton::East)
+    .with(Action::Jump, GamepadButton::South)
+    .with(Action::DrinkAle, GamepadButton::West)
+    .with(Action::Interact, GamepadButton::North)
+    .with(Action::LockOn, GamepadButton::RightThumb)
+    .with(Action::Inventory, GamepadButton::Start)
 }
 
 /// True while a menu (the inventory) has the input: the character gets no movement or actions,

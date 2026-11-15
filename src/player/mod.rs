@@ -5,6 +5,8 @@
 use bevy::prelude::*;
 
 use crate::character::character_bundle;
+use crate::combat::{Hurtbox, Team};
+use crate::lockon::LockOn;
 use crate::healing::HealingAle;
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
@@ -47,7 +49,7 @@ fn spawn_player(
         .id();
     let rig = spawn_humanoid(&mut commands, &mut meshes, &mut materials, player, &spec, PLAYER_HALF_HEIGHT);
 
-    commands.entity(player).insert((spec, rig, HumanoidAnimator::default()));
+    commands.entity(player).insert((spec, rig, HumanoidAnimator::default(), Hurtbox, Team::Player, LockOn::default()));
 
     // Starting gear: Longsword in the right hand and the Healing Ale in the quick slot; a shield,
     // an axe and a hood in the bag. Equipment changes swap the weapon model (see `items`).
