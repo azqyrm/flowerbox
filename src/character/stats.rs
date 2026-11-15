@@ -60,6 +60,10 @@ impl Stamina {
     }
 }
 
+/// Players only: seconds during which further damage is ignored after a hit (`HIT_IMMUNITY`).
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct HitImmunity(pub f32);
+
 /// Fraction of incoming damage this character shrugs off (armour). Optional.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct DamageAbsorption(pub f32);
@@ -101,12 +105,17 @@ pub fn apply_damage(
         Has<Invulnerable>,
         Option<&DamageAbsorption>,
         Option<(&mut Guard, &mut Stamina, &CharacterController, &Transform)>,
+        Option<&mut HitImmunity>,
     ), Without<super::Remote>>,
 ) {
     for msg in messages.read() {
-        let Ok((mut health, action, invulnerable, absorption, guard)) = q.get_mut(msg.target) else { continue };
+        let Ok((mut health, action, invulnerable, absorption, guard, immunity)) = q.get_mut(msg.target) else { continue };
         if invulnerable || health.is_dead() {
             info!("damage {} ignored (invulnerable={invulnerable})", msg.amount);
+            continue;
+        }
+        if immunity.as_ref().is_some_and(|i| i.0 > 0.0) {
+            info!("damage {} ignored (just hit)", msg.amount);
             continue;
         }
         let mut amount = msg.amount;
@@ -140,6 +149,9 @@ pub fn apply_damage(
         }
         let amount = if amount.is_finite() { amount.round() } else { amount };
         health.current = (health.current - amount).max(0.0);
+        if let Some(mut i) = immunity {
+            i.0 = HIT_IMMUNITY;
+        }
         let killed = health.is_dead();
         if let Some(mut action) = action
             && (killed || stagger)
@@ -147,6 +159,14 @@ pub fn apply_damage(
             action.force(if killed { ActionKind::Dead } else { ActionKind::Hurt }, Vec3::ZERO);
         }
         taken.write(DamageTaken { target: msg.target, amount, from: msg.from, killed });
+    }
+}
+
+pub(super) fn tick_hit_immunity(time: Res<Time>, mut q: Query<&mut HitImmunity>) {
+    for mut i in &mut q {
+        if i.0 > 0.0 {
+            i.0 = (i.0 - time.delta_secs()).max(0.0);
+        }
     }
 }
 

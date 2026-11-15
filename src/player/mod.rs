@@ -7,6 +7,8 @@ use bevy::prelude::*;
 use crate::character::character_bundle;
 use crate::combat::{Hurtbox, Team};
 use crate::lockon::LockOn;
+use crate::pvp::Pvp;
+use crate::character::stats::HitImmunity;
 use crate::healing::HealingAle;
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
@@ -27,8 +29,10 @@ impl Plugin for PlayerPlugin {
 #[derive(Component)]
 pub struct Player;
 
-/// The bag at the start; the first two (Longsword, Healing Ale) start equipped.
-const STARTING_ITEMS: [ItemId; 5] = [ItemId::Longsword, ItemId::HealingAle, ItemId::WoodenShield, ItemId::RustedAxe, ItemId::LeatherHood];
+/// The bag at the start; the first two (Longsword, Healing Ale) start equipped. The Poppy and
+/// the Camomile switch PvP on and off (`crate::pvp`).
+const STARTING_ITEMS: [ItemId; 7] =
+    [ItemId::Longsword, ItemId::HealingAle, ItemId::WoodenShield, ItemId::RustedAxe, ItemId::LeatherHood, ItemId::Poppy, ItemId::Camomile];
 
 fn spawn_player(
     mut commands: Commands,
@@ -49,11 +53,11 @@ fn spawn_player(
         .id();
     let rig = spawn_humanoid(&mut commands, &mut meshes, &mut materials, player, &spec, PLAYER_HALF_HEIGHT);
 
-    commands.entity(player).insert((spec, rig, HumanoidAnimator::default(), Hurtbox, Team::Player, LockOn::default()));
+    commands.entity(player).insert((spec, rig, HumanoidAnimator::default(), Hurtbox, Team::Player, LockOn::default(), Pvp(false), HitImmunity::default()));
 
     // Starting gear: Longsword in the right hand and the Healing Ale in the quick slot; a shield,
     // an axe and a hood in the bag. Equipment changes swap the weapon model (see `items`).
-    let inventory = Inventory { items: STARTING_ITEMS.to_vec() };
+    let inventory = Inventory::from_items(&STARTING_ITEMS);
     let mut equipment = Equipment::default();
     equipment.equip(&inventory, 0);
     equipment.equip(&inventory, 1);

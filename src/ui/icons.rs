@@ -103,6 +103,14 @@ pub fn spawn_icon(commands: &mut Commands, parent: Entity, icon: ItemIcon, scale
                 .id();
             block(commands, ring, Node { position_type: PositionType::Absolute, top: s(-11.0), width: s(10.0), height: s(10.0), border_radius: BorderRadius::MAX, ..default() }, Color::srgb(0.35, 0.25, 0.12));
         }
+        ItemIcon::Poppy | ItemIcon::Camomile => {
+            let (petal, centre) = if icon == ItemIcon::Poppy {
+                (Color::srgb(0.85, 0.1, 0.08), Color::srgb(0.08, 0.06, 0.05))
+            } else {
+                (Color::srgb(0.95, 0.94, 0.88), Color::srgb(0.95, 0.75, 0.15))
+            };
+            flower(commands, root, s(1.0), petal, centre, if icon == ItemIcon::Poppy { 4 } else { 9 });
+        }
         ItemIcon::Tankard => {
             let mug = commands.spawn((Node { width: s(26.0), height: s(30.0), ..default() }, ChildOf(root))).id();
             commands.spawn((
@@ -123,4 +131,88 @@ pub fn spawn_icon(commands: &mut Commands, parent: Entity, icon: ItemIcon, scale
         }
     }
     root
+}
+
+/// A flower seen from above: `petals` round petals around a centre, with a green stem below.
+fn flower(commands: &mut Commands, root: Entity, unit: Val, petal: Color, centre: Color, petals: usize) {
+    let u = match unit {
+        Val::Px(v) => v,
+        _ => 1.0,
+    };
+    let px_ = |v: f32| Val::Px(v * u);
+    commands.spawn((
+        Node { position_type: PositionType::Absolute, left: px_(27.0), top: px_(30.0), width: px_(3.0), height: px_(22.0), ..default() },
+        BackgroundColor(Color::srgb(0.2, 0.42, 0.15)),
+        ChildOf(root),
+    ));
+    let size = if petals <= 5 { 17.0 } else { 11.0 };
+    let ring = if petals <= 5 { 8.0 } else { 10.0 };
+    for i in 0..petals {
+        let a = i as f32 / petals as f32 * std::f32::consts::TAU;
+        let (x, y) = (28.0 + a.cos() * ring - size * 0.5, 22.0 + a.sin() * ring - size * 0.5);
+        commands.spawn((
+            Node { position_type: PositionType::Absolute, left: px_(x), top: px_(y), width: px_(size), height: px_(size), border_radius: BorderRadius::MAX, ..default() },
+            BackgroundColor(petal),
+            BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+            ChildOf(root),
+        ));
+    }
+    commands.spawn((
+        Node { position_type: PositionType::Absolute, left: px_(23.0), top: px_(17.0), width: px_(10.0), height: px_(10.0), border_radius: BorderRadius::MAX, ..default() },
+        BackgroundColor(centre),
+        ChildOf(root),
+    ));
+}
+
+/// Icons for notifications: an item, or one of the world events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeIcon {
+    Item(ItemIcon),
+    /// The sunflower was revived.
+    Sunflower,
+    Joined,
+    Left,
+    /// Somebody was composted.
+    Died,
+}
+
+/// Spawns a notification icon (same ~56 px box at scale 1); returns its root.
+pub fn spawn_notice_icon(commands: &mut Commands, parent: Entity, icon: NoticeIcon, scale: f32) -> Entity {
+    let s = |v: f32| px(v * scale);
+    match icon {
+        NoticeIcon::Item(item) => spawn_icon(commands, parent, item, scale),
+        NoticeIcon::Sunflower => {
+            let root = commands.spawn((Node { width: s(56.0), height: s(56.0), ..default() }, ChildOf(parent))).id();
+            flower(commands, root, s(1.0), Color::srgb(1.0, 0.78, 0.1), Color::srgb(0.32, 0.18, 0.06), 10);
+            root
+        }
+        NoticeIcon::Joined | NoticeIcon::Left | NoticeIcon::Died => {
+            let (fill, mark) = match icon {
+                NoticeIcon::Joined => (Color::srgb(0.25, 0.55, 0.25), "+"),
+                NoticeIcon::Left => (Color::srgb(0.4, 0.4, 0.42), "-"),
+                _ => (Color::srgb(0.32, 0.2, 0.1), "x"),
+            };
+            let root = commands
+                .spawn((Node { width: s(56.0), height: s(56.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, ChildOf(parent)))
+                .id();
+            let disc = commands
+                .spawn((
+                    Node {
+                        width: s(34.0),
+                        height: s(34.0),
+                        border: UiRect::all(s(2.5)),
+                        border_radius: BorderRadius::MAX,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(fill),
+                    BorderColor::all(Color::srgb(0.05, 0.04, 0.03)),
+                    ChildOf(root),
+                ))
+                .id();
+            commands.spawn((Text::new(mark), TextFont::from_font_size(24.0 * scale), TextColor(Color::srgb(0.95, 0.93, 0.88)), ChildOf(disc)));
+            root
+        }
+    }
 }

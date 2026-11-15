@@ -5,7 +5,7 @@
 //! - Debug builds only: **H** / **J** = take 15 damage from the front / from behind; **1–4** = request Roll (backstep when standing still),
 //!   Light (jump attack when airborne, running attack when sprinting), Heavy, Drink;
 //!   **K** = die (tests YOU DIED and the Hearth respawn);
-//!   **F6** = equip the next weapon in the bag.
+//!   **F6** = equip the next weapon in the bag; **F7** = sample notifications.
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
 //!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120), or `FLOWERBOX_SHOT_TIME=secs`
 //!   captures at a game time instead. `FLOWERBOX_OVERLAY=1` shows the overlay at start.
@@ -21,6 +21,8 @@
 //!   kill, world reset (see `enemy_script`). The only autopilot with enemies in the arena.
 //! - `FLOWERBOX_AUTOPILOT=net` → for two instances (`--host` / `--join <code>`): walk, attack, walk
 //!   back (see `net_movement`), with the Hollow in the arena.
+//! - `FLOWERBOX_AUTOPILOT=pvp` → for two instances: both eat a Poppy, the guest attacks the host
+//!   (damage), eats a Camomile, attacks again (no damage); the host dies (PvP off, Poppy back).
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 
@@ -36,6 +38,9 @@ use crate::character::guard::Guard;
 use crate::combat::{Dummy, blade_world};
 use crate::healing::HealingAle;
 use crate::items::ItemId;
+use crate::input::GameplayBlocked;
+use crate::ui::icons::NoticeIcon;
+use crate::ui::notifications::Notify;
 use crate::enemy::{Enemy, HollowAi};
 use crate::character::MoveIntent;
 use crate::hearth::WorldReset;
@@ -91,8 +96,16 @@ impl Plugin for DebugPlugin {
                 .init_resource::<EnemyScript>()
                 .add_systems(Update, (enemy_script, log_ale));
             }
+            Ok("pvp") => {
+                app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: None })
+                    .add_systems(Update, (pvp_script, log_ale));
+            }
             Ok("netfight") => {
-                app.insert_resource(Autopilot { movement: Some(netfight_movement), attack_button: Some(netfight_attack_button), guard_button: None });
+                app.insert_resource(Autopilot { movement: Some(netfight_movement), attack_button: Some(netfight_attack_button), guard_button: None })
+                    .add_systems(Update, netfight_script);
+            }
+            Ok("notify") => {
+                app.add_systems(Update, notify_script);
             }
             Ok("net") => {
                 app.insert_resource(Autopilot { movement: Some(net_movement), attack_button: Some(net_attack_button), guard_button: None });
@@ -310,9 +323,17 @@ fn debug_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut damage: MessageWriter<DamageMessage>,
     mut equip: MessageWriter<EquipRequest>,
+    mut notify: MessageWriter<Notify>,
+    blocked: Res<GameplayBlocked>,
     mut player: Query<(Entity, &mut ActionIntent, &Inventory, &Equipment, &Transform, &CharacterController), With<Player>>,
 ) {
+    if blocked.0 {
+        return; // a menu has the keyboard
+    }
     let Ok((entity, mut intent, inventory, equipment, tf, ctrl)) = player.single_mut() else { return };
+    if keys.just_pressed(KeyCode::F7) {
+        sample_notifications(&mut notify);
+    }
     if keys.just_pressed(KeyCode::F6) {
         // Next weapon in the bag after the one in hand.
         let current = equipment.get(EquipSlot::RightHand);
@@ -736,24 +757,32 @@ struct EnemyScript {
     reset_sent: bool,
 }
 
-/// A Hollow fight. 0.3 s: the Hollow is moved 4 m in front of the player (its new home) and the
-/// shield equipped → it attacks; the player just takes the first swings → 3.0 lock on → from
+/// A Hollow fight. 0.1 s: the player steps into the spawn area (the Hollow rises), 1.0 s: back at
+/// the start, the Hollow is moved 4 m in front of the player (its new home) and the shield equipped → it attacks; the player just takes the first swings → 3.0 lock on → from
 /// 5.0 the player raises the shield timed to the Hollow's swings (parry window) → "parried",
 /// "attacker stunned" → light attack: "RIPOSTE" (50) → more light attacks until "a Hollow falls"
-/// → lock-on lost when it dies → 5 s later a WorldReset: "enemies reset".
+/// → lock-on lost when it dies → 5 s later a WorldReset: "enemies reset (spawn points armed)": the
+/// corpse goes, and a new Hollow only rises when someone comes near again.
 #[allow(clippy::type_complexity)]
 fn enemy_script(
     time: Res<Time>,
     mut state: ResMut<EnemyScript>,
     mut equip: MessageWriter<EquipRequest>,
     mut reset: MessageWriter<WorldReset>,
-    mut player: Query<(Entity, &Transform, &CharacterAction, &mut ActionIntent, &mut LockOn), With<Player>>,
+    mut player: Query<(Entity, &mut Transform, &CharacterAction, &mut ActionIntent, &mut LockOn), With<Player>>,
     mut hollows: Query<(Entity, &mut Enemy, &mut Transform, &CharacterAction, &Health, &HollowAi, &ActionIntent, &MoveIntent), Without<Player>>,
 ) {
     use std::sync::atomic::Ordering::Relaxed;
-    let Ok((pe, ptf, paction, mut intent, mut lock)) = player.single_mut() else { return };
-    let Ok((he, mut enemy, mut htf, haction, hhp, ai, hintent, hmove)) = hollows.single_mut() else { return };
+    let Ok((pe, mut ptf, paction, mut intent, mut lock)) = player.single_mut() else { return };
     let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    // The Hollow only rises when a player enters its spawn area: step in, then back to the start.
+    if crossed(t, dt, 0.1) {
+        ptf.translation = Vec3::new(0.0, ptf.translation.y, -2.0);
+    }
+    if crossed(t, dt, 1.0) {
+        ptf.translation = Vec3::new(0.0, ptf.translation.y, 8.0);
+    }
+    let Ok((he, mut enemy, mut htf, haction, hhp, ai, hintent, hmove)) = hollows.single_mut() else { return };
     if (t * 2.0).floor() != ((t - dt) * 2.0).floor() {
         let dist = (htf.translation - ptf.translation).with_y(0.0).length();
         info!(
@@ -765,7 +794,7 @@ fn enemy_script(
             hhp.current
         );
     }
-    if crossed(t, dt, 0.3) {
+    if crossed(t, dt, 1.0) {
         htf.translation = Vec3::new(0.0, htf.translation.y, 4.0);
         enemy.home = htf.translation.with_y(0.0);
         equip.write(EquipRequest { character: pe, index: 2, equip: true });
@@ -837,17 +866,106 @@ fn net_attack_button(t: f32, dt: f32) -> (bool, bool, bool) {
     (pressed, just_pressed, just_released)
 }
 
-/// Guest variant: walk toward the Hollow's corner (4–7.5 s) and keep swinging from 8 s on.
+/// Guest variant: walk toward the Hollow's corner (4–7.5 s; it rises when the guest gets close)
+/// and swing from 8 to 12 s.
 fn netfight_movement(t: f32, _dt: f32) -> (Vec3, bool, bool) {
     let dir = if (4.0..7.5).contains(&t) { Vec3::new(-0.35, 0.0, -1.0).normalize() } else { Vec3::ZERO };
     (dir, false, false)
 }
 
 fn netfight_attack_button(t: f32, _dt: f32) -> (bool, bool, bool) {
-    if t < 8.0 {
+    if !(8.0..12.0).contains(&t) {
         return (false, false, false);
     }
     let phase = (t - 8.0) % 0.9;
     let down = phase < 0.08;
     (down, down && phase < 0.02, !down && phase < 0.1)
+}
+
+// ── Notifications (F7 / FLOWERBOX_AUTOPILOT=notify) ─────────────────────
+
+fn sample_notifications(notify: &mut MessageWriter<Notify>) {
+    use crate::items::ItemIcon;
+    for n in [
+        Notify::new(NoticeIcon::Joined, "Guest 1 joined"),
+        Notify::new(NoticeIcon::Item(ItemIcon::RoundShield), "Guest 1 picked up Studded Buckler"),
+        Notify::new(NoticeIcon::Sunflower, "Guest 1 vigorated the Sun"),
+        Notify::new(NoticeIcon::Item(ItemIcon::Poppy), "Guest 1 ate a Poppy: PvP on"),
+    ] {
+        notify.write(n);
+    }
+}
+
+/// Four notifications in quick succession (0.5–1.1 s), for the stack screenshot (~1.5 s).
+fn notify_script(time: Res<Time>, mut notify: MessageWriter<Notify>) {
+    use crate::items::ItemIcon;
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let list = [
+        (0.5, Notify::new(NoticeIcon::Joined, "Guest 1 joined")),
+        (0.7, Notify::new(NoticeIcon::Item(ItemIcon::Buckler), "Guest 1 picked up Studded Buckler")),
+        (0.9, Notify::new(NoticeIcon::Sunflower, "Guest 1 vigorated the Sun")),
+        (1.1, Notify::new(NoticeIcon::Item(ItemIcon::Poppy), "Guest 1 ate a Poppy: PvP on")),
+    ];
+    for (at, n) in list {
+        if crossed(t, dt, at) {
+            notify.write(n);
+        }
+    }
+}
+
+/// Guest variant, after the fight: 12 s stand at the Rusted Shortsword and take it (12.5 s), 14 s
+/// stand at the sunflower and rest (14.5 s): the host should log/notify both.
+fn netfight_script(time: Res<Time>, mut player: Query<(&mut Transform, &mut CharacterController, &mut PlayerInput), With<Player>>) {
+    let Ok((mut tf, mut ctrl, mut input)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    for (at, x, z) in [(12.0, -7.0, -5.4), (14.0, 0.0, 10.3)] {
+        if crossed(t, dt, at) {
+            tf.translation = Vec3::new(x, tf.translation.y, z);
+            ctrl.velocity = Vec3::ZERO;
+            ctrl.facing = 0.0;
+        }
+    }
+    if [12.4, 12.8, 13.2, 13.6, 14.5].iter().any(|&at| crossed(t, dt, at)) {
+        info!("autopilot: press E");
+        input.interact = true;
+    }
+}
+
+// ── PvP autopilot (FLOWERBOX_AUTOPILOT=pvp, two instances) ─────────────
+
+/// Both: 2.5 s eat a Poppy. Guest: 4 s stand 1.6 m in front of the host, facing it; light attacks
+/// at 5.0 / 5.9 / 6.8 s (host takes damage); 8 s eat a Camomile; attacks at 10 / 10.9 s (no
+/// damage). Host: 13 s killed (PvP off), respawns with a Poppy.
+fn pvp_script(
+    time: Res<Time>,
+    session: Res<crate::net::NetSession>,
+    mut use_item: MessageWriter<crate::pvp::UseItemRequest>,
+    mut damage: MessageWriter<DamageMessage>,
+    mut player: Query<(Entity, &mut Transform, &mut CharacterController, &mut ActionIntent), With<Player>>,
+) {
+    let Ok((entity, mut tf, mut ctrl, mut intent)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let at = |s: f32| crossed(t, dt, s);
+    if at(2.5) {
+        use_item.write(crate::pvp::UseItemRequest { item: ItemId::Poppy });
+    }
+    if session.is_host() {
+        if at(13.0) {
+            info!("autopilot: lethal damage");
+            damage.write(DamageMessage { target: entity, amount: 1000.0, from: None, attacker: None });
+        }
+        return;
+    }
+    if at(4.0) {
+        tf.translation = Vec3::new(0.0, tf.translation.y, 6.4);
+        ctrl.velocity = Vec3::ZERO;
+        ctrl.facing = std::f32::consts::PI;
+    }
+    if at(8.0) {
+        use_item.write(crate::pvp::UseItemRequest { item: ItemId::Camomile });
+    }
+    if [5.0, 5.9, 6.8, 10.0, 10.9].iter().any(|&s| at(s)) {
+        info!("autopilot: attack");
+        intent.buffer(ActionRequest::LightAttack);
+    }
 }

@@ -1,12 +1,13 @@
 //! In-game HUD (bevy_ui):
 //! - top left: HP (red, with a lagging "damage taken" chunk), stamina (green), Healing Ale count
 //! - bottom left: the equipment quadrant (spells / left hand / right hand / quick item)
-//! - bottom centre: the interaction prompt (see `ui::strings`) and the "Picked up" toast
+//! - bottom centre: the interaction prompt (see `ui::strings`); pickups go to `notifications`
 //! - centre: banners and the death screen (band text, fade to black)
 
 use bevy::prelude::*;
 
-use super::icons::spawn_icon;
+use super::icons::{NoticeIcon, spawn_icon};
+use super::notifications::Notify;
 use super::{Banner, DISPLAY_FONT, strings};
 use crate::character::stats::{Health, Stamina};
 use crate::healing::HealingAle;
@@ -22,7 +23,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_bars, update_ale.after(update_hands), update_hands, update_prompt.after(InteractSystems::Hearth), update_toast, update_banner, update_death_screen));
+            .add_systems(Update, (update_bars, update_ale.after(update_hands), update_hands, update_prompt.after(InteractSystems::Hearth), notify_pickups, update_banner, update_death_screen));
     }
 }
 
@@ -33,7 +34,6 @@ const STAMINA_BAR_PX_PER_POINT: f32 = 2.8;
 const LAG_HOLD: f32 = 0.7;
 const LAG_DRAIN: f32 = 0.8;
 const BANNER_TIME: f32 = 3.4;
-const TOAST_TIME: f32 = 3.0;
 
 pub(crate) const FRAME: Color = Color::srgb(0.42, 0.36, 0.25);
 pub(super) const PANEL: Color = Color::srgba(0.03, 0.025, 0.02, 0.8);
@@ -66,14 +66,7 @@ struct WeaponName;
 /// A hand slot of the equipment quadrant; its icon follows the equipment.
 #[derive(Component)]
 struct HandSlot(EquipSlot);
-#[derive(Component)]
-struct ToastRoot {
-    t: f32,
-}
-#[derive(Component)]
-struct ToastIcon;
-#[derive(Component)]
-struct ToastText;
+
 #[derive(Component)]
 struct PromptRoot;
 #[derive(Component)]
@@ -234,32 +227,6 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
         .id();
     commands.spawn((Text::new(""), TextFont::from_font_size(20.0), TextColor(Color::srgb(0.92, 0.9, 0.84)), PromptText, ChildOf(panel)));
 
-    // ── Bottom centre, above the prompt: "Picked up: X" toast ──
-    let toast = commands
-        .spawn((
-            Name::new("HUD Toast"),
-            ToastRoot { t: TOAST_TIME },
-            Node { width: Val::Percent(100.0), bottom: Val::Percent(24.0), justify_content: JustifyContent::Center, ..absolute() },
-            Visibility::Hidden,
-        ))
-        .id();
-    let panel = commands
-        .spawn((
-            Node {
-                padding: UiRect::new(px(10.0), px(24.0), px(4.0), px(4.0)),
-                border: UiRect::vertical(px(1.0)),
-                align_items: AlignItems::Center,
-                column_gap: px(8.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
-            BorderColor::all(FRAME),
-            ChildOf(toast),
-        ))
-        .id();
-    commands.spawn((ToastIcon, Node { width: px(44.0), height: px(44.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, ChildOf(panel)));
-    commands.spawn((Text::new(""), TextFont::from_font_size(19.0), TextColor(Color::srgb(0.92, 0.9, 0.84)), ToastText, ChildOf(panel)));
-
     // ── Centre: banner ──
     let banner = commands
         .spawn((
@@ -416,28 +383,11 @@ fn update_hands(
     }
 }
 
-fn update_toast(
-    mut commands: Commands,
-    time: Res<Time<Real>>,
-    mut picked: MessageReader<ItemPickedUp>,
-    mut root: Query<(&mut ToastRoot, &mut Visibility)>,
-    icon: Query<Entity, With<ToastIcon>>,
-    mut text: Query<&mut Text, With<ToastText>>,
-) {
-    let Ok((mut toast, mut vis)) = root.single_mut() else { return };
-    if let Some(ItemPickedUp { item }) = picked.read().last() {
-        toast.t = 0.0;
-        for e in &icon {
-            commands.entity(e).despawn_children();
-            let i = spawn_icon(&mut commands, e, item.def().icon, 0.75);
-            commands.entity(i).insert(Node { width: px(42.0), height: px(42.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() });
-        }
-        for mut t in &mut text {
-            t.0 = format!("{}: {}", strings::PICKED_UP, item.def().name);
-        }
+/// Picking something up: a notification (with the item's icon).
+fn notify_pickups(mut picked: MessageReader<ItemPickedUp>, mut notify: MessageWriter<Notify>) {
+    for ItemPickedUp { item } in picked.read() {
+        notify.write(Notify::new(NoticeIcon::Item(item.def().icon), format!("{}: {}", strings::PICKED_UP, item.def().name)));
     }
-    toast.t = (toast.t + time.delta_secs()).min(TOAST_TIME);
-    vis.set_if_neq(if toast.t < TOAST_TIME { Visibility::Inherited } else { Visibility::Hidden });
 }
 
 fn update_prompt(

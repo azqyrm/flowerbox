@@ -186,6 +186,8 @@ pub const CAM_STICK_SPEED: f32 = 3.0;
 // ── Enemies (the Hollow, see enemy/mod.rs) ───────────────────────────────
 /// Where Hollows stand (floor x, z): across the arena from the player's start, past the dummy.
 pub const HOLLOW_SPAWNS: [(f32, f32); 1] = [(-4.0, -10.0)];
+/// A Hollow spawns when any player comes this close to its spawn point.
+pub const HOLLOW_SPAWN_RADIUS: f32 = 12.0;
 pub const HOLLOW_HP: f32 = 70.0;
 pub const HOLLOW_STAMINA: f32 = 90.0;
 /// Notices the player within this distance; gives up beyond `HOLLOW_LEASH` from home.
@@ -201,6 +203,16 @@ pub const HOLLOW_HEAVY_CHANCE: f32 = 0.25;
 pub const HOLLOW_RECOVER_TIME: (f32, f32) = (1.0, 2.0);
 /// A dead Hollow lies there this long before vanishing.
 pub const CORPSE_TIME: f32 = 4.0;
+
+// ── Consumables and PvP (see pvp.rs) ────────────────────────────────────
+/// Eating a Poppy / Camomile: hand to mouth, the effect lands at the start of the active phase.
+pub const USE_ITEM_STARTUP: f32 = 0.45;
+pub const USE_ITEM_ACTIVE: f32 = 0.2;
+pub const USE_ITEM_RECOVERY: f32 = 0.45;
+/// After taking a hit, players ignore further damage this long (two hits landing in the same
+/// instant — two attackers, bunched network messages — don't stack). Souls games have no real
+/// post-hit invulnerability; keep this tiny.
+pub const HIT_IMMUNITY: f32 = 0.1;
 
 // ── Items ────────────────────────────────────────────────────────────────
 /// How close (m) the player must be to pick an item up.

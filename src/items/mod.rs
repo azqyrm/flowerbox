@@ -40,11 +40,13 @@ pub enum ItemId {
     LeatherHood,
     SunseedRing,
     HealingAle,
+    Poppy,
+    Camomile,
 }
 
 impl ItemId {
     #[allow(dead_code)] // tests
-    pub const ALL: [ItemId; 8] = [
+    pub const ALL: [ItemId; 10] = [
         ItemId::Longsword,
         ItemId::RustedShortsword,
         ItemId::RustedAxe,
@@ -53,6 +55,8 @@ impl ItemId {
         ItemId::LeatherHood,
         ItemId::SunseedRing,
         ItemId::HealingAle,
+        ItemId::Poppy,
+        ItemId::Camomile,
     ];
 
     pub fn def(self) -> &'static ItemDef {
@@ -65,6 +69,8 @@ impl ItemId {
             ItemId::LeatherHood => &LEATHER_HOOD,
             ItemId::SunseedRing => &SUNSEED_RING,
             ItemId::HealingAle => &HEALING_ALE,
+            ItemId::Poppy => &POPPY,
+            ItemId::Camomile => &CAMOMILE,
         }
     }
 }
@@ -119,6 +125,8 @@ pub enum ItemIcon {
     Hood,
     Ring,
     Tankard,
+    Poppy,
+    Camomile,
 }
 
 /// Primitive model attached to a bone while the item is equipped (shields, armour).
@@ -144,6 +152,17 @@ pub struct ItemDef {
     pub max_hp_bonus: f32,
     pub weapon: Option<&'static WeaponDef>,
     pub model: Option<ItemModel>,
+    /// What using (eating) it does; such items stack and are used from the inventory.
+    pub effect: Option<ItemEffect>,
+}
+
+/// Effect of a usable consumable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemEffect {
+    /// Opt in to fighting other players.
+    PvpOn,
+    /// Opt out again.
+    PvpOff,
 }
 
 impl ItemDef {
@@ -159,6 +178,7 @@ impl ItemDef {
             max_hp_bonus: 0.0,
             weapon: None,
             model: None,
+            effect: None,
         }
     }
 }
@@ -248,6 +268,26 @@ static HEALING_ALE: ItemDef = ItemDef::base(
     ItemIcon::Tankard,
     "Thick, dark ale that knits wounds. Refilled when resting by the sunflower. Always ready in the quick-item slot.",
 );
+
+static POPPY: ItemDef = ItemDef {
+    effect: Some(ItemEffect::PvpOn),
+    ..ItemDef::base(
+        "Poppy",
+        ItemKind::Consumable,
+        ItemIcon::Poppy,
+        "A blood-red poppy. Eating it stirs up a reckless anger: other players who ate one can hurt you, and you them. Fades when you are composted.",
+    )
+};
+
+static CAMOMILE: ItemDef = ItemDef {
+    effect: Some(ItemEffect::PvpOff),
+    ..ItemDef::base(
+        "Camomile",
+        ItemKind::Consumable,
+        ItemIcon::Camomile,
+        "A little white camomile flower. Chewing it calms the Poppy's anger: other players can't hurt you any more.",
+    )
+};
 
 #[cfg(test)]
 mod tests {

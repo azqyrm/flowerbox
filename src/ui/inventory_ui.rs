@@ -25,6 +25,7 @@ use crate::input::{Action, GameplayBlocked, set_grab, toggle_cursor};
 use crate::items::inventory::{EquipRequest, EquipSlot, EquipStats, Equipment, Inventory};
 use crate::items::{ItemId, ItemKind};
 use crate::player::Player;
+use crate::pvp::UseItemRequest;
 
 pub struct InventoryUiPlugin;
 
@@ -106,6 +107,11 @@ pub fn visible(inventory: &Inventory, filter: Filter) -> Vec<usize> {
 }
 
 /// Equip if not worn, unequip if worn (and removable).
+/// Consumables are used, not equipped: the Healing Ale (drink) and the stacking ones (eat).
+fn usable(item: ItemId) -> bool {
+    item == ItemId::HealingAle || item.def().effect.is_some()
+}
+
 fn toggle_request(character: Entity, equipment: &Equipment, index: usize) -> Option<EquipRequest> {
     match equipment.slot_of(index) {
         None => Some(EquipRequest { character, index, equip: true }),
@@ -164,6 +170,7 @@ fn menu_keys(
     pads: Query<&Gamepad>,
     mut menu: ResMut<InventoryMenu>,
     mut equip: MessageWriter<EquipRequest>,
+    mut use_item: MessageWriter<UseItemRequest>,
     player: Query<(Entity, &Inventory, &Equipment), With<Player>>,
 ) {
     if !menu.open {
@@ -201,7 +208,10 @@ fn menu_keys(
     }
     let Some(&index) = list.get(menu.cursor) else { return };
     if pressed(&[Enter, NumpadEnter, Space, KeyF]) || pad(G::South) {
-        if let Some(req) = toggle_request(entity, equipment, index) {
+        let item = inventory.items[index];
+        if usable(item) {
+            use_item.write(UseItemRequest { item });
+        } else if let Some(req) = toggle_request(entity, equipment, index) {
             equip.write(req);
         }
     } else if (pressed(&[Backspace, KeyX]) || pad(G::West)) && equipment.can_unequip(index) {
@@ -386,14 +396,18 @@ fn grid_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, filter: Filte
                 move |click: On<PointerClick>,
                       mut menu: ResMut<InventoryMenu>,
                       mut equip: MessageWriter<EquipRequest>,
+                      mut use_item: MessageWriter<UseItemRequest>,
                       player: Query<&Equipment, With<Player>>| {
                     menu.cursor = pos;
                     menu.dirty = true;
-                    if click.count >= 2
-                        && let Ok(equipment) = player.single()
-                        && let Some(req) = toggle_request(character, equipment, index)
-                    {
-                        equip.write(req);
+                    if click.count >= 2 {
+                        if usable(item) {
+                            use_item.write(UseItemRequest { item });
+                        } else if let Ok(equipment) = player.single()
+                            && let Some(req) = toggle_request(character, equipment, index)
+                        {
+                            equip.write(req);
+                        }
                     }
                 },
             )
@@ -408,13 +422,18 @@ fn grid_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, filter: Filte
                 .id();
             text(commands, badge, "E", 13.0, GOLD_TEXT);
         }
-        if item == ItemId::HealingAle
-            && let Some(ale) = ctx.ale
-        {
-            let count = commands
+        let count = if item == ItemId::HealingAle {
+            ctx.ale.map(|a| a.charges)
+        } else if item.def().effect.is_some() {
+            Some(ctx.inventory.count(item))
+        } else {
+            None
+        };
+        if let Some(n) = count {
+            let badge = commands
                 .spawn((Node { position_type: PositionType::Absolute, right: px(4.0), bottom: px(1.0), ..default() }, ChildOf(cell)))
                 .id();
-            text(commands, count, ale.charges.to_string(), 14.0, if ale.charges == 0 { DIM } else { TEXT });
+            text(commands, badge, n.to_string(), 14.0, if n == 0 { DIM } else { TEXT });
         }
     }
 }
@@ -473,12 +492,29 @@ fn details_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, selected: 
             line(commands, "Charges", format!("{} / {}", ale.charges, ale.max));
             line(commands, "Heals", format!("{:.0}% of max HP", crate::tuning::ALE_HEAL_FRACTION * 100.0));
         }
+        if def.effect.is_some() {
+            line(commands, "Owned", ctx.inventory.count(item).to_string());
+        }
         if def.weight > 0.0 {
             line(commands, "Weight", format!("{:.1}", def.weight));
         }
 
-        // Equip / Unequip button and the preview of that change.
-        let request = toggle_request(ctx.entity, ctx.equipment, index);
+        // Use button (consumables), or Equip / Unequip and the preview of that change.
+        if usable(item) {
+            let button = commands
+                .spawn((
+                    Node { padding: UiRect::axes(px(14.0), px(6.0)), border: UiRect::all(px(1.0)), border_radius: BorderRadius::all(px(4.0)), align_self: AlignSelf::FlexStart, ..default() },
+                    BackgroundColor(SELECTED_BG),
+                    BorderColor::all(GOLD_TEXT),
+                    ChildOf(col),
+                ))
+                .observe(move |_: On<PointerClick>, mut use_item: MessageWriter<UseItemRequest>| {
+                    use_item.write(UseItemRequest { item });
+                })
+                .id();
+            text(commands, button, if item == ItemId::HealingAle { "Drink  [Enter]" } else { "Eat  [Enter]" }, 15.0, GOLD_TEXT);
+        }
+        let request = if usable(item) { None } else { toggle_request(ctx.entity, ctx.equipment, index) };
         if let Some(req) = request {
             let mut next = ctx.equipment.clone();
             if req.equip {
@@ -544,6 +580,7 @@ mod tests {
     fn filters_pick_their_kinds() {
         let inv = Inventory {
             items: vec![ItemId::Longsword, ItemId::HealingAle, ItemId::WoodenShield, ItemId::RustedAxe, ItemId::LeatherHood, ItemId::SunseedRing],
+            ..default()
         };
         assert_eq!(visible(&inv, Filter::All).len(), 6);
         assert_eq!(visible(&inv, Filter::Weapons), vec![0, 3]);

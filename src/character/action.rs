@@ -27,6 +27,8 @@ pub enum ActionRequest {
     LightAttack,
     HeavyAttack,
     DrinkAle,
+    /// Eat/use a consumable from the bag (what it does: `crate::pvp`).
+    UseItem,
     /// Kneel at a Hearth (the Hearth decides when this is allowed and what resting does).
     Rest,
 }
@@ -44,6 +46,8 @@ pub enum ActionKind {
     HeavyAttack,
     JumpAttack,
     DrinkAle,
+    /// Eating a consumable (Poppy, Camomile); its effect lands at the start of the active phase.
+    UseItem,
     /// Kneeling at a Hearth; its effect lands at the start of the active phase.
     Rest,
     Hurt,
@@ -224,6 +228,17 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
                 hop: 0.0,
             }
         }
+        UseItem => ActionDef {
+            startup: USE_ITEM_STARTUP,
+            active: USE_ITEM_ACTIVE,
+            recovery: USE_ITEM_RECOVERY,
+            cancel: USE_ITEM_STARTUP + USE_ITEM_ACTIVE + USE_ITEM_RECOVERY, // committed, like drinking
+            stamina_cost: 0.0,
+            iframes: None,
+            movement: ActionMovement::Slowed(DRINK_MOVE_FACTOR),
+            ground: GroundRule::Ground,
+            hop: 0.0,
+        },
         Rest => ActionDef {
             startup: REST_STARTUP,
             active: REST_ACTIVE,
@@ -456,6 +471,7 @@ pub fn resolve_request(
         },
         ActionRequest::HeavyAttack => ActionKind::HeavyCharge,
         ActionRequest::DrinkAle => ActionKind::DrinkAle,
+        ActionRequest::UseItem => ActionKind::UseItem,
         ActionRequest::Rest => ActionKind::Rest,
     };
     let def = action_def(kind, weapon);

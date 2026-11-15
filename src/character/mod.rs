@@ -49,7 +49,7 @@ impl Plugin for CharacterPlugin {
                     (action::start_buffered_action, action::release_heavy_charge, action::tick_action, guard::update_guard)
                         .chain()
                         .in_set(CharacterSystems::Actions),
-                    stats::update_stamina.in_set(CharacterSystems::Stats),
+                    (stats::update_stamina, stats::tick_hit_immunity).in_set(CharacterSystems::Stats),
                     controller::move_character.in_set(CharacterSystems::Movement),
                 ),
             );

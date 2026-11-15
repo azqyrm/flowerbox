@@ -13,7 +13,7 @@ use crate::items::ItemId;
 use crate::weapon::WeaponClass;
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -56,6 +56,8 @@ pub struct BodyState {
     pub right_hand: Option<ItemId>,
     pub left_hand: Option<ItemId>,
     pub head: Option<ItemId>,
+    /// Opted into PvP (Poppy).
+    pub pvp: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -78,6 +80,38 @@ pub enum Reliable {
     Damage { target: NetId, amount: f32, from: [f32; 3] },
     /// Client → host: I parried `attacker` (stun it).
     Parried { attacker: NetId },
+    /// Host → new guest: the world as it is (sunflower, items on the floor).
+    World { sun_revived: bool, pickups: Vec<PickupState> },
+    /// Guest → host: I'd like to take this item.
+    RequestPickup { pickup: u32 },
+    /// Guest → host: something happened to me / I did something (the host checks and relays).
+    Report(WorldEvent),
+    /// Host → guests: something happened in the world.
+    Event(WorldEvent),
+    /// Host → guest: another player parried you (you're stunned).
+    Stun,
+}
+
+/// An item on the floor.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct PickupState {
+    pub id: u32,
+    pub item: ItemId,
+    pub pos: [f32; 2],
+}
+
+/// Things worth telling everyone (they also become notifications).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub enum WorldEvent {
+    Joined { who: NetId },
+    Left { who: NetId },
+    /// `by` revived the sunflower.
+    SunRevived { by: NetId },
+    /// `by` took pickup `pickup` (`item`).
+    PickedUp { by: NetId, pickup: u32, item: ItemId },
+    Died { who: NetId },
+    /// `who` ate `item` and switched PvP `on`/off.
+    Pvp { who: NetId, on: bool, item: ItemId },
 }
 
 pub fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
@@ -112,6 +146,7 @@ mod tests {
             right_hand: Some(ItemId::Longsword),
             left_hand: Some(ItemId::WoodenShield),
             head: None,
+            pvp: false,
         }
     }
 

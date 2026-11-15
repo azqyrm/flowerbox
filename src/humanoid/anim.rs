@@ -459,7 +459,7 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
             }
             Some((p, PoseMask::Full))
         }
-        ActionKind::DrinkAle => {
+        ActionKind::DrinkAle | ActionKind::UseItem => {
             // Left hand up to the mouth, head tilts back while swallowing.
             let up = match a.phase() {
                 ActionPhase::Startup => ease(a.elapsed / d.startup),
@@ -841,6 +841,7 @@ mod tests {
             ActionKind::HeavyAttack,
             ActionKind::JumpAttack,
             ActionKind::DrinkAle,
+            ActionKind::UseItem,
             ActionKind::Rest,
             ActionKind::Hurt,
             ActionKind::Stunned,

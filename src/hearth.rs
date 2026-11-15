@@ -31,6 +31,7 @@ pub struct HearthPlugin;
 impl Plugin for HearthPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<WorldReset>()
+            .add_message::<SunRevived>()
             .add_systems(Startup, spawn_hearth)
             .add_systems(FixedUpdate, rest_at_hearth.after(CharacterSystems::Actions).before(CharacterSystems::Stats))
             .add_systems(Update, (hearth_interaction.in_set(InteractSystems::Hearth), start_death_sequence, run_death_sequence, animate_hearth));
@@ -59,6 +60,10 @@ pub struct RespawnPoint {
     pub position: Vec3,
     pub facing: f32,
 }
+
+/// The local player just revived the sunflower (online, the host tells everyone: `net::world`).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct SunRevived;
 
 /// Something restored the world (a rest or a respawn): enemies and dummies reset.
 #[derive(Message, Debug, Clone, Copy)]
@@ -385,6 +390,7 @@ fn rest_at_hearth(
     time: Res<Time>,
     mut commands: Commands,
     mut banner: MessageWriter<Banner>,
+    mut revived: MessageWriter<SunRevived>,
     mut reset: MessageWriter<WorldReset>,
     mut hearths: Query<(&mut Hearth, &Transform), Without<CharacterController>>,
     mut resters: Query<(
@@ -429,6 +435,7 @@ fn rest_at_hearth(
         if !hearth.kindled {
             hearth.kindled = true;
             banner.write(Banner(strings::HEARTH_REKINDLED));
+            revived.write(SunRevived);
             info!("hearth kindled");
         }
         info!("rested at the hearth: HP, stamina and Healing Ale restored");

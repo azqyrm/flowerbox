@@ -15,6 +15,7 @@ mod items;
 mod lockon;
 mod net;
 mod player;
+mod pvp;
 mod tuning;
 mod ui;
 mod weapon;
@@ -47,6 +48,7 @@ fn main() {
         ))
         .add_plugins((
             enemy::EnemyPlugin,
+            pvp::PvpPlugin,
             healing::HealingPlugin,
             hearth::HearthPlugin,
             ui::UiPlugin,

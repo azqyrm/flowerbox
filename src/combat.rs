@@ -22,6 +22,7 @@ use crate::humanoid::{Bone, HumanoidRig, HumanoidSpec};
 use crate::hearth::WorldReset;
 use crate::lockon::Targetable;
 use crate::player::Player;
+use crate::pvp::Pvp;
 use crate::weapon::{EquippedWeapon, WeaponDef};
 use crate::tuning::*;
 
@@ -82,10 +83,11 @@ pub fn blade_world(
     Some((world(weapon.blade.0), world(weapon.blade.1)))
 }
 
+#[allow(clippy::type_complexity)]
 fn sword_hits(
     time: Res<Time>,
     spatial: SpatialQuery,
-    hurtboxes: Query<(Option<&Team>, Option<&CharacterAction>, Has<Remote>, Has<Player>), With<Hurtbox>>,
+    hurtboxes: Query<(Option<&Team>, Option<&CharacterAction>, Has<Remote>, Has<Player>, Option<&Pvp>), With<Hurtbox>>,
     mut damage: MessageWriter<DamageMessage>,
     mut attackers: Query<(
         Entity,
@@ -98,11 +100,12 @@ fn sword_hits(
         Option<&mut SwingHits>,
         Has<Player>,
         Has<Remote>,
+        Option<&Pvp>,
     )>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    for (entity, tf, action, spec, rig, equipped, team, hits, local_player, remote) in &mut attackers {
+    for (entity, tf, action, spec, rig, equipped, team, hits, local_player, remote, pvp) in &mut attackers {
         let weapon = equipped.def;
         let Some(mut hits) = hits else {
             commands.entity(entity).insert(SwingHits::default());
@@ -127,8 +130,14 @@ fn sword_hits(
             let Some((a, b)) = blade_world(tf, spec, rig, weapon, &sample) else { continue };
             let blade = Collider::capsule_endpoints(BLADE_HIT_RADIUS, a, b);
             for target in spatial.shape_intersections(&blade, Vec3::ZERO, Quat::IDENTITY, &filter) {
-                let Ok((target_team, target_action, target_remote, target_is_us)) = hurtboxes.get(target) else { continue };
-                if hits.hit.contains(&target) || (team.is_some() && team == target_team) {
+                let Ok((target_team, target_action, target_remote, target_is_us, target_pvp)) = hurtboxes.get(target) else { continue };
+                // Same side never hurts each other, except two players who both opted into PvP.
+                let duel = pvp.is_some_and(|p| p.0) && target_pvp.is_some_and(|p| p.0);
+                if hits.hit.contains(&target) || (team.is_some() && team == target_team && !duel) {
+                    continue;
+                }
+                // Online PvP: a hit on another player is decided on *their* machine (from our puppet).
+                if target_remote && target_team == Some(&Team::Player) {
                     continue;
                 }
                 // Online: a remote body is only hit by *our* player (the damage is forwarded to its

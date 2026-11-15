@@ -21,6 +21,7 @@ pub mod protocol;
 pub mod sync;
 pub mod transport;
 pub mod ui;
+pub mod world;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -41,7 +42,7 @@ impl Plugin for NetPlugin {
             .insert_resource(SystemClipboard(Mutex::new(arboard::Clipboard::new().ok())))
             .add_message::<NetInbox>()
             .add_systems(Startup, command_line)
-            .add_plugins((sync::SyncPlugin, ui::NetUiPlugin))
+            .add_plugins((sync::SyncPlugin, ui::NetUiPlugin, world::WorldSyncPlugin))
             .add_systems(PreUpdate, pump_events)
             .add_systems(Last, close_on_exit);
     }
@@ -94,6 +95,10 @@ impl NetSession {
 pub enum NetInbox {
     Datagram(PeerId, Datagram),
     Reliable(PeerId, Reliable),
+    /// Host: a guest was admitted with this player id.
+    GuestJoined { peer: PeerId, id: NetId },
+    /// Host: a guest left.
+    GuestLeft { id: NetId },
     /// Became a client (welcomed) or went offline: rebuild what's local vs. remote.
     RoleChanged,
 }
@@ -211,6 +216,7 @@ fn pump_events(
                     if let Some(id) = session.peers.remove(&peer) {
                         info!("player {id} left");
                         session.status = format!("A player left ({} connected).", session.peers.len());
+                        inbox.write(NetInbox::GuestLeft { id });
                     }
                 } else if session.is_client() && peer == HOST_PEER {
                     info!("disconnected from the host");
@@ -252,6 +258,7 @@ fn pump_events(
                         link.send(NetCmd::Reliable { to: Some(peer), bytes: encode(&Reliable::Welcome { your_id: id }) });
                         session.status = format!("A player joined ({} connected).", session.peers.len());
                         info!("player {id} joined (peer {peer})");
+                        inbox.write(NetInbox::GuestJoined { peer, id });
                     }
                     Reliable::Welcome { your_id } if session.role == Role::Joining => {
                         session.role = Role::Client;

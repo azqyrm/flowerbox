@@ -32,12 +32,51 @@ impl Plugin for InventoryPlugin {
 #[derive(Component, Debug, Clone, Default)]
 pub struct Inventory {
     pub items: Vec<ItemId>,
+    /// How many of each usable consumable (Poppy, Camomile) — they stack in one bag entry, which
+    /// stays (greyed out) at 0 so equipment indices never shift.
+    pub counts: std::collections::HashMap<ItemId, u32>,
 }
 
 impl Inventory {
+    /// Starting bag from a list (stacking consumables).
+    pub fn from_items(items: &[ItemId]) -> Self {
+        let mut inv = Self::default();
+        for &i in items {
+            inv.add(i);
+        }
+        inv
+    }
+
+    /// Adds an item; usable consumables stack onto their existing entry. Returns its index.
     pub fn add(&mut self, item: ItemId) -> usize {
+        if item.def().effect.is_some() {
+            *self.counts.entry(item).or_default() += 1;
+            if let Some(i) = self.items.iter().position(|i| *i == item) {
+                return i;
+            }
+        }
         self.items.push(item);
         self.items.len() - 1
+    }
+
+    /// How many of a stacking consumable are left (1 for any other item in the bag).
+    pub fn count(&self, item: ItemId) -> u32 {
+        if item.def().effect.is_some() {
+            self.counts.get(&item).copied().unwrap_or(0)
+        } else {
+            self.items.iter().filter(|i| **i == item).count() as u32
+        }
+    }
+
+    /// Uses one of a stacking consumable; false if none are left.
+    pub fn consume(&mut self, item: ItemId) -> bool {
+        match self.counts.get_mut(&item) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -120,7 +159,9 @@ impl Equipment {
             ItemKind::Armor(ArmorSlot::Hands) => EquipSlot::Hands,
             ItemKind::Armor(ArmorSlot::Legs) => EquipSlot::Legs,
             ItemKind::Ring => [EquipSlot::Ring1, EquipSlot::Ring2].into_iter().find(|s| self.get(*s).is_none()).unwrap_or(EquipSlot::Ring1),
-            ItemKind::Consumable => EquipSlot::Quick,
+            // Only the Healing Ale lives in the quick slot; other consumables are used from the bag.
+            ItemKind::Consumable if item == ItemId::HealingAle => EquipSlot::Quick,
+            ItemKind::Consumable => return None,
             ItemKind::Key => return None,
         };
         self.slots[slot.index()] = Some(index);
@@ -316,9 +357,7 @@ mod tests {
     use super::*;
 
     fn bag() -> Inventory {
-        Inventory {
-            items: vec![ItemId::Longsword, ItemId::HealingAle, ItemId::WoodenShield, ItemId::RustedAxe, ItemId::LeatherHood],
-        }
+        Inventory::from_items(&[ItemId::Longsword, ItemId::HealingAle, ItemId::WoodenShield, ItemId::RustedAxe, ItemId::LeatherHood])
     }
 
     #[test]
@@ -348,8 +387,21 @@ mod tests {
     }
 
     #[test]
+    fn consumables_stack_and_run_out() {
+        let mut inv = Inventory::from_items(&[ItemId::Longsword, ItemId::Poppy, ItemId::Camomile]);
+        assert_eq!(inv.add(ItemId::Poppy), 1, "stacks on its entry");
+        assert_eq!(inv.items.len(), 3);
+        assert_eq!(inv.count(ItemId::Poppy), 2);
+        assert!(inv.consume(ItemId::Poppy) && inv.consume(ItemId::Poppy));
+        assert!(!inv.consume(ItemId::Poppy), "none left");
+        assert_eq!(inv.items.len(), 3, "the entry stays (indices don't shift)");
+        let mut eq = Equipment::default();
+        assert_eq!(eq.equip(&inv, 1), None, "a Poppy isn't equipped, it's eaten");
+    }
+
+    #[test]
     fn rings_fill_both_slots() {
-        let inv = Inventory { items: vec![ItemId::SunseedRing, ItemId::SunseedRing, ItemId::SunseedRing] };
+        let inv = Inventory { items: vec![ItemId::SunseedRing, ItemId::SunseedRing, ItemId::SunseedRing], ..default() };
         let mut eq = Equipment::default();
         assert_eq!(eq.equip(&inv, 0), Some(EquipSlot::Ring1));
         assert_eq!(eq.equip(&inv, 1), Some(EquipSlot::Ring2));

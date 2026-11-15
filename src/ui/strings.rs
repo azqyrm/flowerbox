@@ -12,6 +12,31 @@ pub const PROMPT_REST: &str = "[E] Rest by the Sunflower";
 pub const ONLINE_TITLE: &str = "Online";
 pub const ONLINE_EXPLAINER: &str = "Play together over the internet, peer to peer. One player hosts and shares the code; \
 the other copies it and presses Join. No server or account needed.";
+/// Notifications about other players ("Guest 1 picked up Rusted Axe").
+pub fn joined(who: &str) -> String {
+    format!("{who} joined")
+}
+pub fn left(who: &str) -> String {
+    format!("{who} left")
+}
+pub fn revived_sun(who: &str) -> String {
+    format!("{who} vigorated the Sun")
+}
+pub fn picked_up_by(who: &str, item: &str) -> String {
+    format!("{who} picked up {item}")
+}
+pub fn composted(who: &str) -> String {
+    format!("{who} was composted")
+}
+/// PvP and consumables.
+pub const PVP_ON: &str = "PvP";
+pub const PVP_OFF_BY_DEATH: &str = "Composted: the Poppy's anger is gone (PvP off)";
+pub fn ate(who: &str, item: &str, pvp_on: bool) -> String {
+    format!("{who} ate a {item}: PvP {}", if pvp_on { "on" } else { "off" })
+}
+pub fn none_left(item: &str) -> String {
+    format!("No {item} left")
+}
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
 /// Toast after picking something up ("Picked up: Rusted Shortsword").
@@ -19,4 +44,4 @@ pub const PICKED_UP: &str = "Picked up";
 /// Inventory screen title and key hints.
 pub const INVENTORY_TITLE: &str = "Inventory";
 pub const INVENTORY_HINTS: &str =
-    "[Enter / A] Equip / Unequip    [Backspace / X] Unequip    [Q] [E] / L1 R1 Filter    [Arrows / D-pad] Move    [Tab / B] Close";
+    "[Enter / A] Equip / Use    [Backspace / X] Unequip    [Q] [E] / L1 R1 Filter    [Arrows / D-pad] Move    [Tab / B] Close";
