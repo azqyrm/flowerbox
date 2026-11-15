@@ -12,6 +12,7 @@
 
 pub mod action;
 pub mod controller;
+pub mod guard;
 pub mod stats;
 
 use avian3d::prelude::*;
@@ -28,6 +29,7 @@ pub struct CharacterPlugin;
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<DamageMessage>()
+            .add_message::<guard::Parried>()
             .add_message::<DamageTaken>()
             .configure_sets(
                 FixedUpdate,
@@ -44,7 +46,7 @@ impl Plugin for CharacterPlugin {
                 FixedUpdate,
                 (
                     stats::apply_damage.in_set(CharacterSystems::Damage),
-                    (action::start_buffered_action, action::release_heavy_charge, action::tick_action)
+                    (action::start_buffered_action, action::release_heavy_charge, action::tick_action, guard::update_guard)
                         .chain()
                         .in_set(CharacterSystems::Actions),
                     stats::update_stamina.in_set(CharacterSystems::Stats),
@@ -82,6 +84,8 @@ pub struct ActionIntent {
     pub buffer_left: f32,
     /// Attack still held: keeps a heavy attack charging.
     pub attack_held: bool,
+    /// Block held: raises the guard (if the character has one, see [`guard`]).
+    pub guard_held: bool,
 }
 
 impl ActionIntent {
@@ -107,6 +111,7 @@ pub fn character_bundle(transform: Transform, max_hp: f32, max_stamina: f32) -> 
         ActionIntent::default(),
         CharacterController::default(),
         CharacterAction::default(),
+        guard::Guard::default(),
         Health::new(max_hp),
         Stamina::new(max_stamina),
         transform,

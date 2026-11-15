@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use super::action::{ActionMovement, ActionPhase, CharacterAction};
 use super::MoveIntent;
+use super::guard::Guard;
 use super::stats::Stamina;
 use crate::tuning::*;
 
@@ -53,22 +54,27 @@ fn angle_diff(from: f32, to: f32) -> f32 {
     if d > std::f32::consts::PI { d - std::f32::consts::TAU } else { d }
 }
 
+#[allow(clippy::type_complexity)]
 pub(super) fn move_character(
     time: Res<Time>,
     move_and_slide: MoveAndSlide,
-    mut q: Query<(Entity, &Collider, &mut CharacterController, &mut MoveIntent, &CharacterAction, &Stamina, &mut Transform)>,
+    mut q: Query<(Entity, &Collider, &mut CharacterController, &mut MoveIntent, &CharacterAction, &Stamina, Option<&Guard>, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
-    for (entity, collider, mut ctrl, mut intent, action, stamina, mut tf) in &mut q {
+    for (entity, collider, mut ctrl, mut intent, action, stamina, guard, mut tf) in &mut q {
+        let guarding = guard.is_some_and(Guard::is_up);
         let free = action.current.is_none();
         let horizontal = Vec3::new(ctrl.velocity.x, 0.0, ctrl.velocity.z);
 
         // Horizontal velocity: from the intent, slowed, locked, or driven by the action.
         let (wish, horizontal) = match action.movement() {
             ActionMovement::Free | ActionMovement::Slowed(_) => {
-                let factor = if let ActionMovement::Slowed(f) = action.movement() { f } else { 1.0 };
+                let mut factor = if let ActionMovement::Slowed(f) = action.movement() { f } else { 1.0 };
+                if guarding {
+                    factor *= GUARD_MOVE_FACTOR;
+                }
                 let moving = intent.dir.length_squared() > 0.01;
-                ctrl.sprinting = free && intent.sprint && ctrl.grounded && stamina.can_spend() && moving;
+                ctrl.sprinting = free && !guarding && intent.sprint && ctrl.grounded && stamina.can_spend() && moving;
                 let speed = if ctrl.sprinting { SPRINT_SPEED } else { WALK_SPEED } * factor;
                 let target = if ctrl.grounded {
                     intent.dir * speed

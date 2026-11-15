@@ -4,6 +4,7 @@ use bevy::prelude::*;
 
 use super::action::{ActionKind, CharacterAction};
 use super::controller::CharacterController;
+use super::guard::{Guard, GuardOutcome, Parried};
 use crate::tuning::*;
 
 #[derive(Component, Debug, Clone)]
@@ -72,8 +73,10 @@ pub struct Invulnerable;
 pub struct DamageMessage {
     pub target: Entity,
     pub amount: f32,
-    /// Where the hit came from (attacker position), for knockback / reactions.
+    /// Where the hit came from (attacker position), for knockback / reactions and guarding.
     pub from: Option<Vec3>,
+    /// Who dealt it (a parry stuns them), if anyone.
+    pub attacker: Option<Entity>,
 }
 
 /// Damage that was actually applied (not blocked by i-frames). For hit reactions.
@@ -85,26 +88,62 @@ pub struct DamageTaken {
     pub killed: bool,
 }
 
-/// Applies damage to anything with `Health`. Players additionally flinch (Hurt) or die.
+/// Applies damage to anything with `Health`: i-frames, then the guard (parry / block / guard
+/// break, see [`super::guard`]), then armour absorption. Characters flinch (Hurt) or die.
 #[allow(clippy::type_complexity)]
 pub fn apply_damage(
     mut messages: MessageReader<DamageMessage>,
     mut taken: MessageWriter<DamageTaken>,
-    mut q: Query<(&mut Health, Option<&mut CharacterAction>, Has<Invulnerable>, Option<&DamageAbsorption>)>,
+    mut parried: MessageWriter<Parried>,
+    mut q: Query<(
+        &mut Health,
+        Option<&mut CharacterAction>,
+        Has<Invulnerable>,
+        Option<&DamageAbsorption>,
+        Option<(&mut Guard, &mut Stamina, &CharacterController, &Transform)>,
+    )>,
 ) {
     for msg in messages.read() {
-        let Ok((mut health, action, invulnerable, absorption)) = q.get_mut(msg.target) else { continue };
+        let Ok((mut health, action, invulnerable, absorption, guard)) = q.get_mut(msg.target) else { continue };
         if invulnerable || health.is_dead() {
             info!("damage {} ignored (invulnerable={invulnerable})", msg.amount);
             continue;
         }
-        let amount = match absorption {
-            Some(a) if a.0 > 0.0 => (msg.amount * (1.0 - a.0)).round(),
-            _ => msg.amount,
-        };
+        let mut amount = msg.amount;
+        let mut stagger = true;
+        if let Some((mut guard, mut stamina, ctrl, tf)) = guard {
+            let to_attacker = msg.from.map(|p| p - tf.translation);
+            match guard.outcome(ctrl.facing, to_attacker, amount, stamina.current) {
+                GuardOutcome::Unguarded => {}
+                GuardOutcome::Parried => {
+                    info!("parried {} damage", msg.amount);
+                    parried.write(Parried { defender: msg.target, attacker: msg.attacker });
+                    continue;
+                }
+                GuardOutcome::Blocked { through, stamina_cost } => {
+                    info!("blocked {} damage ({through:.0} through, {stamina_cost:.0} stamina)", msg.amount);
+                    stamina.spend(stamina_cost);
+                    amount = through;
+                    stagger = false;
+                }
+                GuardOutcome::Broken { through } => {
+                    info!("guard broken by {} damage ({through:.0} through)", msg.amount);
+                    stamina.current = 0.0;
+                    stamina.regen_delay = STAMINA_REGEN_DELAY;
+                    guard.raised_for = None;
+                    amount = through;
+                }
+            }
+        }
+        if let Some(a) = absorption.filter(|a| a.0 > 0.0) {
+            amount *= 1.0 - a.0;
+        }
+        let amount = if amount.is_finite() { amount.round() } else { amount };
         health.current = (health.current - amount).max(0.0);
         let killed = health.is_dead();
-        if let Some(mut action) = action {
+        if let Some(mut action) = action
+            && (killed || stagger)
+        {
             action.force(if killed { ActionKind::Dead } else { ActionKind::Hurt }, Vec3::ZERO);
         }
         taken.write(DamageTaken { target: msg.target, amount, from: msg.from, killed });
@@ -113,10 +152,12 @@ pub fn apply_damage(
 
 pub(super) fn update_stamina(
     time: Res<Time>,
-    mut q: Query<(&mut Stamina, &CharacterAction, &CharacterController)>,
+    mut q: Query<(&mut Stamina, &CharacterAction, &CharacterController, Option<&Guard>)>,
 ) {
     let dt = time.delta_secs();
-    for (mut stamina, action, ctrl) in &mut q {
+    for (mut stamina, action, ctrl, guard) in &mut q {
+        // Holding a guard up: stamina comes back more slowly.
+        let dt = if guard.is_some_and(Guard::is_up) { dt * GUARD_REGEN_FACTOR } else { dt };
         if ctrl.sprinting {
             stamina.current = (stamina.current - SPRINT_STAMINA_PER_SEC * dt).max(0.0);
             stamina.regen_delay = STAMINA_REGEN_DELAY;

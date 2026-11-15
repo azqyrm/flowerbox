@@ -37,6 +37,8 @@ pub enum Action {
     Attack,
     DrinkAle,
     Interact,
+    /// Hold to raise the shield (tap at the right time to parry).
+    Block,
     LockOn,
     Inventory,
     Pause,
@@ -54,6 +56,7 @@ pub fn default_input_map() -> InputMap<Action> {
         (Action::Pause, KeyCode::Escape),
     ])
     .with(Action::Attack, MouseButton::Left)
+    .with(Action::Block, MouseButton::Right)
     .with(Action::LockOn, MouseButton::Middle)
     .with_dual_axis(Action::Move, VirtualDPad::wasd())
     .with_dual_axis(Action::Look, MouseMove::default())
@@ -122,6 +125,8 @@ pub struct Autopilot {
     pub movement: Option<fn(f32, f32) -> (Vec3, bool, bool)>,
     /// Scripted attack button: (time, dt) -> (pressed, just_pressed, just_released).
     pub attack_button: Option<fn(f32, f32) -> (bool, bool, bool)>,
+    /// Scripted block button: time -> held.
+    pub guard_button: Option<fn(f32) -> bool>,
 }
 
 fn gather_player_input(
@@ -149,6 +154,7 @@ fn gather_player_input(
             input.attack = AttackTracker::default();
             input.interact = false;
             intent.attack_held = false;
+            intent.guard_held = false;
             continue;
         }
 
@@ -187,6 +193,11 @@ fn gather_player_input(
             intent.buffer(request);
         }
         intent.attack_held = attack.0 && input.attack.is_holding();
+        // Block: only while the game has the cursor (a right click on a free cursor isn't a block).
+        intent.guard_held = match autopilot.as_ref().and_then(|a| a.guard_button) {
+            Some(script) => script(t),
+            None => actions.pressed(&Action::Block) && cursor_grabbed(&cursor),
+        };
 
         if actions.just_pressed(&Action::DrinkAle) {
             intent.buffer(ActionRequest::DrinkAle);

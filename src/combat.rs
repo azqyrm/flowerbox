@@ -12,6 +12,7 @@ use std::f32::consts::FRAC_PI_2;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
+use crate::character::guard::Parried;
 use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
 use crate::character::CharacterSystems;
 use crate::character::stats::{DamageMessage, DamageTaken, Health};
@@ -31,7 +32,7 @@ impl Plugin for CombatPlugin {
             .init_resource::<CameraShake>()
             .add_systems(Startup, spawn_dummy)
             .add_systems(FixedUpdate, sword_hits.in_set(CharacterSystems::Combat))
-            .add_systems(Update, (hit_feedback, run_hitstop, dummy_react, dummy_reset, dummy_animate).chain());
+            .add_systems(Update, (hit_feedback, parry_feedback, run_hitstop, dummy_react, dummy_reset, dummy_animate).chain());
     }
 }
 
@@ -110,10 +111,19 @@ fn sword_hits(
                     hits.hit.push(target);
                     let amount = (weapon.base_damage * mult).round();
                     info!("hit {target} with {:?} for {amount}", cur.kind);
-                    damage.write(DamageMessage { target, amount, from: Some(tf.translation) });
+                    damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
                 }
             }
         }
+    }
+}
+
+/// A parry: a hard hitstop and a jolt. (Stunning the attacker comes with enemies, ROADMAP N19.)
+fn parry_feedback(mut parries: MessageReader<Parried>, mut hitstop: ResMut<Hitstop>, mut shake: ResMut<CameraShake>) {
+    for p in parries.read() {
+        info!("parry! defender {} attacker {:?}", p.defender, p.attacker);
+        hitstop.remaining = hitstop.remaining.max(HITSTOP_HEAVY * 1.5);
+        shake.trauma = (shake.trauma + SHAKE_HEAVY).min(1.0);
     }
 }
 
