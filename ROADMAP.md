@@ -41,7 +41,7 @@
 | Attack | **Left Mouse** | **Tap** (released within 0.25 s) = light attack. **Hold** (0.25 s or longer) = heavy attack, released when charged or automatically at full charge. **Tap while airborne** = jump attack (the jump attack is the airborne light attack). A heavy attack can't be done in the air. |
 | Block / parry | **Right Mouse** (hold) | Needs a shield in the left hand. Raising takes 0.3 s; the last third of the raise is the parry window. Blocks frontal hits only (±57°, `GUARD_ANGLE`; hits without a direction aren't blockable); costs stamina, breaks when stamina runs out. Slower walking, no sprint |
 | Drink Healing Ale | **R** | |
-| Interact / rest at Hearth | **E** | Resting is a state: you stay kneeling; **E again or moving** stands you up. Online the rest completes only when every player rests | |
+| Interact / rest at Hearth | **E** | Resting is a state: you stay kneeling; **E again or moving** stands you up. Online the rest completes only when every player rests |
 | Lock-on target | **Q** or Middle Mouse | Locks the target nearest the view centre (≤15 m, ±63°); the camera follows it, you face it and strafe, attacks aim at it. Again = release. Nothing to lock = camera recentres behind you |
 | Gamepad | Souls-like | Left stick move, right stick camera, **R1** attack (tap/hold), **L1** block, **B/Circle** roll/sprint, **A/Cross** jump, **X/Square** drink, **Y/Triangle** interact, **R3** lock-on, **Start** inventory (inside: D-pad, L1/R1 filter, A equip, X unequip, B close) |
 | Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
