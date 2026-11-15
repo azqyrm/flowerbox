@@ -13,7 +13,7 @@ use crate::items::ItemId;
 use crate::weapon::WeaponClass;
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -56,6 +56,8 @@ pub struct BodyState {
     pub right_hand: Option<ItemId>,
     pub left_hand: Option<ItemId>,
     pub head: Option<ItemId>,
+    /// Opted into PvP (Poppy).
+    pub pvp: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -86,6 +88,8 @@ pub enum Reliable {
     Report(WorldEvent),
     /// Host → guests: something happened in the world.
     Event(WorldEvent),
+    /// Host → guest: another player parried you (you're stunned).
+    Stun,
 }
 
 /// An item on the floor.
@@ -106,6 +110,8 @@ pub enum WorldEvent {
     /// `by` took pickup `pickup` (`item`).
     PickedUp { by: NetId, pickup: u32, item: ItemId },
     Died { who: NetId },
+    /// `who` ate `item` and switched PvP `on`/off.
+    Pvp { who: NetId, on: bool, item: ItemId },
 }
 
 pub fn encode<T: Serialize>(msg: &T) -> Vec<u8> {
@@ -140,6 +146,7 @@ mod tests {
             right_hand: Some(ItemId::Longsword),
             left_hand: Some(ItemId::WoodenShield),
             head: None,
+            pvp: false,
         }
     }
 

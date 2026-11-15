@@ -21,6 +21,8 @@
 //!   kill, world reset (see `enemy_script`). The only autopilot with enemies in the arena.
 //! - `FLOWERBOX_AUTOPILOT=net` → for two instances (`--host` / `--join <code>`): walk, attack, walk
 //!   back (see `net_movement`), with the Hollow in the arena.
+//! - `FLOWERBOX_AUTOPILOT=pvp` → for two instances: both eat a Poppy, the guest attacks the host
+//!   (damage), eats a Camomile, attacks again (no damage); the host dies (PvP off, Poppy back).
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 
@@ -93,6 +95,10 @@ impl Plugin for DebugPlugin {
                 })
                 .init_resource::<EnemyScript>()
                 .add_systems(Update, (enemy_script, log_ale));
+            }
+            Ok("pvp") => {
+                app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: None })
+                    .add_systems(Update, (pvp_script, log_ale));
             }
             Ok("netfight") => {
                 app.insert_resource(Autopilot { movement: Some(netfight_movement), attack_button: Some(netfight_attack_button), guard_button: None })
@@ -922,5 +928,44 @@ fn netfight_script(time: Res<Time>, mut player: Query<(&mut Transform, &mut Char
     if [12.4, 12.8, 13.2, 13.6, 14.5].iter().any(|&at| crossed(t, dt, at)) {
         info!("autopilot: press E");
         input.interact = true;
+    }
+}
+
+// ── PvP autopilot (FLOWERBOX_AUTOPILOT=pvp, two instances) ─────────────
+
+/// Both: 2.5 s eat a Poppy. Guest: 4 s stand 1.6 m in front of the host, facing it; light attacks
+/// at 5.0 / 5.9 / 6.8 s (host takes damage); 8 s eat a Camomile; attacks at 10 / 10.9 s (no
+/// damage). Host: 13 s killed (PvP off), respawns with a Poppy.
+fn pvp_script(
+    time: Res<Time>,
+    session: Res<crate::net::NetSession>,
+    mut use_item: MessageWriter<crate::pvp::UseItemRequest>,
+    mut damage: MessageWriter<DamageMessage>,
+    mut player: Query<(Entity, &mut Transform, &mut CharacterController, &mut ActionIntent), With<Player>>,
+) {
+    let Ok((entity, mut tf, mut ctrl, mut intent)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let at = |s: f32| crossed(t, dt, s);
+    if at(2.5) {
+        use_item.write(crate::pvp::UseItemRequest { item: ItemId::Poppy });
+    }
+    if session.is_host() {
+        if at(13.0) {
+            info!("autopilot: lethal damage");
+            damage.write(DamageMessage { target: entity, amount: 1000.0, from: None, attacker: None });
+        }
+        return;
+    }
+    if at(4.0) {
+        tf.translation = Vec3::new(0.0, tf.translation.y, 6.4);
+        ctrl.velocity = Vec3::ZERO;
+        ctrl.facing = std::f32::consts::PI;
+    }
+    if at(8.0) {
+        use_item.write(crate::pvp::UseItemRequest { item: ItemId::Camomile });
+    }
+    if [5.0, 5.9, 6.8, 10.0, 10.9].iter().any(|&s| at(s)) {
+        info!("autopilot: attack");
+        intent.buffer(ActionRequest::LightAttack);
     }
 }

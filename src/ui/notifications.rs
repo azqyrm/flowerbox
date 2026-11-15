@@ -174,7 +174,7 @@ fn animate_notifications(
 ) {
     let dt = time.delta_secs();
     let mut order: Vec<(u64, Entity)> = notices.iter().map(|(e, n, _, _)| (n.seq, e)).collect();
-    order.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    order.sort_by_key(|o| std::cmp::Reverse(o.0)); // newest first
     let s = &*settings;
     for (index, (_, entity)) in order.into_iter().enumerate() {
         let Ok((_, mut notice, mut node, mut vis)) = notices.get_mut(entity) else { continue };

@@ -18,6 +18,7 @@ use crate::hearth::{DeathSequence, Hearth, SunRevived};
 use crate::items::inventory::Inventory;
 use crate::items::pickup::{ItemPickedUp, PICKUPS, Pickup, PickupAssets, PickupAuthority, PickupRequest, PickupTaken, spawn_layout, spawn_pickup};
 use crate::player::Player;
+use crate::pvp::PvpChanged;
 use crate::ui::icons::NoticeIcon;
 use crate::ui::notifications::Notify;
 use crate::ui::strings;
@@ -51,6 +52,7 @@ fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
             Notify::new(NoticeIcon::Item(item.def().icon), strings::picked_up_by(&player_name(by), item.def().name))
         }
         WorldEvent::Died { who } => Notify::new(NoticeIcon::Died, strings::composted(&player_name(who))),
+        WorldEvent::Pvp { who, on, item } => Notify::new(NoticeIcon::Item(item.def().icon), strings::ate(&player_name(who), item.def().name, on)),
     };
     info!("world event: {}", n.text);
     notify.write(n);
@@ -141,6 +143,7 @@ fn world_inbox(
                         WorldEvent::SunRevived { by }
                     }
                     WorldEvent::Died { .. } => WorldEvent::Died { who: by },
+                    WorldEvent::Pvp { on, item, .. } => WorldEvent::Pvp { who: by, on, item },
                     _ => continue,
                 };
                 broadcast(event);
@@ -158,7 +161,11 @@ fn world_inbox(
             NetInbox::Reliable(HOST_PEER, Reliable::Event(event)) if session.role == Role::Client => {
                 let mine = |id: &NetId| *id == session.my_id;
                 match event {
-                    WorldEvent::Joined { who } | WorldEvent::Left { who } | WorldEvent::Died { who } if mine(who) => continue,
+                    WorldEvent::Joined { who } | WorldEvent::Left { who } | WorldEvent::Died { who } | WorldEvent::Pvp { who, .. }
+                        if mine(who) =>
+                    {
+                        continue
+                    }
                     WorldEvent::SunRevived { by } => {
                         for mut h in &mut hearths {
                             h.kindled = true;
@@ -196,8 +203,12 @@ fn local_events(
     mut requests: MessageReader<PickupRequest>,
     mut taken: MessageReader<PickupTaken>,
     mut revived: MessageReader<SunRevived>,
+    mut pvp: MessageReader<PvpChanged>,
     died: Query<(), (With<Player>, Added<DeathSequence>)>,
 ) {
+    // Eating a Poppy / Camomile is news; losing PvP by dying is covered by the death notice.
+    let pvp_events: Vec<WorldEvent> =
+        pvp.read().filter_map(|c| c.item.map(|item| WorldEvent::Pvp { who: session.my_id, on: c.on, item })).collect();
     let send = |to: Option<u32>, msg: Reliable| link.send(NetCmd::Reliable { to, bytes: encode(&msg) });
     let me = session.my_id;
     match session.role {
@@ -212,6 +223,9 @@ fn local_events(
             if !died.is_empty() {
                 send(None, Reliable::Event(WorldEvent::Died { who: me }));
             }
+            for e in pvp_events {
+                send(None, Reliable::Event(e));
+            }
         }
         Role::Client => {
             taken.clear();
@@ -223,6 +237,9 @@ fn local_events(
             }
             if !died.is_empty() {
                 send(Some(HOST_PEER), Reliable::Report(WorldEvent::Died { who: me }));
+            }
+            for e in pvp_events {
+                send(Some(HOST_PEER), Reliable::Report(e));
             }
         }
         _ => {

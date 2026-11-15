@@ -13,7 +13,8 @@ use bevy::transform::TransformSystems;
 use bevy::window::{CursorOptions, PrimaryWindow};
 use leafwing_input_manager::prelude::*;
 
-use crate::combat::CameraShake;
+use crate::character::controller::CharacterController;
+use crate::combat::{CameraShake, Hurtbox};
 use crate::input::{Action, GameplayBlocked, cursor_grabbed};
 use crate::lockon::{LockOn, Targetable};
 use crate::player::Player;
@@ -75,6 +76,7 @@ fn follow_camera(
     player: Single<(Entity, &Transform, &ActionState<Action>, Option<&LockOn>), (With<Player>, Without<ThirdPersonCamera>)>,
     targets: Query<(&Transform, &Targetable), (Without<Player>, Without<ThirdPersonCamera>)>,
     mut cams: Query<(&mut ThirdPersonCamera, &mut Transform)>,
+    characters: Query<(), Or<(With<CharacterController>, With<Hurtbox>)>>,
 ) {
     let (player_entity, player_tf, actions, lock) = player.into_inner();
     let dt = time.delta_secs();
@@ -113,14 +115,16 @@ fn follow_camera(
         let dir = Dir3::new(rot * Vec3::Z).unwrap_or(Dir3::Z);
 
         // Pull in when geometry is between player and camera; ease back out smoothly.
+        // Only the level pulls the camera in, not characters (other players, enemies, the dummy).
         let blocked = spatial
-            .cast_shape(
+            .cast_shape_predicate(
                 &Collider::sphere(CAM_COLLISION_RADIUS),
                 focus,
                 Quat::IDENTITY,
                 dir,
                 &ShapeCastConfig::from_max_distance(cam.distance),
                 &SpatialQueryFilter::from_excluded_entities([player_entity]),
+                &|e| !characters.contains(e),
             )
             .map(|hit| hit.distance.max(0.3));
         let target = blocked.unwrap_or(cam.distance);

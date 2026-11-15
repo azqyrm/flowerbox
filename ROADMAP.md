@@ -46,6 +46,7 @@
 | Gamepad | Souls-like | Left stick move, right stick camera, **R1** attack (tap/hold), **L1** block, **B/Circle** roll/sprint, **A/Cross** jump, **X/Square** drink, **Y/Triangle** interact, **R3** lock-on, **Start** inventory (inside: D-pad, L1/R1 filter, A equip, X unequip, B close) |
 | Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
 | Online co-op | **O** | Online panel: **H** host (code copied to the clipboard), **J** join with the code in the clipboard, **C** copy code, **L** leave. Command line: `--host`, `--join <code>` |
+| Use an item | Inventory: **Enter** / double-click on a consumable | Healing Ale = drink, Poppy = PvP on, Camomile = PvP off (short eating action) |
 | Pause menu | **Esc** | |
 
 All tuning values (timings, costs, damage) live in one `tuning.rs` constants module, or in a RON file later, so it's easy to adjust game feel.
@@ -148,11 +149,13 @@ claude_ds/
    ├─ debug.rs          # F3 overlay, debug keys, screenshots, autopilot scripts
    ├─ interact.rs       # InteractPrompt + InteractSystems order (pickups before the Hearth)
    ├─ lockon.rs         # LockOn, Targetable, pick_target, MoveIntent::face while locked
+   ├─ pvp.rs            # Pvp flag, UseItem effects (Poppy/Camomile), PvP marker + HUD, death/respawn rules
    ├─ net/              # online co-op over iroh (N21)
    │  ├─ mod.rs         # NetPlugin, NetSession (roles), join codes, host/join/leave, event pump
    │  ├─ transport.rs   # network thread: iroh endpoint on tokio, channels to Bevy
    │  ├─ protocol.rs    # BodyState, Datagram (state/snapshot), Reliable (hello/welcome/damage/parry)
-   │  ├─ sync.rs        # send states, puppets (Remote), forwarding hits/parries
+   │  ├─ sync.rs        # send states, puppets (Remote), forwarding hits/parries, parry stun routing
+   │  ├─ world.rs       # the host's world: world state for joiners, pickup/sunflower requests, events → notifications
    │  └─ ui.rs          # online panel (O) + status corner
    ├─ enemy/
    │  └─ mod.rs         # the Hollow: spawn, AI state machine (writes MoveIntent/ActionIntent), death, reset
@@ -169,6 +172,7 @@ claude_ds/
       ├─ icons.rs       # item icons drawn from UI nodes
       ├─ inventory_ui.rs # Tab/I screen: equipment, filters + grid, details, status preview
       ├─ markers.rs     # lock-on dot and enemy health bars (world → screen)
+      ├─ notifications.rs # notification feed (Notify, NotificationSettings)
       └─ strings.rs     # all player-facing wording (COMPOSTED, SUN VIGORATED, prompts)
 ```
 
@@ -292,7 +296,7 @@ Decisions (2026-11-15, from looking at how Souls games do it and at our code):
 - Enemy spawn point "tutorial Hollow" at (-4, -10), area radius 12 m.
 - Pickups and kindling go guest → host as requests; the host decides (first come, first served) and tells everyone. Late joiners get the world state (revived sunflower, taken items) on arrival.
 - Consumables stack (counts) and are used from the inventory (Enter / "Use"), with a short "eat" action (hand to mouth), so using one in a fight is a risk like drinking. Start with Poppy ×1, Camomile ×1.
-- PvP needs **both** players to have it on. The attacker's machine detects the hit, the victim's machine applies it (so the victim blocks/parries locally), routed through the host. A parried player is stunned like an enemy (riposte possible). PvP players carry a red poppy marker over their head; you see your own state next to the HP bar.
+- PvP needs **both** players to have it on. ~~The attacker's machine detects the hit~~ → changed while building: the **victim's machine** detects the hit from the attacker's puppet, exactly like enemy hits (no damage routing; the victim blocks/parries what it sees). A parry is routed via the host to the parried player's machine, which stuns it (riposte possible). PvP players carry a red poppy marker over their head; you see your own state next to the HP bar.
 - Post-hit invulnerability: Souls games don't have any (each swing hits once, combos can trap you, poise matters). We keep that, plus a **0.1 s hit immunity** for players only (`HIT_IMMUNITY`) so two hits landing in the same instant (two attackers, network bunching) don't stack unfairly.
 - The training dummy stays local to each machine (it's practice furniture).
 
@@ -302,10 +306,10 @@ Steps:
 - [x] Player names; join / leave / death notifications
 - [x] World state on the host (`net/world.rs`): revived sunflower, taken pickups, sent to joiners; kindle + pickup requests from guests; banner for the actor, notification for others
 - [x] Spawn points (world-centred, area trigger, once per world cycle); guests never spawn
-- [ ] Consumables: stack counts, "Use" from the inventory, `UseItem` action; Poppy + Camomile items and icons
-- [ ] PvP flag (replicated), marker, damage routing between players, parry stun between players, off on death, Poppy on respawn
-- [ ] Hit immunity (0.1 s, players)
-- [ ] Two-instance tests (autopilots) + screenshots; ROADMAP notes
+- [x] Consumables: stack counts, "Use" from the inventory, `UseItem` action; Poppy + Camomile items and icons
+- [x] PvP flag (replicated), marker, damage routing between players, parry stun between players, off on death, Poppy on respawn
+- [x] Hit immunity (0.1 s, players)
+- [x] Two-instance tests (autopilots) + screenshots; ROADMAP notes (N22)
 
 ### Phase 9 — Polish
 - [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested).
@@ -526,3 +530,13 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Autopilots:** `net` (walk, attack, walk back) and `netfight` (guest walks to the Hollow and keeps swinging). Two-instance recipe: host with `FLOWERBOX_NET_CODE_FILE=code.txt … --host`, then guest `… --join "$(cat code.txt)"`.
   - **Not shared yet:** guest deaths/rests (local only; the host's world doesn't reset for them), pickups, the dummy, banners. No interpolation buffer or lag compensation. Untested across two real networks/NATs (only same machine, direct and relay-started).
   - **Giving the game to a friend:** `cargo build --release`, then send `target/release/flowerbox` together with the `assets/` folder (same directory). A Windows friend needs a Windows build (build on Windows, or cross-compile with `x86_64-pc-windows-gnu`).
+- **N22 (2026-11-15) — shared world, notifications, opt-in PvP (Phase 8.6):**
+  - **Notifications** (`ui/notifications.rs`): send `Notify { icon: NoticeIcon, text }`. `NotificationSettings` (resource): `corner` (default bottom-right), `margin`, `lifetime` 3 s, `fade` 0.6 s, `slide_in` 0.35 s (from beyond the window edge), `stack_step` (10, 28) px per older notice (slight overlap), `older_alpha` 0.8, `max_shown` 5, `font_size`, `icon_scale`. No background: text with a hard shadow, icons outlined; colours (incl. shadows) faded together. F7 / `FLOWERBOX_AUTOPILOT=notify` show samples. Icons (`ui/icons.rs`): items, Sunflower, Joined (+), Left (−), Died (×), Poppy, Camomile.
+  - **World authority** (`net/world.rs`): a joining guest stashes its own world (sunflower state, taken layout items), despawns its items and receives `Reliable::World` from the host (sunflower + every item on the floor, so later drops work too); leaving restores the stash. Pickups have stable ids (`Pickup { id, item }`); E writes `PickupRequest`; `PickupAuthority` (offline/host) grants locally, a guest's request goes to the host, which answers with `WorldEvent::PickedUp` to all. The sunflower: the reviver's own game shows the banner at once (`SunRevived` message from `hearth.rs`); the host records it and broadcasts; others get a notification and their sunflower stands up. Join/leave/death/PvP events → notifications ("Host", "Guest n").
+  - **Spawn points** (`enemy/mod.rs`): `SpawnPoint { pos, radius, spawned }`; any `Team::Player` body (local or a guest's puppet) inside the radius spawns its enemy once; `WorldReset` (host rest / host death / offline rest) despawns them and re-arms. Guests never spawn (`EnemiesSuppressed`). The reported "invisible enemy" couldn't be reproduced on one machine (the guest saw the host's Hollow in every test); with this change there is exactly one enemy, owned by the host.
+  - **Consumables:** `Inventory::counts` (stacking, the entry stays at 0 so equipment indices never shift), `add/count/consume`, `Inventory::from_items`. `ItemDef::effect` (`PvpOn` / `PvpOff`). Non-Ale consumables can't be equipped; Enter / double-click / "Eat" in the inventory writes `UseItemRequest` → `UsingItem` + `ActionKind::UseItem` (drink pose, `USE_ITEM_*`), effect at the start of the active phase (`pvp::apply_item_use`).
+  - **PvP:** `Pvp(bool)` on players and player puppets (`BodyState::pvp`, protocol v3). `combat::sword_hits`: same team is skipped unless both have PvP; a remote *player* is never hit from our side (its own machine decides from our puppet). Parries of a player go `Reliable::Parried` → host → `Reliable::Stun` to the parried player's machine (the host stuns itself directly). Death turns PvP off; respawning (`DeathSequence` removed) adds a Poppy if there is none. Red poppy marker over PvP players (child of the body, not the head bone, so it doesn't swing); "PvP" next to your Ale counter.
+  - **Hit immunity:** `HitImmunity` on the player, `HIT_IMMUNITY` 0.1 s after any applied hit (Souls has no post-hit i-frames; this only stops simultaneous hits from stacking).
+  - **Camera fix:** the wall check ignores characters (other players, enemies, dummy) — before, another player standing behind you pulled the camera into their head.
+  - **Autopilots:** `netfight` (guest: walks into the spawn area → the host spawns the Hollow, fights, takes the Shortsword, revives the sunflower; host logs "world event: Guest 1 picked up Rusted Shortsword / vigorated the Sun"), `pvp` (both eat a Poppy; guest hits host 3× for 20; guest eats a Camomile; further attacks do nothing; host dies → PvP off, "respawned with a fresh Poppy"), `enemy` (now steps into the spawn area first), `notify`.
+  - **Still local per machine:** the training dummy; guests' rests reset only their own state (not the world).

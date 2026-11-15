@@ -31,6 +31,7 @@ use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::items::inventory::{EquipSlot, EquipStats, EquipVisuals, Equipment, Inventory};
 use crate::lockon::Targetable;
 use crate::player::Player;
+use crate::pvp::Pvp;
 use crate::tuning::*;
 use crate::weapon::{EquipWeapon, WeaponSystems, hollow_blade};
 
@@ -75,6 +76,7 @@ fn body_state(
     guard: Option<&Guard>,
     health: &Health,
     gear: [Option<crate::items::ItemId>; 3],
+    pvp: bool,
 ) -> BodyState {
     BodyState {
         id,
@@ -91,6 +93,7 @@ fn body_state(
         right_hand: gear[0],
         left_hand: gear[1],
         head: gear[2],
+        pvp,
     }
 }
 
@@ -143,11 +146,14 @@ fn receive(
     session: Res<NetSession>,
     mut puppets: Query<(Entity, &mut Puppet)>,
     mut real_enemies: Query<(Entity, &mut CharacterAction), (With<Enemy>, Without<Remote>)>,
+    mut me: Query<&mut CharacterAction, (With<Player>, Without<Enemy>)>,
+    link: Res<NetLink>,
 ) {
     if !session.online() {
         return;
     }
     let mut seen_snapshot: Option<HashSet<NetId>> = None;
+    let mut stun_me = false;
     let mut fresh: Vec<BodyState> = vec![];
     for msg in inbox.read() {
         match msg {
@@ -175,10 +181,22 @@ fn receive(
                 if let Some((_, mut action)) = real_enemies.iter_mut().find(|(e, _)| enemy_id(*e) == *attacker) {
                     action.force(ActionKind::Stunned, Vec3::ZERO);
                     info!("a guest parried enemy {attacker}");
+                } else if *attacker == session.my_id {
+                    stun_me = true;
+                } else if let Some((&peer, _)) = session.peers.iter().find(|(_, id)| **id == *attacker) {
+                    // One guest parried another: tell the parried one.
+                    link.send(NetCmd::Reliable { to: Some(peer), bytes: encode(&Reliable::Stun) });
                 }
+            }
+            NetInbox::Reliable(HOST_PEER, Reliable::Stun) if session.is_client() => {
+                stun_me = true;
             }
             _ => {}
         }
+    }
+    if stun_me && let Ok(mut action) = me.single_mut() {
+        info!("parried by another player: stunned");
+        action.force(ActionKind::Stunned, Vec3::ZERO);
     }
     // Upsert puppets (the latest state per body wins; several can arrive in one frame).
     let mut latest: Vec<BodyState> = vec![];
@@ -258,6 +276,7 @@ fn spawn_puppet(
         BodyKind::Player => {
             commands.entity(e).insert((
                 Team::Player,
+                Pvp(body.pvp),
                 Inventory::default(),
                 Equipment::default(),
                 EquipStats::default(),
@@ -288,11 +307,12 @@ fn drive_puppets(
         &mut Guard,
         &mut Health,
         Option<(&mut Inventory, &mut Equipment)>,
+        Option<&mut Pvp>,
     )>,
 ) {
     let dt = time.delta_secs();
     let follow = 1.0 - (-PUPPET_FOLLOW * dt).exp();
-    for (mut p, mut tf, mut ctrl, mut action, mut guard, mut health, gear) in &mut puppets {
+    for (mut p, mut tf, mut ctrl, mut action, mut guard, mut health, gear, pvp) in &mut puppets {
         p.age += dt;
         let s = p.state.clone();
         // Position: where it was reported, extrapolated by its movement (briefly), eased.
@@ -335,6 +355,9 @@ fn drive_puppets(
                 p.last_elapsed = 0.0;
             }
         }
+        if let Some(mut pvp) = pvp {
+            pvp.set_if_neq(Pvp(s.pvp));
+        }
         if guard.raised_for != s.guard {
             guard.raised_for = s.guard;
         }
@@ -347,7 +370,7 @@ fn drive_puppets(
             && shown != p.shown_gear
         {
             p.shown_gear = shown;
-            *inv = Inventory { items: shown.iter().flatten().copied().collect() };
+            *inv = Inventory { items: shown.iter().flatten().copied().collect(), ..default() };
             let mut next = Equipment::default();
             for i in 0..inv.items.len() {
                 next.equip(&inv, i);
@@ -363,7 +386,7 @@ fn send_states(
     mut timer: Local<f32>,
     link: Res<NetLink>,
     session: Res<NetSession>,
-    player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment), With<Player>>,
+    player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment, &Pvp), With<Player>>,
     puppets: Query<&Puppet>,
     enemies: Query<(Entity, &Transform, &CharacterController, &CharacterAction, &Health), (With<Enemy>, Without<Remote>)>,
 ) {
@@ -375,14 +398,14 @@ fn send_states(
         return;
     }
     *timer = 0.0;
-    let Ok((tf, ctrl, action, guard, health, inv, eq)) = player.single() else { return };
+    let Ok((tf, ctrl, action, guard, health, inv, eq, pvp)) = player.single() else { return };
     let gear = [EquipSlot::RightHand, EquipSlot::LeftHand, EquipSlot::Head].map(|s| eq.item(s, inv));
-    let me = body_state(session.my_id, BodyKind::Player, tf, ctrl, action, Some(guard), health, gear);
+    let me = body_state(session.my_id, BodyKind::Player, tf, ctrl, action, Some(guard), health, gear, pvp.0);
     if session.is_host() {
         let mut bodies = vec![me];
         bodies.extend(puppets.iter().filter(|p| p.state.kind == BodyKind::Player).map(|p| p.state.clone()));
         for (e, tf, ctrl, action, health) in &enemies {
-            bodies.push(body_state(enemy_id(e), BodyKind::Hollow, tf, ctrl, action, None, health, [None; 3]));
+            bodies.push(body_state(enemy_id(e), BodyKind::Hollow, tf, ctrl, action, None, health, [None; 3], false));
         }
         link.send(NetCmd::Datagram { to: None, bytes: encode(&Datagram::Snapshot(bodies)) });
     } else if session.role == super::Role::Client {
@@ -399,6 +422,18 @@ fn forward_hits(
     mut parries: MessageReader<Parried>,
     puppets: Query<&Puppet>,
 ) {
+    if session.is_host() {
+        // The host parried a guest: stun them on their machine.
+        damage.clear();
+        for parry in parries.read() {
+            if let Some(p) = parry.attacker.and_then(|a| puppets.get(a).ok())
+                && let Some((&peer, _)) = session.peers.iter().find(|(_, id)| **id == p.id)
+            {
+                link.send(NetCmd::Reliable { to: Some(peer), bytes: encode(&Reliable::Stun) });
+            }
+        }
+        return;
+    }
     if session.role != super::Role::Client {
         damage.clear();
         parries.clear();
