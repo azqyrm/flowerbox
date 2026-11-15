@@ -11,7 +11,7 @@ use super::{Banner, DISPLAY_FONT, strings};
 use crate::character::stats::{Health, Stamina};
 use crate::healing::HealingAle;
 use crate::hearth::{DeathSequence, death_screen};
-use crate::interact::InteractPrompt;
+use crate::interact::{InteractPrompt, InteractSystems};
 use crate::items::inventory::{EquipSlot, Equipment, Inventory};
 use crate::items::pickup::ItemPickedUp;
 use crate::items::ItemIcon;
@@ -22,7 +22,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_bars, update_ale.after(update_hands), update_hands, update_prompt, update_toast, update_banner, update_death_screen));
+            .add_systems(Update, (update_bars, update_ale.after(update_hands), update_hands, update_prompt.after(InteractSystems::Hearth), update_toast, update_banner, update_death_screen));
     }
 }
 
