@@ -275,6 +275,38 @@ claude_ds/
 - [ ] Windows build for friends (cross-compile or build on Windows); ship `assets/` next to the binary
 - [ ] Optional: Steam transport (lobbies, invites) via `bevy_replicon_renet` + `renet_steam` or `aeronet_steam`
 
+### Phase 8.6 — Shared world, notifications, opt-in PvP (user request, 2026-11-15)
+Cleaned-up request:
+1. **Shared sunflower revival.** Reviving the sunflower is a world event. The player who did it gets the big "SUN VIGORATED" banner; everyone else gets a small notification ("Guest 1 vigorated the Sun" + sunflower icon), and the sunflower stands up on every screen.
+2. **Notification feed (new UI).** Small pop-ups about what happened: you picked up an item, another player picked something up / vigorated the Sun / joined / left / died / turned PvP on or off. Each has a distinct icon, no background but readable (shadowed text, outlined icon), slides in from outside the window, sits in the bottom-right corner by default. Several stack with the newest on top, older ones slightly shifted so they stay legible; each fades after 3 s. Everything (corner, margins, lifetime, fade, slide time, stack shift, sizes, max shown) is a setting.
+3. **The host's world is the world.** A guest adds nothing: no own enemies or items; spawning and item drops are handled by the host.
+4. **Shared pickups.** Items lie in the host's world; whoever takes one first gets it, it disappears for everyone.
+5. **World-centred enemy spawning.** Enemies come from spawn points in the world: a spawn point spawns its enemy when *any* player enters its area, once (not again for players who join later), synchronised to everyone. (Fixes the reported invisible enemy: there is now exactly one enemy, owned by the host.)
+6. **Opt-in PvP.** Players don't hurt each other unless both opted in. *Poppy* (consumable) turns PvP on, *Camomile* turns it off. Dying turns it off; on respawn you get a Poppy again if you have none.
+7. **Investigate:** invulnerability after being hit (answer: no i-frames, only a tiny hit immunity), plus the open questions below.
+
+Decisions (2026-11-15, from looking at how Souls games do it and at our code):
+- Player names: "Host", "Guest 1"…"Guest 3" (by slot) until there's a name setting.
+- Only the **host's rest** resets the world (enemies respawn, as in Souls where summons can't rest). A guest can still rest: it heals them, refills their Ale and sets their respawn point, and if the sunflower isn't revived yet, it revives it for everyone.
+- A world reset (host rest / host death) **removes** spawned enemies and re-arms the spawn points; they spawn again when someone comes near.
+- Enemy spawn point "tutorial Hollow" at (-4, -10), area radius 12 m.
+- Pickups and kindling go guest → host as requests; the host decides (first come, first served) and tells everyone. Late joiners get the world state (revived sunflower, taken items) on arrival.
+- Consumables stack (counts) and are used from the inventory (Enter / "Use"), with a short "eat" action (hand to mouth), so using one in a fight is a risk like drinking. Start with Poppy ×1, Camomile ×1.
+- PvP needs **both** players to have it on. The attacker's machine detects the hit, the victim's machine applies it (so the victim blocks/parries locally), routed through the host. A parried player is stunned like an enemy (riposte possible). PvP players carry a red poppy marker over their head; you see your own state next to the HP bar.
+- Post-hit invulnerability: Souls games don't have any (each swing hits once, combos can trap you, poise matters). We keep that, plus a **0.1 s hit immunity** for players only (`HIT_IMMUNITY`) so two hits landing in the same instant (two attackers, network bunching) don't stack unfairly.
+- The training dummy stays local to each machine (it's practice furniture).
+
+Steps:
+- [x] Plan, decisions (this list)
+- [ ] Notification feed (`ui/notifications.rs`, `NotificationSettings`), the pickup toast becomes a notification
+- [ ] Player names; join / leave / death notifications
+- [ ] World state on the host (`net/world.rs`): revived sunflower, taken pickups, sent to joiners; kindle + pickup requests from guests; banner for the actor, notification for others
+- [ ] Spawn points (world-centred, area trigger, once per world cycle); guests never spawn
+- [ ] Consumables: stack counts, "Use" from the inventory, `UseItem` action; Poppy + Camomile items and icons
+- [ ] PvP flag (replicated), marker, damage routing between players, parry stun between players, off on death, Poppy on respawn
+- [ ] Hit immunity (0.1 s, players)
+- [ ] Two-instance tests (autopilots) + screenshots; ROADMAP notes
+
 ### Phase 9 — Polish
 - [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested).
 - [ ] Replace the primitives with a rigged glTF character (CC0). Map its skeleton onto `humanoid::Bone` so the shared poses and the FK hitbox keep working, or blend its clips in `humanoid::anim` (see N13).
