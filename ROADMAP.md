@@ -398,6 +398,16 @@ Steps:
 - [x] Forgery props: anvil, forge + fire pit (flicker light), ceiling grate with bars, sunlight shaft, rising steam
 - [x] Autopilot through the new sector, screenshots, two-instance check, notes
 
+### Phase 8.11 — Multiplayer robustness, 5 players (user report, 2026-11-16)
+Report: with 4 players enemies didn't appear for everyone, spawning was weird, respawning when someone died was a problem; don't reset the world when the host dies (for now). Test up to 5 players, network stability.
+- [x] Found: the host's snapshot (every body in one datagram) had grown to ~1150 bytes with one guest; with more players it exceeded the ~1200-byte QUIC datagram limit and was silently dropped (send errors were ignored)
+- [x] Snapshots split into ≤ 900-byte datagrams; enemies sent only when changed (+ 1 s keepalive); roster twice a second; puppets removed by roster / 3.5 s silence instead of "missing from one snapshot"
+- [x] 5 players (`MAX_PLAYERS`), a fifth tunic colour; datagram send failures logged; QUIC idle timeout 10 s
+- [x] No world reset on death online (host included); resting together still resets
+- [x] Joining guests appear beside the host (a free spot on a ring), not at the arena start
+- [x] `mp` autopilot (+ `FLOWERBOX_MP_FIGHT`, `FLOWERBOX_MP_DIE_AT`), 5-instance tests through the relay
+- [ ] Test across real networks (different homes, NAT) with 4–5 players; consider a self-hosted iroh relay if n0's public relays throttle
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
@@ -442,6 +452,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Quadrupeds mirror humanoids: own skeleton/spec/pose/animator module (`quadruped/`), driven by the same character actions. A beast's jaws are a **natural weapon class** (moveset + no model) so bites reuse the action/attack pipeline; the grab is a generic `Pounce` action available to any moveset with a `PounceSpec`. Beast AI = one system + a data profile per species. |
 | 2026-11-16 | Grabs are **victim-side** (like enemy hits online): each machine checks only its own player against pouncing creatures. Rolling i-frames at the first contact = dodged for that pounce. The bite is unblockable because a held character has no guard. The warg's bite is 120 (≥ 100 after the best armour). Each declined pounce chance raises the next (`pounce_urge`). Player HP bars show only over *other* players (your own is the HUD bar). |
 | 2026-11-16 | Doors are one-way by their swing (`opens` points away from the side that can open them); locked doors name a key item that stays in the bag. A door's collider is a separate static blocker spawned where the leaf rests (closed or open), never moved. Enemy drops come from the level file (`drops`), roll on the machine that owns the enemy (offline/host) and are broadcast; unique drops (keys) are remembered once taken (`ClaimedDrops`, saved). |
+| 2026-11-16 | Online, dying (anyone's, the host's too) no longer resets the world; only the shared rest does (user request, "for now"). Offline death still resets (Souls). Up to 5 players. The host sends enemies only when they change; guests learn what exists from a roster. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -681,4 +692,10 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Items:** Well-Forged Sword (LightSword class, base 24 vs the Longsword's 20, blade 1.08 vs 1.03, brass guard, fuller; rare), Forge Key (Key kind; rare). Rare pickups glow cold blue and brighter.
   - **Forgery props** (`level/props.rs`): anvil on a stump with a hammer; forge = stone hearth with glowing coals, five flickering flames and a fire light (`arena::spawn_fire`, counted with the torches for shadows), brick hood and chimney, quench trough; a 4.4 × 3.4 m sky grate (iron bars, an emissive daylight plane above, a slanted shadow-casting `SpotLight` sunbeam, 90 drifting dust motes). Steam: vents on the forge and trough emit puffs that rise, swell, fade (alpha steps) and drift toward the nearest grate.
   - **Level walk** (`level` autopilot, now 59 waypoints): door 5 refused from the T room, door 3, door 4 locked → key → opens, stairs 3 up, peak, dip, nook, alcove, sword picked up, door 5 opens from the forgery, back in the T room: all reached ("open doors [1, 2, 3, 4, 5]; has the sword: true"). Online (host `menu`, guest `level`): the host logs every door, the refused door, the sword pickup.
+- **N29 (2026-11-16) — multiplayer with 4–5 players (Phase 8.11):**
+  - **Cause of the missing enemies:** `Datagram::Snapshot` carried every body (players + 21 enemies) in one QUIC datagram: 1152 bytes with host + 1 guest (measured), more with each player. QUIC datagrams over the internet / relays fit ~1150–1200 bytes; bigger ones fail, and `send_datagram` errors were ignored, so guests got no updates at all once the session grew. Guests also despawned every puppet missing from a snapshot, so any lost or partial snapshot made bodies vanish and respawn ("weird spawning"), restarting their animations. The 5th player was refused (`MAX_PLAYERS` was 4).
+  - **Now** (protocol v8): `chunk_bodies` splits snapshots into ≤ `MAX_SNAPSHOT_BYTES` (900) datagrams; players are sent every tick (30 Hz), enemies only when they changed (`changed`: moved, turned, acting, HP, grounded; a corpse after 2 s counts as still) or every `ENEMY_KEEPALIVE` (1 s). `Datagram::Roster` (all ids) every 0.5 s; guests drop puppets not on it or silent for `PUPPET_TIMEOUT` (3.5 s). Average snapshot datagram: 304 bytes (was 1152 per tick). Send failures are logged (`datagram of N bytes not sent`). QUIC idle timeout 10 s (default 30) so a crashed player is noticed sooner.
+  - **Deaths:** `run_death_sequence` writes `WorldReset` only offline. Verified with 5 players: the host died mid-fight and respawned; no "enemies reset", killed Hollows stayed dead.
+  - **Joining:** `PlaceNearHost` → `place_guest` puts the guest on a ring around the host's body (first direction free of walls for 1.8 m), once the host's state arrives. Before, guests always appeared at the arena start.
+  - **Tests** (`mp.sh`-style: host + 4 guests on one machine, `FLOWERBOX_NET_RELAY_ONLY=1` for the guests): all 5 admitted (ids 2–5), every guest sees 4 players + 21 enemies, exactly 25 puppets appeared per guest over 60 s (no flicker), 0 datagram failures, 0 puppet timeouts; with `FLOWERBOX_MP_FIGHT=1` the host and guests kill Hollows in the middle hall, guests' hits forwarded; shared rest (`netrest`) still completes. Not tested: real separate networks. n0's public relays logged one "rate-limiting" warning per instance; before, the host was throttled continuously.
 

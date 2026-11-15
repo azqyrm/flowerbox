@@ -37,7 +37,7 @@ pub struct EnemyPlugin;
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         // The older autopilot scripts (combat, hearth, …) were written for an empty arena.
-        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll" | "wargkill")) {
+        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll" | "wargkill" | "mp")) {
             return;
         }
         app.init_resource::<EnemiesSuppressed>()

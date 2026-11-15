@@ -90,6 +90,7 @@ type Peers = Arc<Mutex<HashMap<PeerId, Peer>>>;
 async fn net_main(mut cmds: tmpsc::UnboundedReceiver<NetCmd>, events: mpsc::Sender<NetEvent>) {
     let peers: Peers = Arc::default();
     let mut endpoint: Option<Endpoint> = None;
+    let mut datagram_failures: u64 = 0;
     while let Some(cmd) = cmds.recv().await {
         match cmd {
             NetCmd::Host => {
@@ -120,7 +121,12 @@ async fn net_main(mut cmds: tmpsc::UnboundedReceiver<NetCmd>, events: mpsc::Send
             }
             NetCmd::Datagram { to, bytes } => {
                 for (_, peer) in targets(&peers, to) {
-                    let _ = peer.0.send_datagram(bytes.clone().into());
+                    if let Err(e) = peer.0.send_datagram(bytes.clone().into()) {
+                        datagram_failures += 1;
+                        if datagram_failures % 300 == 1 {
+                            warn!("datagram of {} bytes not sent ({e}; max {:?}); {datagram_failures} failures so far", bytes.len(), peer.0.max_datagram_size());
+                        }
+                    }
                 }
             }
             NetCmd::Reliable { to, bytes } => {
@@ -147,7 +153,10 @@ fn send_err(events: &mpsc::Sender<NetEvent>, msg: String) {
 }
 
 async fn bind(events: &mpsc::Sender<NetEvent>) -> Option<Endpoint> {
-    match Endpoint::builder(presets::N0).alpns(vec![ALPN.to_vec()]).bind().await {
+    // Notice a vanished peer (crash, cable) after 10 s instead of the default 30 s.
+    let idle = Duration::from_secs(10).try_into().expect("10 s fits a QUIC idle timeout");
+    let transport = iroh::endpoint::QuicTransportConfig::builder().max_idle_timeout(Some(idle)).build();
+    match Endpoint::builder(presets::N0).alpns(vec![ALPN.to_vec()]).transport_config(transport).bind().await {
         Ok(ep) => Some(ep),
         Err(e) => {
             send_err(events, format!("could not open the network endpoint: {e}"));

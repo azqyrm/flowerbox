@@ -48,8 +48,8 @@ impl Plugin for NetPlugin {
     }
 }
 
-/// Host + 3 guests.
-pub const MAX_PLAYERS: u32 = 4;
+/// Host + 4 guests.
+pub const MAX_PLAYERS: u32 = 5;
 const CODE_PREFIX: &str = "FBX1-";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

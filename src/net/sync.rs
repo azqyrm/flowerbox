@@ -1,8 +1,10 @@
 //! Turning bodies into network state and back.
 //!
-//! - [`send_states`]: ~30×/s, the local player's [`BodyState`] (client → host), or a snapshot of
-//!   every body (host → clients: the host's player, the guests' players as last reported, and
-//!   the host's real enemies).
+//! - [`send_states`]: ~30×/s, the local player's [`BodyState`] (client → host), or snapshots
+//!   (host → clients: every player each tick; the host's real enemies only when they changed, or
+//!   once a second as a keepalive), split into datagrams that fit (`chunk_bodies`). Twice a second
+//!   the host also sends a **roster** of every body id; guests drop puppets that aren't on it, or
+//!   that haven't been heard of for `PUPPET_TIMEOUT` seconds.
 //! - [`receive`]: upserts **puppets** for bodies owned elsewhere and applies guests' damage and
 //!   parries to the host's real enemies.
 //! - [`drive_puppets`]: eases puppets toward their state and feeds the same components the local
@@ -39,7 +41,7 @@ pub struct SyncPlugin;
 
 impl Plugin for SyncPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (role_changed, receive, drive_puppets, send_states, forward_hits).chain().before(WeaponSystems::Equip));
+        app.add_systems(Update, (role_changed, receive, drive_puppets, place_guest, send_states, forward_hits).chain().before(WeaponSystems::Equip));
     }
 }
 
@@ -47,6 +49,12 @@ impl Plugin for SyncPlugin {
 const SEND_RATE: f32 = 30.0;
 /// How fast puppets ease toward their reported position / facing (1/s).
 const PUPPET_FOLLOW: f32 = 14.0;
+/// Idle enemies are re-sent this often (keepalive); changing ones every tick.
+const ENEMY_KEEPALIVE: f32 = 1.0;
+/// A puppet not heard of for this long is gone (lost roster, a crashed peer).
+const PUPPET_TIMEOUT: f32 = 3.5;
+/// How often the host sends the roster.
+const ROSTER_EVERY: f32 = 0.5;
 
 /// A character owned by another machine.
 #[derive(Component, Debug)]
@@ -110,14 +118,12 @@ fn role_changed(
     if !inbox.read().any(|m| matches!(m, NetInbox::RoleChanged)) {
         return;
     }
-    // A guest arrives next to the host's start (not inside the host's character).
+    // A guest arrives next to the host (placed when the host's body first arrives: `place_guest`).
     if session.role == super::Role::Client
-        && let Ok((mut tf, mut ctrl)) = player.single_mut()
+        && let Ok((_, mut ctrl)) = player.single_mut()
     {
-        let (x, y, z) = PLAYER_SPAWN;
-        let slot = session.my_id.saturating_sub(PLAYER_ID_BASE) as f32;
-        tf.translation = Vec3::new(x + 1.6 * slot, y, z);
         ctrl.velocity = Vec3::ZERO;
+        commands.insert_resource(PlaceNearHost);
     }
     let client = session.is_client();
     if let Some(mut s) = suppressed {
@@ -153,7 +159,7 @@ fn receive(
     if !session.online() {
         return;
     }
-    let mut seen_snapshot: Option<HashSet<NetId>> = None;
+    let mut roster: Option<HashSet<NetId>> = None;
     let mut stun_me = false;
     let mut fresh: Vec<BodyState> = vec![];
     for msg in inbox.read() {
@@ -165,11 +171,10 @@ fn receive(
                 }
             }
             NetInbox::Datagram(HOST_PEER, Datagram::Snapshot(bodies)) if session.is_client() => {
-                let ids = seen_snapshot.get_or_insert_default();
-                for b in bodies.iter().filter(|b| b.id != session.my_id) {
-                    ids.insert(b.id);
-                    fresh.push(b.clone());
-                }
+                fresh.extend(bodies.iter().filter(|b| b.id != session.my_id).cloned());
+            }
+            NetInbox::Datagram(HOST_PEER, Datagram::Roster(ids)) if session.is_client() => {
+                roster = Some(ids.iter().copied().collect());
             }
             NetInbox::Reliable(peer, Reliable::Damage { target, amount, from }) if session.is_host() => {
                 let attacker = session.peers.get(peer).and_then(|id| puppets.iter().find(|(_, p)| p.id == *id).map(|(e, _)| e));
@@ -221,7 +226,8 @@ fn receive(
             None => spawn_puppet(&mut commands, &mut meshes, &mut materials, &mut equip_weapon, body),
         }
     }
-    // Despawn puppets that are gone: missing from the host's snapshot, or (host) a guest who left.
+    // Despawn puppets that are gone: not on the host's roster, not heard of for a while, or (host)
+    // a guest who left.
     let mut kept: Vec<NetId> = vec![];
     for (e, p) in &puppets {
         if kept.contains(&p.id) {
@@ -229,11 +235,10 @@ fn receive(
             continue;
         }
         kept.push(p.id);
-        let gone = match &seen_snapshot {
-            Some(ids) => !ids.contains(&p.id),
-            None => session.is_host() && !session.peers.values().any(|id| *id == p.id),
-        };
-        if gone {
+        let off_roster = roster.as_ref().is_some_and(|ids| !ids.contains(&p.id));
+        let left = session.is_host() && !session.peers.values().any(|id| *id == p.id);
+        if off_roster || left || p.age > PUPPET_TIMEOUT {
+            debug!("puppet {} gone (roster {off_roster}, left {left}, silent {:.1} s)", p.id, p.age);
             commands.entity(e).despawn();
         }
     }
@@ -241,8 +246,13 @@ fn receive(
 
 /// Other players wear coloured tunics so you can tell them apart (by player slot).
 fn guest_look(id: NetId) -> HumanoidSpec {
-    const TUNICS: [Color; 4] =
-        [Color::srgb(0.45, 0.12, 0.1), Color::srgb(0.12, 0.25, 0.45), Color::srgb(0.2, 0.38, 0.16), Color::srgb(0.42, 0.34, 0.1)];
+    const TUNICS: [Color; 5] = [
+        Color::srgb(0.45, 0.12, 0.1),
+        Color::srgb(0.12, 0.25, 0.45),
+        Color::srgb(0.2, 0.38, 0.16),
+        Color::srgb(0.42, 0.34, 0.1),
+        Color::srgb(0.35, 0.15, 0.4),
+    ];
     let mut spec = HumanoidSpec::human();
     spec.look.top = TUNICS[(id.saturating_sub(PLAYER_ID_BASE) as usize) % TUNICS.len()];
     spec
@@ -402,10 +412,26 @@ fn drive_puppets(
     }
 }
 
-#[allow(clippy::type_complexity)]
+/// What the host last sent of each enemy, and how long ago.
+#[derive(Default)]
+struct SentEnemies(std::collections::HashMap<NetId, (BodyState, f32)>);
+
+/// Whether `now` differs enough from what was last sent to be worth sending again.
+fn changed(last: &BodyState, now: &BodyState) -> bool {
+    let moved = Vec3::from_array(now.pos).distance(Vec3::from_array(last.pos)) > 0.02
+        || (now.facing - last.facing).abs() > 0.02
+        || Vec3::from_array(now.moved).length() > 0.05;
+    // A running action changes every tick (its time), except lying dead.
+    let acting = now.action.is_some_and(|a| !(a.kind == ActionKind::Dead && a.elapsed > 2.0));
+    moved || acting || now.hp != last.hp || now.grounded != last.grounded || now.action.map(|a| a.kind) != last.action.map(|a| a.kind)
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn send_states(
     real: Res<Time<Real>>,
     mut timer: Local<f32>,
+    mut roster_timer: Local<f32>,
+    mut sent: Local<SentEnemies>,
     link: Res<NetLink>,
     session: Res<NetSession>,
     player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment, &Pvp), With<Player>>,
@@ -416,9 +442,11 @@ fn send_states(
         return;
     }
     *timer += real.delta_secs();
+    *roster_timer += real.delta_secs();
     if *timer < 1.0 / SEND_RATE {
         return;
     }
+    let tick = *timer;
     *timer = 0.0;
     let Ok((tf, ctrl, action, guard, health, inv, eq, pvp)) = player.single() else { return };
     let gear = [EquipSlot::RightHand, EquipSlot::LeftHand, EquipSlot::Head].map(|s| eq.item(s, inv));
@@ -426,14 +454,39 @@ fn send_states(
     if session.is_host() {
         let mut bodies = vec![me];
         bodies.extend(puppets.iter().filter(|p| p.state.kind == BodyKind::Player).map(|p| p.state.clone()));
+        let mut ids: Vec<NetId> = bodies.iter().map(|b| b.id).collect();
+        let mut live = HashSet::new();
         for (e, enemy, tf, ctrl, action, health) in &enemies {
             let kind = match enemy.kind {
                 EnemyKind::Hollow => BodyKind::Hollow,
                 EnemyKind::Warg => BodyKind::Warg,
             };
-            bodies.push(body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; 3], false));
+            let state = body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; 3], false);
+            ids.push(state.id);
+            live.insert(state.id);
+            // Only what changed, plus a keepalive for idle ones: most enemies stand still far away.
+            let due = match sent.0.get_mut(&state.id) {
+                Some((last, since)) => {
+                    *since += tick;
+                    changed(last, &state) || *since >= ENEMY_KEEPALIVE
+                }
+                None => true,
+            };
+            if due {
+                sent.0.insert(state.id, (state.clone(), 0.0));
+                bodies.push(state);
+            }
         }
-        link.send(NetCmd::Datagram { to: None, bytes: encode(&Datagram::Snapshot(bodies)) });
+        sent.0.retain(|id, _| live.contains(id));
+        for chunk in chunk_bodies(bodies, MAX_SNAPSHOT_BYTES) {
+            let bytes = encode(&Datagram::Snapshot(chunk));
+            debug!("snapshot: {} bytes", bytes.len());
+            link.send(NetCmd::Datagram { to: None, bytes });
+        }
+        if *roster_timer >= ROSTER_EVERY {
+            *roster_timer = 0.0;
+            link.send(NetCmd::Datagram { to: None, bytes: encode(&Datagram::Roster(ids)) });
+        }
     } else if session.role == super::Role::Client {
         link.send(NetCmd::Datagram { to: Some(HOST_PEER), bytes: encode(&Datagram::State(me)) });
     }
@@ -481,4 +534,45 @@ fn forward_hits(
             link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Parried { attacker: p.id }) });
         }
     }
+}
+
+/// Pending for a guest that just joined: place it beside the host once the host's body arrives.
+#[derive(Resource)]
+pub struct PlaceNearHost;
+
+/// Puts a freshly joined guest next to the host: the first free spot on a ring around the host
+/// (by player slot) that has no wall in between, else right behind the host.
+pub fn place_guest(
+    mut commands: Commands,
+    pending: Option<Res<PlaceNearHost>>,
+    session: Res<NetSession>,
+    spatial: SpatialQuery,
+    puppets: Query<(Entity, &Puppet)>,
+    characters: Query<(), With<CharacterController>>,
+    mut player: Query<(&mut Transform, &mut CharacterController), With<Player>>,
+) {
+    if pending.is_none() || !session.is_client() {
+        return;
+    }
+    let Some((host_entity, host)) = puppets.iter().find(|(_, p)| p.id == PLAYER_ID_BASE) else { return };
+    let Ok((mut tf, mut ctrl)) = player.single_mut() else { return };
+    let at = Vec3::from_array(host.state.pos);
+    let slot = session.my_id.saturating_sub(PLAYER_ID_BASE) as f32;
+    let spot = (0..8)
+        .map(|k| {
+            let a = host.state.facing + std::f32::consts::PI + (slot + k as f32) * std::f32::consts::FRAC_PI_4;
+            Vec3::new(-a.sin(), 0.0, -a.cos())
+        })
+        .find(|dir| {
+            let Ok(d) = Dir3::new(*dir) else { return false };
+            let filter = SpatialQueryFilter::from_excluded_entities([host_entity]);
+            spatial
+                .cast_shape_predicate(&Collider::sphere(PLAYER_RADIUS), at, Quat::IDENTITY, d, &ShapeCastConfig::from_max_distance(1.8), &filter, &|e| !characters.contains(e))
+                .is_none()
+        })
+        .map_or(at, |dir| at + dir * 1.6);
+    tf.translation = spot + Vec3::Y * 0.05;
+    ctrl.velocity = Vec3::ZERO;
+    commands.remove_resource::<PlaceNearHost>();
+    info!("joined beside the host at {:.2}", tf.translation);
 }

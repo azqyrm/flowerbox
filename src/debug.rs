@@ -35,6 +35,10 @@
 //!   `FLOWERBOX_WARG_TANK=1` gives the player 1000 HP (to see several pounces).
 //! - `FLOWERBOX_AUTOPILOT=wargkill` (with `FLOWERBOX_POS` in the vault) → kills the vault warg,
 //!   takes the dropped Forge Key, resets the world, kills it again: the unique key doesn't drop twice.
+//! - `FLOWERBOX_AUTOPILOT=mp` → multiplayer soak test: enemies on, nobody moves; every 2 s logs the
+//!   puppets seen (players / enemies) and how many puppets (re)appeared so far.
+//!   `FLOWERBOX_MP_DIE_AT=secs` kills this player then. `FLOWERBOX_MP_FIGHT=1`: run at the nearest
+//!   living enemy (within 25 m) and keep attacking it.
 //! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
 //!   `FLOWERBOX_WALK="x,z"` walks that way instead (collision checks), logging the position.
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
@@ -91,6 +95,13 @@ impl Plugin for DebugPlugin {
                 app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
                     .insert_resource(WargRun { roll: mode == "wargroll", ..default() })
                     .add_systems(Update, warg_script);
+            }
+            Ok("mp") => {
+                if std::env::var("FLOWERBOX_MP_FIGHT").is_ok() {
+                    app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
+                        .add_systems(Update, mp_fight);
+                }
+                app.add_systems(Update, log_puppets);
             }
             Ok("wargkill") => {
                 app.add_systems(Update, wargkill_script);
@@ -1507,5 +1518,70 @@ fn wargkill_script(
         let keys = player.single().map_or(0, |(_, inv)| inv.count(ItemId::ForgeKey));
         info!("drop test: keys in the bag {keys}, key lying on the floor: {}", key.is_some());
         exit.write(AppExit::Success);
+    }
+}
+
+/// Multiplayer check: what this machine sees of the others and of the host's enemies.
+fn log_puppets(
+    time: Res<Time>,
+    mut damage: MessageWriter<DamageMessage>,
+    me: Query<Entity, With<Player>>,
+    mut timer: Local<f32>,
+    mut appeared: Local<u32>,
+    new: Query<(), Added<crate::net::sync::Puppet>>,
+    puppets: Query<&crate::net::sync::Puppet>,
+    session: Res<crate::net::NetSession>,
+    real_enemies: Query<(), (With<Enemy>, Without<crate::character::Remote>)>,
+) {
+    *appeared += new.iter().count() as u32;
+    // `FLOWERBOX_MP_DIE_AT=secs`: this player dies then (online: no world reset).
+    if let Some(at) = std::env::var("FLOWERBOX_MP_DIE_AT").ok().and_then(|v| v.parse::<f32>().ok())
+        && crossed(time.elapsed_secs(), time.delta_secs(), at)
+        && let Ok(e) = me.single()
+    {
+        info!("autopilot: dying now");
+        damage.write(DamageMessage { target: e, amount: 10_000.0, from: None, attacker: None });
+    }
+    *timer += time.delta_secs();
+    if *timer < 2.0 {
+        return;
+    }
+    *timer = 0.0;
+    let players = puppets.iter().filter(|p| p.state.kind == crate::net::protocol::BodyKind::Player).count();
+    let enemies = puppets.iter().count() - players;
+    info!(
+        "mp: {:?} id {}: {players} other players, {enemies} enemy puppets, {} own enemies, {} puppets appeared so far",
+        session.role,
+        session.my_id,
+        real_enemies.iter().count(),
+        *appeared
+    );
+}
+
+/// Multiplayer fight test: go for the nearest living enemy (local or a puppet), swing when close.
+fn mp_fight(
+    time: Res<Time>,
+    mut swing: Local<f32>,
+    enemies: Query<(&Transform, &Health), (With<Enemy>, Without<Player>)>,
+    mut player: Query<(&Transform, &mut ActionIntent), With<Player>>,
+) {
+    *LEVEL_DIR.lock().unwrap() = (Vec3::ZERO, false, false);
+    let Ok((tf, mut intent)) = player.single_mut() else { return };
+    let Some(target) = enemies
+        .iter()
+        .filter(|(_, h)| !h.is_dead())
+        .map(|(t, _)| t.translation)
+        .filter(|p| p.distance(tf.translation) < 25.0)
+        .min_by(|a, b| a.distance(tf.translation).total_cmp(&b.distance(tf.translation)))
+    else {
+        return;
+    };
+    let to = (target - tf.translation).with_y(0.0);
+    *swing -= time.delta_secs();
+    if to.length() > 1.6 {
+        *LEVEL_DIR.lock().unwrap() = (to.normalize(), false, false);
+    } else if *swing <= 0.0 {
+        *swing = 0.7;
+        intent.buffer(ActionRequest::LightAttack);
     }
 }

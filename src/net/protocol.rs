@@ -13,7 +13,7 @@ use crate::items::ItemId;
 use crate::weapon::WeaponClass;
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 7;
+pub const PROTOCOL_VERSION: u16 = 8;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -67,8 +67,35 @@ pub struct BodyState {
 pub enum Datagram {
     /// Client → host: my body.
     State(BodyState),
-    /// Host → clients: every body in the world.
+    /// Host → clients: bodies in the world — every player each tick, enemies when they changed (or
+    /// as a keepalive). Split over several datagrams so each fits ([`chunk_bodies`]).
     Snapshot(Vec<BodyState>),
+    /// Host → clients, twice a second: the ids of every body that exists. Puppets not on it go.
+    Roster(Vec<NetId>),
+}
+
+/// Largest snapshot datagram we send. QUIC datagrams over the internet (and through relays) carry
+/// about 1150–1200 bytes; staying well under leaves room for headers and smaller paths.
+pub const MAX_SNAPSHOT_BYTES: usize = 900;
+
+/// Splits bodies into snapshots that each encode to at most `max` bytes.
+pub fn chunk_bodies(bodies: Vec<BodyState>, max: usize) -> Vec<Vec<BodyState>> {
+    let mut chunks: Vec<Vec<BodyState>> = vec![];
+    let mut current: Vec<BodyState> = vec![];
+    let mut size = 4; // enum tag + length prefix
+    for body in bodies {
+        let len = encode(&body).len();
+        if !current.is_empty() && size + len > max {
+            chunks.push(std::mem::take(&mut current));
+            size = 4;
+        }
+        size += len;
+        current.push(body);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -165,6 +192,21 @@ mod tests {
             head: None,
             pvp: false,
         }
+    }
+
+    #[test]
+    fn big_snapshots_are_split_into_datagrams_that_fit() {
+        // 5 players + the level's 21 enemies (and some to spare).
+        let bodies: Vec<BodyState> = (0..40).map(body).collect();
+        let chunks = chunk_bodies(bodies, MAX_SNAPSHOT_BYTES);
+        assert!(chunks.len() > 1);
+        assert_eq!(chunks.iter().map(Vec::len).sum::<usize>(), 40, "nothing lost");
+        for c in &chunks {
+            let n = encode(&Datagram::Snapshot(c.clone())).len();
+            assert!(n <= MAX_SNAPSHOT_BYTES, "{n} bytes");
+        }
+        let roster = encode(&Datagram::Roster((0..40).map(|i| ENEMY_ID_BASE + i * 37).collect()));
+        assert!(roster.len() < 200, "{} bytes", roster.len());
     }
 
     #[test]

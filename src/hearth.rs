@@ -7,7 +7,7 @@
 //!   point and the world resets ([`WorldReset`]: the training dummy stands back up).
 //! - **Death:** `ActionKind::Dead` never ends by itself. [`DeathSequence`] runs the familiar
 //!   flow: fall → death band (`strings::DEATH`) → fade to black → respawn at the Hearth with everything restored
-//!   → fade back in. The teleport happens in `Update` while the screen is black, which also
+//!   → fade back in (offline the world resets too; online it doesn't). The teleport happens in `Update` while the screen is black, which also
 //!   resets transform interpolation (no smear across the arena, N11).
 
 use std::f32::consts::TAU;
@@ -541,6 +541,7 @@ fn start_death_sequence(mut commands: Commands, dead: Query<(Entity, &CharacterA
 fn run_death_sequence(
     time: Res<Time>,
     mut commands: Commands,
+    shared: Res<SharedRest>,
     mut reset: MessageWriter<WorldReset>,
     hearths: Query<(&Hearth, &Transform), Without<Player>>,
     mut dying: Query<
@@ -577,7 +578,11 @@ fn run_death_sequence(
             action.revive();
             intent.buffered = None;
             replenish(&mut health, &mut stamina, ale);
-            reset.write(WorldReset);
+            // Offline, dying resets the world (Souls). Online it doesn't — not even the host's
+            // death: the others are still fighting. Resting together resets it.
+            if !shared.0 {
+                reset.write(WorldReset);
+            }
             seq.respawned = true;
             info!("respawned at {:.2}", tf.translation);
         }
