@@ -16,6 +16,9 @@ mod lockon;
 mod net;
 mod player;
 mod pvp;
+mod save;
+mod settings;
+mod sound;
 mod tuning;
 mod ui;
 mod weapon;
@@ -34,6 +37,7 @@ fn main() {
         }))
         .add_plugins(PhysicsPlugins::default())
         .add_plugins((
+            settings::SettingsPlugin,
             arena::ArenaPlugin,
             camera::CameraPlugin,
             combat::CombatPlugin,
@@ -49,6 +53,8 @@ fn main() {
         .add_plugins((
             enemy::EnemyPlugin,
             pvp::PvpPlugin,
+            save::SavePlugin,
+            sound::SoundPlugin,
             healing::HealingPlugin,
             hearth::HearthPlugin,
             ui::UiPlugin,

@@ -99,7 +99,7 @@ impl Plugin for DebugPlugin {
                     guard_button: Some(|_| AUTO_GUARD.load(std::sync::atomic::Ordering::Relaxed)),
                 })
                 .init_resource::<EnemyScript>()
-                .add_systems(Update, (enemy_script, log_ale));
+                .add_systems(Update, (enemy_script, log_ale, log_audio));
             }
             Ok("netrest") => {
                 app.insert_resource(Autopilot {
@@ -119,6 +119,9 @@ impl Plugin for DebugPlugin {
             Ok("netfight") => {
                 app.insert_resource(Autopilot { movement: Some(netfight_movement), attack_button: Some(netfight_attack_button), guard_button: None })
                     .add_systems(Update, netfight_script);
+            }
+            Ok("menu") => {
+                app.add_systems(Update, menu_script);
             }
             Ok("notify") => {
                 app.add_systems(Update, notify_script);
@@ -1055,5 +1058,33 @@ fn netrest_script(
     }
     if at(9.6) {
         AUTO_WALK.store(false, Relaxed);
+    }
+}
+
+// ── Menu screenshots (FLOWERBOX_AUTOPILOT=menu, FLOWERBOX_MENU_PAGE=main|settings|controls) ──
+
+fn menu_script(time: Res<Time>, mut menu: ResMut<crate::ui::pause_menu::PauseMenu>) {
+    use crate::ui::pause_menu::Page;
+    if crossed(time.elapsed_secs(), time.delta_secs(), 0.5) {
+        let page = match std::env::var("FLOWERBOX_MENU_PAGE").as_deref() {
+            Ok("settings") => Page::Settings,
+            Ok("controls") => Page::Controls,
+            _ => Page::Main,
+        };
+        menu.show(page);
+    }
+}
+
+/// Sounds started so far (and playing now), every 2 s: shows the sound triggers work even where
+/// nobody can listen.
+fn log_audio(
+    time: Res<Time>,
+    mut started: Local<usize>,
+    new: Query<(), Added<AudioPlayer>>,
+    sinks: Query<(), With<bevy::audio::SpatialAudioSink>>,
+) {
+    *started += new.iter().count();
+    if (time.elapsed_secs() / 2.0).floor() != ((time.elapsed_secs() - time.delta_secs()) / 2.0).floor() {
+        info!("audio: {} started so far, {} playing", *started, sinks.iter().count());
     }
 }

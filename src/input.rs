@@ -10,6 +10,7 @@ use leafwing_input_manager::prelude::*;
 use crate::camera::ThirdPersonCamera;
 use crate::character::{ActionIntent, MoveIntent};
 use crate::character::action::ActionRequest;
+use crate::settings::{Bind, Bindings, Input, Settings};
 use crate::tuning::*;
 
 pub struct InputPlugin;
@@ -19,11 +20,12 @@ impl Plugin for InputPlugin {
         app.add_plugins(InputManagerPlugin::<Action>::default())
             .init_resource::<GameplayBlocked>()
             .add_systems(Startup, grab_cursor)
-            .add_systems(Update, (toggle_cursor, gather_player_input));
+            .add_systems(Update, (toggle_cursor, gather_player_input, rebind_player));
     }
 }
 
-/// Every action the player can perform. Bindings: see [`default_input_map`] and ROADMAP §2.
+/// Every action the player can perform. Bindings: see [`input_map`] (rebindable in the settings)
+/// and ROADMAP §2.
 #[derive(Actionlike, PartialEq, Eq, Hash, Clone, Copy, Debug, Reflect)]
 pub enum Action {
     #[actionlike(DualAxis)]
@@ -47,22 +49,41 @@ pub enum Action {
     Pause,
 }
 
-pub fn default_input_map() -> InputMap<Action> {
-    InputMap::new([
-        (Action::Jump, KeyCode::Space),
-        (Action::DodgeSprint, KeyCode::ShiftLeft),
-        (Action::DrinkAle, KeyCode::KeyR),
-        (Action::Interact, KeyCode::KeyE),
-        (Action::LockOn, KeyCode::KeyQ),
-        (Action::Inventory, KeyCode::Tab),
-        (Action::Inventory, KeyCode::KeyI),
-        (Action::Pause, KeyCode::Escape),
-    ])
-    .with(Action::Attack, MouseButton::Left)
-    .with(Action::Block, MouseButton::Right)
-    .with(Action::LockOn, MouseButton::Middle)
-    .with_dual_axis(Action::Move, VirtualDPad::wasd())
-    .with_dual_axis(Action::Look, MouseMove::default())
+/// The player's input map: the rebindable keyboard/mouse bindings from the settings, plus fixed
+/// extras (I for the inventory, middle mouse for lock-on, mouse look) and the gamepad layout.
+pub fn input_map(bindings: &Bindings) -> InputMap<Action> {
+    let mut map = InputMap::default();
+    let bind = |map: &mut InputMap<Action>, action: Action, input: Input| match input {
+        Input::Key(k) => {
+            map.insert(action, k);
+        }
+        Input::Mouse(m) => {
+            map.insert(action, m);
+        }
+    };
+    for (b, action) in [
+        (Bind::Jump, Action::Jump),
+        (Bind::DodgeSprint, Action::DodgeSprint),
+        (Bind::Attack, Action::Attack),
+        (Bind::Block, Action::Block),
+        (Bind::DrinkAle, Action::DrinkAle),
+        (Bind::Interact, Action::Interact),
+        (Bind::LockOn, Action::LockOn),
+        (Bind::Inventory, Action::Inventory),
+    ] {
+        bind(&mut map, action, bindings.get(b));
+    }
+    // Movement keys (the settings only allow keys here).
+    let key = |b: Bind| match bindings.get(b) {
+        Input::Key(k) => k,
+        Input::Mouse(_) => KeyCode::Unidentified(bevy::input::keyboard::NativeKeyCode::Unidentified),
+    };
+    let dpad = VirtualDPad::new(key(Bind::MoveForward), key(Bind::MoveBack), key(Bind::MoveLeft), key(Bind::MoveRight));
+    map.with(Action::Inventory, KeyCode::KeyI)
+        .with(Action::LockOn, MouseButton::Middle)
+        .with(Action::Pause, KeyCode::Escape)
+        .with_dual_axis(Action::Move, dpad)
+        .with_dual_axis(Action::Look, MouseMove::default())
     // Gamepad (Souls-like layout): left stick move, right stick camera, R1 attack (tap/hold),
     // L1 block, B/Circle roll/sprint, A/Cross jump, X/Square drink, Y/Triangle interact,
     // R3 lock-on, Start inventory.
@@ -76,6 +97,15 @@ pub fn default_input_map() -> InputMap<Action> {
     .with(Action::Interact, GamepadButton::North)
     .with(Action::LockOn, GamepadButton::RightThumb)
     .with(Action::Inventory, GamepadButton::Start)
+}
+
+/// New key bindings take effect at once.
+fn rebind_player(settings: Res<Settings>, mut maps: Query<&mut InputMap<Action>, With<crate::player::Player>>) {
+    if settings.is_changed() && !settings.is_added() {
+        for mut map in &mut maps {
+            *map = input_map(&settings.bindings);
+        }
+    }
 }
 
 /// True while a menu (the inventory) has the input: the character gets no movement or actions,

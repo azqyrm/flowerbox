@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use super::action::{ActionKind, CharacterAction};
 use super::controller::CharacterController;
-use super::guard::{Guard, GuardOutcome, Parried};
+use super::guard::{Blocked, Guard, GuardOutcome, Parried};
 use crate::tuning::*;
 
 #[derive(Component, Debug, Clone)]
@@ -101,6 +101,7 @@ pub fn apply_damage(
     mut messages: MessageReader<DamageMessage>,
     mut taken: MessageWriter<DamageTaken>,
     mut parried: MessageWriter<Parried>,
+    mut blocked: MessageWriter<Blocked>,
     mut q: Query<(
         &mut Health,
         Option<&mut CharacterAction>,
@@ -134,6 +135,7 @@ pub fn apply_damage(
                 GuardOutcome::Blocked { through, stamina_cost } => {
                     info!("blocked {} damage ({through:.0} through, {stamina_cost:.0} stamina)", msg.amount);
                     stamina.spend(stamina_cost);
+                    blocked.write(Blocked { defender: msg.target });
                     amount = through;
                     stagger = false;
                 }
@@ -142,6 +144,7 @@ pub fn apply_damage(
                     stamina.current = 0.0;
                     stamina.regen_delay = STAMINA_REGEN_DELAY;
                     guard.raised_for = None;
+                    blocked.write(Blocked { defender: msg.target });
                     amount = through;
                 }
             }

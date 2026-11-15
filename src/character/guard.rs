@@ -85,6 +85,12 @@ pub enum GuardOutcome {
     Broken { through: f32 },
 }
 
+/// A raised guard stopped (or broke under) a hit — for the clang.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct Blocked {
+    pub defender: Entity,
+}
+
 /// A guard parried an attack. `attacker` is the entity that swung, when known.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct Parried {
