@@ -144,9 +144,15 @@ const STEM_UPRIGHT: [f32; STEM_SEGMENTS] = [0.0, 0.01, 0.02, 0.02, 0.03, 0.04, 0
 /// Head pitch relative to the stem tip (positive = face looks up).
 const HEAD_DROOP: f32 = -0.5;
 const HEAD_UPRIGHT: f32 = 0.3;
-/// Petal fold (rad about the petal's base; positive = folded back, wilted).
-const PETAL_DROOP: f32 = 1.15;
+/// Petal fold (rad about the petal's base on the rim of the seed disc; negative = toward the face).
+/// Wilted petals hang forward past the face, which looks at the ground while the head droops (a
+/// fold toward the back made them stick up over the bowed head, detached from it). Open, they cup
+/// forward a little.
+const PETAL_DROOP: f32 = -1.25;
 const PETAL_UPRIGHT: f32 = -0.12;
+/// Petals are hinged on this circle (just inside the seed disc's edge), and half as long as this.
+const PETAL_RIM: f32 = 0.23;
+const PETAL_HALF_LENGTH: f32 = 0.15;
 /// Leaf tilt (rad; negative hangs down).
 const LEAF_DROOP: f32 = -1.0;
 const LEAF_UPRIGHT: f32 = 0.35;
@@ -319,7 +325,8 @@ pub fn spawn_sunflower(
             commands,
             Sphere::new(1.0).into(),
             &petal,
-            Transform::from_xyz(0.0, 0.36, 0.0).with_scale(Vec3::new(0.07, 0.15, 0.012)),
+            // From the hinge outward, so folding keeps the base on the rim.
+            Transform::from_xyz(0.0, PETAL_HALF_LENGTH, 0.0).with_scale(Vec3::new(0.07, PETAL_HALF_LENGTH, 0.012)),
             p,
         );
     }
@@ -382,7 +389,9 @@ fn animate_hearth(
         for &e in &parts.petals {
             let (Ok(petal), Ok(mut tf)) = (petals.get(e), transforms.get_mut(e)) else { continue };
             let fold = lerp(PETAL_DROOP + 0.25 * petal.jitter, PETAL_UPRIGHT + 0.05 * petal.jitter);
-            tf.rotation = Quat::from_rotation_z(petal.around) * Quat::from_rotation_x(fold);
+            let around = Quat::from_rotation_z(petal.around);
+            tf.translation = around * Vec3::Y * PETAL_RIM;
+            tf.rotation = around * Quat::from_rotation_x(fold);
         }
         for &e in &parts.leaves {
             let (Ok(leaf), Ok(mut tf)) = (leaves.get(e), transforms.get_mut(e)) else { continue };
