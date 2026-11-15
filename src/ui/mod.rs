@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 
 pub mod hud;
+pub mod strings;
 
 pub struct UiPlugin;
 
@@ -13,7 +14,7 @@ impl Plugin for UiPlugin {
     }
 }
 
-/// A big centred announcement that fades in and out (e.g. "HEARTH KINDLED").
+/// A big centred announcement that fades in and out (e.g. `strings::HEARTH_REKINDLED`).
 #[derive(Message, Debug, Clone, Copy)]
 pub struct Banner(pub &'static str);
 

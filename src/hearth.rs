@@ -1,11 +1,12 @@
-//! The Hearth (the bonfire equivalent) and the death → respawn flow.
+//! The Hearth (the bonfire equivalent, shown as a sunflower) and the death → respawn flow.
+//! Player-facing wording lives in `ui::strings`.
 //!
-//! - **Resting:** near the Hearth the HUD shows "[E] Rest at Hearth" (or "Kindle" the first
-//!   time). E starts `ActionKind::Rest` (kneel, rest, stand up). When the rest begins (its
+//! - **Resting:** near the Hearth the HUD shows a rest prompt (a "tend" prompt the first
+//!   time, while the sunflower still droops; the first rest makes it stand up). E starts `ActionKind::Rest` (kneel, rest, stand up). When the rest begins (its
 //!   active phase) HP, stamina and Healing Ale are restored, the Hearth becomes the respawn
 //!   point and the world resets ([`WorldReset`]: the training dummy stands back up).
 //! - **Death:** `ActionKind::Dead` never ends by itself. [`DeathSequence`] runs the familiar
-//!   flow: fall → "YOU DIED" → fade to black → respawn at the Hearth with everything restored
+//!   flow: fall → death band (`strings::DEATH`) → fade to black → respawn at the Hearth with everything restored
 //!   → fade back in. The teleport happens in `Update` while the screen is black, which also
 //!   resets transform interpolation (no smear across the arena, N11).
 
@@ -22,7 +23,7 @@ use crate::healing::HealingAle;
 use crate::input::PlayerInput;
 use crate::player::Player;
 use crate::tuning::*;
-use crate::ui::Banner;
+use crate::ui::{Banner, strings};
 
 pub struct HearthPlugin;
 
@@ -38,7 +39,7 @@ impl Plugin for HearthPlugin {
 
 #[derive(Component, Debug)]
 pub struct Hearth {
-    /// Unlit Hearths only smoulder; the first rest kindles them.
+    /// Unrested Hearths droop; the first rest revives ("kindles") them.
     pub kindled: bool,
 }
 
@@ -74,7 +75,7 @@ pub struct DeathSequence {
     pub respawned: bool,
 }
 
-/// (YOU DIED text alpha, black screen alpha) `t` seconds after death.
+/// (death text alpha, black screen alpha) `t` seconds after death.
 pub fn death_screen(t: f32) -> (f32, f32) {
     let respawn_at = DEATH_FADE_OUT_AT + DEATH_FADE_OUT;
     let text = ((t - DEATH_TEXT_DELAY) / DEATH_TEXT_FADE).clamp(0.0, 1.0);
@@ -97,21 +98,78 @@ fn replenish(health: &mut Health, stamina: &mut Stamina, ale: Option<Mut<Healing
     }
 }
 
-// ── The Hearth ───────────────────────────────────────────────────────────
+// ── The Hearth: a sunflower ──────────────────────────────────────────────
+//
+// An unrested Hearth is a depressed sunflower: the stem bowed over, the head hanging toward
+// the ground, petals wilted back and dull. Resting by it for the first time revives it: over
+// ~2 s it straightens up (with a little overshoot), lifts its face toward the arena, and its
+// petals open and turn gold. Its warm light grows with it.
 
-/// Fire parts that flicker: flame cones (scaled) and the light (intensity).
+/// Stem segments from the soil up.
+const STEM_SEGMENTS: usize = 7;
+const STEM_SEGMENT_LENGTH: f32 = 0.32;
+/// Per-segment bend (rad about local X; negative bows forward, toward the arena), drooping…
+const STEM_DROOP: [f32; STEM_SEGMENTS] = [-0.04, -0.1, -0.18, -0.32, -0.45, -0.55, -0.6];
+/// …and standing (a slight natural curve).
+const STEM_UPRIGHT: [f32; STEM_SEGMENTS] = [0.0, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05];
+/// Head pitch relative to the stem tip (positive = face looks up).
+const HEAD_DROOP: f32 = -0.5;
+const HEAD_UPRIGHT: f32 = 0.3;
+/// Petal fold (rad about the petal's base; positive = folded back, wilted).
+const PETAL_DROOP: f32 = 1.15;
+const PETAL_UPRIGHT: f32 = -0.12;
+/// Leaf tilt (rad; negative hangs down).
+const LEAF_DROOP: f32 = -1.0;
+const LEAF_UPRIGHT: f32 = 0.35;
+const PETALS: usize = 20;
+/// How long the sunflower takes to stand up once revived.
+const STAND_UP_TIME: f32 = 2.2;
+
 #[derive(Component)]
-struct HearthFlame {
-    phase: f32,
-    base: Vec3,
+struct StemSegment(usize);
+
+#[derive(Component)]
+struct FlowerHead;
+
+#[derive(Component)]
+struct Petal {
+    /// Small per-petal variation so the wilt looks organic.
+    jitter: f32,
+    around: f32,
+}
+
+#[derive(Component)]
+struct Leaf {
+    yaw: f32,
 }
 
 #[derive(Component)]
 struct HearthLight;
 
-/// Glowing coals; their emissive strength follows the fire.
+/// Materials that change colour as the sunflower revives.
 #[derive(Component)]
-struct HearthCoals(Handle<StandardMaterial>);
+struct SunflowerMaterials {
+    petal: Handle<StandardMaterial>,
+    stem: Handle<StandardMaterial>,
+}
+
+/// Wilted and vigorous colours (sRGB).
+const PETAL_WILTED: [f32; 3] = [0.5, 0.38, 0.15];
+const PETAL_VIGOROUS: [f32; 3] = [1.0, 0.76, 0.08];
+const STEM_WILTED: [f32; 3] = [0.3, 0.3, 0.14];
+const STEM_VIGOROUS: [f32; 3] = [0.22, 0.48, 0.13];
+
+fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> Color {
+    Color::srgb(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
+}
+
+/// Ease with a small overshoot, so the flower springs up rather than slides.
+fn ease_out_back(x: f32) -> f32 {
+    let c1 = 1.3;
+    let c3 = c1 + 1.0;
+    let x = x.clamp(0.0, 1.0) - 1.0;
+    1.0 + c3 * x * x * x + c1 * x * x
+}
 
 fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let stone = materials.add(StandardMaterial {
@@ -119,118 +177,175 @@ fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
         perceptual_roughness: 0.95,
         ..default()
     });
-    let ash = materials.add(StandardMaterial { base_color: Color::srgb(0.09, 0.08, 0.08), perceptual_roughness: 1.0, ..default() });
-    let wood = materials.add(StandardMaterial { base_color: Color::srgb(0.2, 0.12, 0.07), perceptual_roughness: 0.9, ..default() });
-    let coals = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.25, 0.08, 0.02),
-        emissive: LinearRgba::rgb(3.0, 0.7, 0.1),
+    let soil = materials.add(StandardMaterial { base_color: Color::srgb(0.13, 0.09, 0.06), perceptual_roughness: 1.0, ..default() });
+    let stem = materials.add(StandardMaterial { base_color: mix(STEM_WILTED, STEM_WILTED, 0.0), perceptual_roughness: 0.8, ..default() });
+    let petal = materials.add(StandardMaterial {
+        base_color: mix(PETAL_WILTED, PETAL_WILTED, 0.0),
+        perceptual_roughness: 0.7,
+        double_sided: true,
+        cull_mode: None,
         ..default()
     });
-    let flame = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.55, 0.15),
-        emissive: LinearRgba::rgb(20.0, 6.5, 1.0),
-        unlit: true,
-        ..default()
-    });
+    let seeds = materials.add(StandardMaterial { base_color: Color::srgb(0.16, 0.09, 0.04), perceptual_roughness: 0.95, ..default() });
+    let calyx = materials.add(StandardMaterial { base_color: Color::srgb(0.2, 0.32, 0.1), perceptual_roughness: 0.85, ..default() });
+
     let (x, z) = HEARTH_POSITION;
+    let (_, facing) = Hearth::respawn_spot(&Transform::from_xyz(x, 0.0, z));
     let hearth = commands
         .spawn((
-            Name::new("Hearth"),
+            Name::new("Hearth (Sunflower)"),
             Hearth { kindled: false },
-            Transform::from_xyz(x, 0.0, z),
+            SunflowerMaterials { petal: petal.clone(), stem: stem.clone() },
+            // Local -Z faces the arena centre, so the flower bows (and later looks) that way.
+            Transform::from_xyz(x, 0.0, z).with_rotation(Quat::from_rotation_y(facing)),
             Visibility::default(),
             RigidBody::Static,
         ))
         .id();
-    let mut part = |commands: &mut Commands, mesh: Mesh, mat: &Handle<StandardMaterial>, t: Transform| {
-        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat.clone()), t, ChildOf(hearth))).id()
+    let mut mesh = |commands: &mut Commands, mesh: Mesh, mat: &Handle<StandardMaterial>, t: Transform, parent: Entity| {
+        commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat.clone()), t, ChildOf(parent))).id()
     };
-    // Low ring of stones around an ash bed.
-    part(&mut commands, Cylinder::new(0.58, 0.04).into(), &ash, Transform::from_xyz(0.0, 0.02, 0.0));
+    let pivot = |commands: &mut Commands, t: Transform, parent: Entity| commands.spawn((t, Visibility::default(), ChildOf(parent))).id();
+
+    // A ring of stones around a mound of soil.
+    mesh(&mut commands, Sphere::new(1.0).into(), &soil, Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::new(0.58, 0.12, 0.58)), hearth);
     for i in 0..10 {
         let a = i as f32 / 10.0 * TAU;
         let s = 0.85 + 0.3 * ((i * 7 % 5) as f32 / 4.0);
-        part(
+        mesh(
             &mut commands,
             Cuboid::new(0.3 * s, 0.2 * s, 0.2).into(),
             &stone,
             Transform::from_xyz(a.cos() * 0.62, 0.09 * s, a.sin() * 0.62).with_rotation(Quat::from_rotation_y(-a + 1.57)),
+            hearth,
         );
     }
-    let coal_entity = part(&mut commands, Cylinder::new(0.36, 0.06).into(), &coals, Transform::from_xyz(0.0, 0.05, 0.0));
-    commands.entity(coal_entity).insert(HearthCoals(coals.clone()));
-    // Three logs leaning into a teepee.
-    for i in 0..3 {
-        let a = i as f32 / 3.0 * TAU + 0.4;
-        let dir = Vec3::new(a.cos(), 0.0, a.sin());
-        part(
+
+    // The stem: a chain of pivots, each bending a little.
+    let mut parent = hearth;
+    let mut at = Vec3::Y * 0.08;
+    for i in 0..STEM_SEGMENTS {
+        let seg = commands
+            .spawn((StemSegment(i), Transform::from_translation(at), Visibility::default(), ChildOf(parent)))
+            .id();
+        let r = 0.05 - 0.003 * i as f32;
+        mesh(
             &mut commands,
-            Cylinder::new(0.055, 0.75).into(),
-            &wood,
-            Transform::from_translation(dir * 0.2 + Vec3::Y * 0.25)
-                .with_rotation(Quat::from_axis_angle(dir.cross(Vec3::Y).normalize(), -0.75)),
+            Cylinder::new(r, STEM_SEGMENT_LENGTH + 0.02).into(),
+            &stem,
+            Transform::from_xyz(0.0, STEM_SEGMENT_LENGTH * 0.5, 0.0),
+            seg,
         );
+        if i == 1 || i == 3 {
+            // A pair of leaves, alternating sides.
+            for side in [0.0, std::f32::consts::PI] {
+                let yaw = side + if i == 1 { 0.3 } else { 1.7 };
+                let leaf = commands
+                    .spawn((Leaf { yaw }, Transform::from_xyz(0.0, STEM_SEGMENT_LENGTH * 0.5, 0.0), Visibility::default(), ChildOf(seg)))
+                    .id();
+                mesh(
+                    &mut commands,
+                    Sphere::new(1.0).into(),
+                    &stem,
+                    Transform::from_xyz(0.2, 0.0, 0.0).with_scale(Vec3::new(0.21, 0.014, 0.1)),
+                    leaf,
+                );
+            }
+        }
+        parent = seg;
+        at = Vec3::Y * STEM_SEGMENT_LENGTH;
     }
-    // Flames: a tall one in the middle and two smaller licks.
-    for (i, (offset, size)) in [(Vec3::new(0.0, 0.0, 0.0), 1.0), (Vec3::new(0.14, 0.0, 0.06), 0.65), (Vec3::new(-0.12, 0.0, -0.08), 0.7)]
-        .into_iter()
-        .enumerate()
-    {
-        let base = Vec3::new(size, size, size);
-        let e = part(
+
+    // The head: a green calyx behind, the dark seed disc in front (facing local -Z), petals around.
+    let head = commands.spawn((FlowerHead, Transform::from_translation(at), Visibility::default(), ChildOf(parent))).id();
+    let disc = |z: f32| Transform::from_xyz(0.0, 0.08, z).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
+    mesh(&mut commands, Cylinder::new(0.2, 0.08).into(), &calyx, disc(-0.04), head);
+    mesh(&mut commands, Cylinder::new(0.25, 0.06).into(), &seeds, disc(-0.1), head);
+    mesh(&mut commands, Sphere::new(1.0).into(), &seeds, Transform::from_xyz(0.0, 0.08, -0.13).with_scale(Vec3::new(0.22, 0.22, 0.04)), head);
+    let ring = pivot(&mut commands, Transform::from_xyz(0.0, 0.08, -0.08), head);
+    for i in 0..PETALS {
+        let around = i as f32 / PETALS as f32 * TAU;
+        let jitter = ((i * 37 % 11) as f32 / 10.0 - 0.5) * 2.0;
+        let p = commands.spawn((Petal { jitter, around }, Transform::default(), Visibility::default(), ChildOf(ring))).id();
+        mesh(
             &mut commands,
-            Cone { radius: 0.17, height: 0.6 }.into(),
-            &flame,
-            Transform::from_translation(offset + Vec3::Y * 0.36).with_scale(base),
+            Sphere::new(1.0).into(),
+            &petal,
+            Transform::from_xyz(0.0, 0.36, 0.0).with_scale(Vec3::new(0.07, 0.15, 0.012)),
+            p,
         );
-        commands.entity(e).insert(HearthFlame { phase: i as f32 * 2.1, base });
     }
     commands.spawn((
         Name::new("Hearth Light"),
         HearthLight,
         PointLight {
-            color: Color::srgb(1.0, 0.52, 0.18),
+            color: Color::srgb(1.0, 0.78, 0.42),
             intensity: 0.0,
             range: 11.0,
             radius: 0.2,
             shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_xyz(0.0, 0.75, 0.0),
-        ChildOf(hearth),
+        // In front of the face, so the light falls where the flower looks.
+        Transform::from_xyz(0.0, 0.3, -1.3),
+        ChildOf(head),
     ));
-    // Solid, so nobody walks through the fire.
-    commands.spawn((Collider::cylinder(0.75, 1.2), Transform::from_xyz(0.0, 0.6, 0.0), ChildOf(hearth)));
+    // Solid, so nobody walks through the flower bed.
+    commands.spawn((Collider::cylinder(0.72, 1.2), Transform::from_xyz(0.0, 0.6, 0.0), ChildOf(hearth)));
 }
 
-/// Fire flicker. Smouldering (unlit) Hearths have tiny flames and a dim glow; kindling
-/// grows them over a second.
+/// Bends the sunflower between drooping and standing, with a gentle sway, and blends its
+/// colours and light. Reviving (the first rest) takes `STAND_UP_TIME`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn animate_hearth(
     time: Res<Time>,
-    mut size: Local<f32>,
-    hearths: Query<&Hearth>,
-    mut flames: Query<(&HearthFlame, &mut Transform)>,
+    mut revive: Local<f32>,
+    hearths: Query<(&Hearth, &SunflowerMaterials)>,
+    mut segments: Query<(&StemSegment, &mut Transform), (Without<FlowerHead>, Without<Petal>, Without<Leaf>)>,
+    mut heads: Query<&mut Transform, (With<FlowerHead>, Without<Petal>, Without<Leaf>)>,
+    mut petals: Query<(&Petal, &mut Transform), Without<Leaf>>,
+    mut leaves: Query<(&Leaf, &mut Transform), Without<Petal>>,
     mut lights: Query<&mut PointLight, With<HearthLight>>,
-    coals: Query<&HearthCoals>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let t = time.elapsed_secs();
-    let kindled = hearths.iter().any(|h| h.kindled);
-    *size += ((if kindled { 1.0 } else { 0.0 }) - *size) * (1.0 - (-2.5 * time.delta_secs()).exp());
-    let fire = 0.25 + 0.75 * *size;
-    let flicker = |p: f32| 1.0 + 0.12 * (t * 8.1 + p).sin() + 0.07 * (t * 14.3 + p * 1.9).sin() + 0.05 * (t * 21.7 + p * 3.1).sin();
-    for (flame, mut tf) in &mut flames {
-        let f = flicker(flame.phase);
-        tf.scale = flame.base * Vec3::new(0.9 + 0.1 * f, f, 0.9 + 0.1 * f) * fire.powf(1.5);
+    let Some((hearth, mats)) = hearths.iter().next() else { return };
+    let target = if hearth.kindled { 1.0 } else { 0.0 };
+    let step = time.delta_secs() / STAND_UP_TIME;
+    *revive = if *revive < target { (*revive + step).min(target) } else { (*revive - step).max(target) };
+    let up = ease_out_back(*revive);
+    let lerp = |a: f32, b: f32| a + (b - a) * up;
+
+    // Drooping: a slow, heavy sway. Standing: a lighter breeze.
+    let (sway_amp, sway_freq) = (lerp(0.025, 0.018), lerp(0.55, 1.1));
+    let sway = |phase: f32| (t * sway_freq + phase).sin() * sway_amp;
+    for (seg, mut tf) in &mut segments {
+        let i = seg.0;
+        let k = (i + 1) as f32 / STEM_SEGMENTS as f32;
+        let pitch = lerp(STEM_DROOP[i], STEM_UPRIGHT[i]) + sway(0.0) * k;
+        let roll = sway(1.7) * k * 0.7;
+        tf.rotation = Quat::from_rotation_x(pitch) * Quat::from_rotation_z(roll);
     }
+    for mut tf in &mut heads {
+        tf.rotation = Quat::from_rotation_x(lerp(HEAD_DROOP, HEAD_UPRIGHT) + sway(0.9) * 1.5);
+    }
+    for (petal, mut tf) in &mut petals {
+        let fold = lerp(PETAL_DROOP + 0.25 * petal.jitter, PETAL_UPRIGHT + 0.05 * petal.jitter);
+        tf.rotation = Quat::from_rotation_z(petal.around) * Quat::from_rotation_x(fold);
+    }
+    for (leaf, mut tf) in &mut leaves {
+        tf.rotation = Quat::from_rotation_y(leaf.yaw) * Quat::from_rotation_z(lerp(LEAF_DROOP, LEAF_UPRIGHT) + sway(2.3) * 2.0);
+    }
+    let shown = revive.clamp(0.0, 1.0);
     for mut light in &mut lights {
-        light.intensity = (30_000.0 + 420_000.0 * *size) * flicker(0.7);
+        light.intensity = 30_000.0 + 380_000.0 * shown * (1.0 + 0.03 * (t * 1.3).sin());
     }
-    for c in &coals {
-        if let Some(mut mat) = materials.get_mut(&c.0) {
-            let g = (1.0 + 2.5 * *size) * flicker(4.0);
-            mat.emissive = LinearRgba::rgb(3.0 * g, 0.7 * g, 0.1 * g);
-        }
+    if let Some(mut m) = materials.get_mut(&mats.petal) {
+        m.base_color = mix(PETAL_WILTED, PETAL_VIGOROUS, shown);
+        m.emissive = LinearRgba::rgb(0.18 * shown, 0.1 * shown, 0.0);
+    }
+    if let Some(mut m) = materials.get_mut(&mats.stem) {
+        m.base_color = mix(STEM_WILTED, STEM_VIGOROUS, shown);
     }
 }
 
@@ -255,7 +370,7 @@ fn hearth_interaction(
     if dying || action.current.is_some() || !ctrl.grounded {
         return;
     }
-    prompt.0 = Some(if hearth.kindled { "[E] Rest at Hearth" } else { "[E] Kindle the Hearth" });
+    prompt.0 = Some(if hearth.kindled { strings::PROMPT_REST } else { strings::PROMPT_REKINDLE });
     if interact {
         intent.buffer(ActionRequest::Rest);
     }
@@ -265,7 +380,7 @@ fn hearth_interaction(
 #[derive(Component, Default)]
 struct RestApplied(Option<u32>);
 
-/// While kneeling: turn toward the Hearth; when the rest begins, restore everything.
+/// While kneeling: turn toward the sunflower; when the rest begins, restore everything.
 #[allow(clippy::type_complexity)]
 fn rest_at_hearth(
     time: Res<Time>,
@@ -292,7 +407,7 @@ fn rest_at_hearth(
         else {
             continue;
         };
-        // Face the fire (smoothly; movement is locked, so nothing else turns us).
+        // Face the flower (smoothly; movement is locked, so nothing else turns us).
         let to = (htf.translation - tf.translation).with_y(0.0);
         if to.length_squared() > 1e-4 {
             let target = f32::atan2(-to.x, -to.z);
@@ -314,7 +429,7 @@ fn rest_at_hearth(
         reset.write(WorldReset);
         if !hearth.kindled {
             hearth.kindled = true;
-            banner.write(Banner("HEARTH KINDLED"));
+            banner.write(Banner(strings::HEARTH_REKINDLED));
             info!("hearth kindled");
         }
         info!("rested at the hearth: HP, stamina and Healing Ale restored");
@@ -327,7 +442,7 @@ fn start_death_sequence(mut commands: Commands, dead: Query<(Entity, &CharacterA
     for (entity, action) in &dead {
         if matches!(action.current, Some(a) if a.kind == ActionKind::Dead) {
             commands.entity(entity).insert(DeathSequence::default());
-            info!("YOU DIED");
+            info!("{}", strings::DEATH);
         }
     }
 }
@@ -387,7 +502,7 @@ mod tests {
     fn death_screen_flow() {
         let respawn = DEATH_FADE_OUT_AT + DEATH_FADE_OUT;
         assert_eq!(death_screen(0.2), (0.0, 0.0), "watch the fall first");
-        assert_eq!(death_screen(DEATH_TEXT_DELAY + DEATH_TEXT_FADE + 0.1), (1.0, 0.0), "YOU DIED");
+        assert_eq!(death_screen(DEATH_TEXT_DELAY + DEATH_TEXT_FADE + 0.1), (1.0, 0.0), "death band shown");
         assert_eq!(death_screen(respawn - 1e-3).1.round(), 1.0, "black before the respawn");
         assert_eq!(death_screen(respawn + 1e-3).0, 0.0, "text gone after the respawn");
         assert_eq!(death_screen(respawn + RESPAWN_FADE_IN + 0.1), (0.0, 0.0), "faded back in");

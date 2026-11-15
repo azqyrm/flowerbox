@@ -151,7 +151,8 @@ claude_ds/
    ├─ hearth.rs         # Hearth (kindle/rest), RespawnPoint, WorldReset, DeathSequence → respawn
    └─ ui/
       ├─ mod.rs         # UiPlugin, Banner message, display font path
-      ├─ hud.rs         # bars, Ale, equipment quadrant, prompt, banner, YOU DIED + fades
+      ├─ hud.rs         # bars, Ale, equipment quadrant, prompt, banner, death band + fades
+      ├─ strings.rs     # all player-facing wording (COMPOSTED, SUN VIGORATED, prompts)
       └─ inventory_ui.rs  (Phase 7)
 ```
 
@@ -270,6 +271,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | Hearths start **unlit** (smouldering); the first rest kindles them ("HEARTH KINDLED"). Resting = the `Rest` action (kneel 0.7 s, rest, stand 0.8 s); its effect lands at the start of the active phase. Death respawns at the last Hearth rested at, or the first Hearth if none. |
 | 2026-11-14 | `Dead` never ends by itself (infinite recovery). Whoever owns revival (the Hearth's `DeathSequence` for the player) calls `CharacterAction::revive()`. Future enemies stay dead until a `WorldReset`. |
 | 2026-11-14 | UI display font: PT Serif (ParaType Free Font License, `assets/fonts/PTSerif-LICENSE.txt`), for banners and YOU DIED. Body text uses Bevy's default font. |
+| 2026-11-15 | The Hearth is shown as a **sunflower**: drooping and wilted until first rested at, then it stands up over 2.2 s (`STAND_UP_TIME`), turns gold and lights the area. Death text is "COMPOSTED", the revive banner "SUN VIGORATED". All player-facing wording lives in `src/ui/strings.rs`; code keeps the names `Hearth`/`kindled`. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
