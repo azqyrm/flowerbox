@@ -17,6 +17,8 @@
 //!   (see `inventory_script`).
 //! - `FLOWERBOX_AUTOPILOT=guard` → shield block, parry, hits from behind, guard break (see
 //!   `guard_script`).
+//! - `FLOWERBOX_AUTOPILOT=enemy` → a Hollow fight: hits taken, lock-on, a timed parry, riposte,
+//!   kill, world reset (see `enemy_script`). The only autopilot with enemies in the arena.
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 
@@ -32,6 +34,10 @@ use crate::character::guard::Guard;
 use crate::combat::{Dummy, blade_world};
 use crate::healing::HealingAle;
 use crate::items::ItemId;
+use crate::enemy::{Enemy, HollowAi};
+use crate::character::MoveIntent;
+use crate::hearth::WorldReset;
+use crate::lockon::LockOn;
 use crate::ui::inventory_ui::{Filter, InventoryMenu};
 use crate::items::inventory::{EquipRequest, EquipSlot, Equipment, Inventory};
 use crate::weapon::EquippedWeapon;
@@ -73,6 +79,15 @@ impl Plugin for DebugPlugin {
             Ok("guard") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: Some(guard_held) })
                     .add_systems(Update, (guard_script, log_ale));
+            }
+            Ok("enemy") => {
+                app.insert_resource(Autopilot {
+                    movement: Some(|_, _| (Vec3::ZERO, false, false)),
+                    attack_button: None,
+                    guard_button: Some(|_| AUTO_GUARD.load(std::sync::atomic::Ordering::Relaxed)),
+                })
+                .init_resource::<EnemyScript>()
+                .add_systems(Update, (enemy_script, log_ale));
             }
             Ok("wall") => {
                 app.insert_resource(Autopilot { movement: Some(wall_movement), attack_button: None, guard_button: None })
@@ -282,6 +297,7 @@ fn draw_guard_arc(mut gizmos: Gizmos, overlay: Query<&Visibility, With<DebugOver
 
 // ── Debug keys (debug builds only) ───────────────────────────────────────
 
+#[allow(clippy::type_complexity)]
 fn debug_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut damage: MessageWriter<DamageMessage>,
@@ -697,5 +713,94 @@ fn guard_script(
             info!("autopilot: {amount} damage from the {} (stamina {:.0})", if behind { "back" } else { "front" }, stamina.current);
             damage.write(DamageMessage { target: entity, amount, from: Some(from), attacker: None });
         }
+    }
+}
+
+// ── Enemy autopilot (FLOWERBOX_AUTOPILOT=enemy) ─────────────────────────
+
+/// The enemy script's block button (the autopilot's `guard_button` is a plain fn).
+static AUTO_GUARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[derive(Resource, Default)]
+struct EnemyScript {
+    guard_until: f32,
+    died_at: Option<f32>,
+    reset_sent: bool,
+}
+
+/// A Hollow fight. 0.3 s: the Hollow is moved 4 m in front of the player (its new home) and the
+/// shield equipped → it attacks; the player just takes the first swings → 3.0 lock on → from
+/// 5.0 the player raises the shield timed to the Hollow's swings (parry window) → "parried",
+/// "attacker stunned" → light attack: "RIPOSTE" (50) → more light attacks until "a Hollow falls"
+/// → lock-on lost when it dies → 5 s later a WorldReset: "enemies reset".
+#[allow(clippy::type_complexity)]
+fn enemy_script(
+    time: Res<Time>,
+    mut state: ResMut<EnemyScript>,
+    mut equip: MessageWriter<EquipRequest>,
+    mut reset: MessageWriter<WorldReset>,
+    mut player: Query<(Entity, &Transform, &CharacterAction, &mut ActionIntent, &mut LockOn), With<Player>>,
+    mut hollows: Query<(Entity, &mut Enemy, &mut Transform, &CharacterAction, &Health, &HollowAi, &ActionIntent, &MoveIntent), Without<Player>>,
+) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let Ok((pe, ptf, paction, mut intent, mut lock)) = player.single_mut() else { return };
+    let Ok((he, mut enemy, mut htf, haction, hhp, ai, hintent, hmove)) = hollows.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    if (t * 2.0).floor() != ((t - dt) * 2.0).floor() {
+        let dist = (htf.translation - ptf.translation).with_y(0.0).length();
+        info!(
+            "hollow {:?} dist {dist:.2} action {:?} buffered {:?} move {:.2} hp {:.0}",
+            ai.state,
+            haction.current.map(|a| a.kind),
+            hintent.buffered,
+            hmove.dir.length(),
+            hhp.current
+        );
+    }
+    if crossed(t, dt, 0.3) {
+        htf.translation = Vec3::new(0.0, htf.translation.y, 4.0);
+        enemy.home = htf.translation.with_y(0.0);
+        equip.write(EquipRequest { character: pe, index: 2, equip: true });
+    }
+    if crossed(t, dt, 3.0) {
+        lock.target = Some(he);
+        info!("autopilot: lock on");
+    }
+    // Parry: raise the shield so the Hollow's blade arrives in the parry window.
+    if t > 5.0 && !hhp.is_dead() {
+        if let Some(a) = haction.current
+            && matches!(a.kind, ActionKind::LightAttack(_))
+            && t > state.guard_until + 0.3
+        {
+            let hit_at = a.def.startup + 0.04;
+            let lead = GUARD_RAISE_TIME * (PARRY_WINDOW_START + 1.0) * 0.5;
+            if a.elapsed >= hit_at - lead && a.elapsed < hit_at - lead + 0.05 {
+                state.guard_until = t + 0.6;
+                info!("autopilot: raise shield (hollow swing at {:.2}s)", a.elapsed);
+            }
+        }
+        // Punish: riposte a stunned Hollow, keep hitting while it reels.
+        let dist = (htf.translation - ptf.translation).with_y(0.0).length();
+        let opening = matches!(haction.current.map(|a| a.kind), Some(ActionKind::Stunned | ActionKind::Hurt));
+        if opening && dist < 2.4 && paction.current.is_none() && intent.buffered.is_none() {
+            info!("autopilot: attack");
+            intent.buffer(ActionRequest::LightAttack);
+        }
+    }
+    // Drop the shield once the Hollow reels (to riposte).
+    if matches!(haction.current.map(|a| a.kind), Some(ActionKind::Stunned | ActionKind::Hurt)) {
+        state.guard_until = state.guard_until.min(t);
+    }
+    AUTO_GUARD.store(t < state.guard_until, Relaxed);
+    if hhp.is_dead() && state.died_at.is_none() {
+        state.died_at = Some(t);
+    }
+    if let Some(d) = state.died_at
+        && t > d + 5.0
+        && !state.reset_sent
+    {
+        state.reset_sent = true;
+        info!("autopilot: world reset");
+        reset.write(WorldReset);
     }
 }

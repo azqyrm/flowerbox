@@ -107,6 +107,8 @@ pub struct HumanoidLook {
     pub bottom: Color,
     pub boots: Color,
     pub hair: Color,
+    /// Glowing eyes (emissive), e.g. for Hollows. `None` = plain dark eyes.
+    pub eye_glow: Option<LinearRgba>,
 }
 
 /// Proportions (metres) and look of a humanoid. Swap this to get a different body.
@@ -158,7 +160,28 @@ impl HumanoidSpec {
                 bottom: Color::srgb(0.15, 0.14, 0.13),
                 boots: Color::srgb(0.12, 0.08, 0.05),
                 hair: Color::srgb(0.12, 0.08, 0.05),
+                eye_glow: None,
             },
+        }
+    }
+
+    /// A Hollow: same skeleton (so every animation fits), gaunt and grey, in rags, with
+    /// smouldering eyes.
+    pub fn hollow() -> Self {
+        Self {
+            torso: Vec3::new(0.38, 0.42, 0.21),
+            head_radius: 0.12,
+            arm_radius: 0.045,
+            leg_radius: 0.065,
+            look: HumanoidLook {
+                skin: Color::srgb(0.42, 0.43, 0.38),
+                top: Color::srgb(0.2, 0.18, 0.15),
+                bottom: Color::srgb(0.13, 0.12, 0.1),
+                boots: Color::srgb(0.08, 0.07, 0.06),
+                hair: Color::srgb(0.3, 0.3, 0.27),
+                eye_glow: Some(LinearRgba::rgb(6.0, 2.2, 0.4)),
+            },
+            ..Self::human()
         }
     }
 
@@ -230,7 +253,10 @@ pub fn spawn_humanoid(
     let bottom = mat(spec.look.bottom);
     let boots = mat(spec.look.boots);
     let hair = mat(spec.look.hair);
-    let dark = mat(Color::srgb(0.03, 0.03, 0.03));
+    let dark = match spec.look.eye_glow {
+        Some(glow) => materials.add(StandardMaterial { base_color: Color::BLACK, emissive: glow, ..default() }),
+        None => mat(Color::srgb(0.03, 0.03, 0.03)),
+    };
 
     let model = commands
         .spawn((Name::new("Humanoid Model"), Transform::from_xyz(0.0, -root_height, 0.0), Visibility::default()))

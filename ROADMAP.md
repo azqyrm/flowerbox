@@ -35,14 +35,15 @@
 | Action | Key | Notes |
 |---|---|---|
 | Move | **W A S D** | Relative to the camera |
-| Camera | **Mouse** | Third-person orbit camera; the cursor is locked during gameplay |
+| Camera | **Mouse** | Third-person orbit camera; the cursor is locked during gameplay. Gamepad: right stick |
 | Jump | **Space** | |
 | Dodge roll / sprint | **Left Shift** | Tap to roll (i-frames). Hold to sprint (familiar element). Rolling while standing still (no WASD input) does a backstep. There's no separate backstep input. |
 | Attack | **Left Mouse** | **Tap** (released within 0.25 s) = light attack. **Hold** (0.25 s or longer) = heavy attack, released when charged or automatically at full charge. **Tap while airborne** = jump attack (the jump attack is the airborne light attack). A heavy attack can't be done in the air. |
 | Block / parry | **Right Mouse** (hold) | Needs a shield in the left hand. Raising takes 0.3 s; the last third of the raise is the parry window. Blocks frontal hits only (±57°, `GUARD_ANGLE`; hits without a direction aren't blockable); costs stamina, breaks when stamina runs out. Slower walking, no sprint |
 | Drink Healing Ale | **R** | |
 | Interact / rest at Hearth | **E** | |
-| Lock-on target | **Q** or Middle Mouse | Familiar element (Phase 8) |
+| Lock-on target | **Q** or Middle Mouse | Locks the target nearest the view centre (≤15 m, ±63°); the camera follows it, you face it and strafe, attacks aim at it. Again = release. Nothing to lock = camera recentres behind you |
+| Gamepad | Souls-like | Left stick move, right stick camera, **R1** attack (tap/hold), **L1** block, **B/Circle** roll/sprint, **A/Cross** jump, **X/Square** drink, **Y/Triangle** interact, **R3** lock-on, **Start** inventory (inside: D-pad, L1/R1 filter, A equip, X unequip, B close) |
 | Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
 | Pause menu | **Esc** | |
 
@@ -140,10 +141,14 @@ claude_ds/
    │  └─ mod.rs         # Player = character_bundle + HumanoidSpec::human() + starting inventory + input
    ├─ weapon/          # weapon CLASSES (movesets + swing animations) and weapon DEFINITIONS (models)
    │  ├─ mod.rs         # WeaponClass, Moveset/AttackSpec/SwingKey/GuardSpec, WeaponDef, ModelSource, EquipWeapon
-   │  └─ light_sword.rs # LightSword moveset + Longsword / Rusted Shortsword / Rusted Axe / Fists
+   │  ├─ light_sword.rs # LightSword moveset + Longsword / Rusted Shortsword / Rusted Axe / Fists
+   │  └─ hollow_blade.rs # HollowBlade moveset (long wind-ups) + the Hollow's blade
    ├─ combat.rs         # blade hitbox via FK (uses the equipped WeaponDef), hitstop, camera shake, dummy
    ├─ debug.rs          # F3 overlay, debug keys, screenshots, autopilot scripts
    ├─ interact.rs       # InteractPrompt + InteractSystems order (pickups before the Hearth)
+   ├─ lockon.rs         # LockOn, Targetable, pick_target, MoveIntent::face while locked
+   ├─ enemy/
+   │  └─ mod.rs         # the Hollow: spawn, AI state machine (writes MoveIntent/ActionIntent), death, reset
    ├─ items/
    │  ├─ mod.rs         # ItemId → ItemDef registry (kind, icon, weight, absorption, block, HP bonus, weapon, model)
    │  ├─ inventory.rs   # Inventory, Equipment, EquipSlot, EquipRequest, EquipStats; weapon/model sync
@@ -156,6 +161,7 @@ claude_ds/
       ├─ hud.rs         # bars, Ale, equipment quadrant, prompt, banner, death band + fades
       ├─ icons.rs       # item icons drawn from UI nodes
       ├─ inventory_ui.rs # Tab/I screen: equipment, filters + grid, details, status preview
+      ├─ markers.rs     # lock-on dot and enemy health bars (world → screen)
       └─ strings.rs     # all player-facing wording (COMPOSTED, SUN VIGORATED, prompts)
 ```
 
@@ -239,14 +245,17 @@ claude_ds/
 - [ ] Chest/hand/leg armour items and models (slots exist)
 
 ### Phase 8 — Familiar extras (after the core works)
-- [ ] Lock-on (Q): the camera focuses the target and movement strafes around it
+- [x] Lock-on (Q): the camera focuses the target and movement strafes around it (attacks aim at it; Q with nothing in view recentres the camera)
 - [x] Block with a shield (RMB), which uses stamina (+ guard break, frontal arc only, slowed movement)
 - [x] Parry window in the last third of raising the shield: negates the hit, sends `Parried` (user request, 2026-11-15)
-- [ ] Parry **stuns the attacker** (riposte opening): needs enemies with `CharacterAction`; react to `Parried { attacker }` (N19)
-- [ ] Dual wielding / weapons in the left hand (N19)
-- [ ] Roll weight classes based on equip load
-- [ ] Gamepad bindings
-- [ ] Simple enemy (a hollow-type melee AI) to test i-frames against real attacks
+- [x] Parry **stuns the attacker** (`ActionKind::Stunned`, 1.8 s); the next hit on it is a riposte (×2.5)
+- [x] Roll weight classes based on equip load (Light fast roll / Medium / Heavy / Overloaded fat roll)
+- [x] Gamepad bindings (play + inventory screen; untested without a pad)
+- [x] Simple enemy: the Hollow (melee AI, telegraphed `HollowBlade` moveset, health bar, dies, resets on rest/respawn)
+- [ ] Dual wielding / weapons in the left hand (N19) — moved out of this phase's core, still open
+- [ ] Strafe animation while locked on (the legs still play the forward walk when moving sideways)
+- [ ] Switching lock-on targets (mouse flick / right stick) once there are several enemies
+- [ ] Poise: enemies (and the player) currently flinch on every hit
 
 ### Phase 9 — Polish
 - [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested).
@@ -282,6 +291,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-15 | The Hearth is shown as a **sunflower**: drooping and wilted until first rested at, then it stands up over 2.2 s (`STAND_UP_TIME`), turns gold and lights the area. Death text is "COMPOSTED", the revive banner "SUN VIGORATED". All player-facing wording lives in `src/ui/strings.rs`; code keeps the names `Hearth`/`kindled`. |
 | 2026-11-15 | Phase 7: the world does **not** pause in the inventory (Souls-style); the player just gets no gameplay input (`GameplayBlocked`). Equipment points at inventory indices (items are never removed yet). Defence = multiplicative armour **absorption** (generic `DamageAbsorption` on characters). Empty right hand = **Fists** (a `WeaponDef` with no model). The Rusted Axe uses the LightSword moveset until it gets its own class. Shields only add weight and show a block value until blocking (Phase 8). |
 | 2026-11-15 | Guard (user request): hold RMB with a shield. The shield blocks from the moment you start raising it; the **last third of the 0.3 s raise is the parry window** (negates the hit). Every new raise (also after a roll/attack/stagger while still holding) has its own window. Blocked hits don't stagger; a guard break (stamina cost > stamina) does. Without a shield there is no guard (weapon blocking may come later). |
+| 2026-11-15 | Phase 8: enemies are generic characters driven by an AI that writes `MoveIntent`/`ActionIntent` (same pipeline as the player). Enemy attack readability comes from their own **weapon class** (`HollowBlade`, 0.55 s wind-ups) rather than AI pauses. Teams (`combat::Team`) stop friendly fire; the dummy has no team. Enemies respawn on `WorldReset`. The older autopilots run without enemies (`FLOWERBOX_AUTOPILOT` ≠ `enemy`). Roll weight = load ratio classes; the fast roll keeps the full i-frames. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -436,3 +446,12 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Fix (user report):** blocking looked like it stopped everything because the debug key H sent damage with `from: None`, which counted as frontal. Now a hit with no direction can't be guarded, H hits from the front and J from behind, and with F3 on the guarded arc is drawn on the floor (blue, gold in the parry window).
   - **Fix (user report):** the pickup prompt flickered: the HUD's `update_prompt` wasn't ordered after `InteractSystems`, so on some frames it read the prompt right after it was cleared. It now runs after `InteractSystems::Hearth`.
   - **Debug:** F3 shows the guard (down / up / PARRY WINDOW). `FLOWERBOX_AUTOPILOT=guard`: see `guard_script` for the expected log (block, parry, guard break, hit from behind, guard down).
+- **N20 (2026-11-15) — Phase 8 (lock-on, roll weight, gamepad, the Hollow, parry stun):**
+  - **Roll weight:** `character::action::RollWeight` (component in `character_bundle`, set from `EquipStats::roll_weight()`): Light ≤30% load, Medium ≤70%, Heavy ≤100%, Overloaded. `RollWeight::roll_def()` scales the base roll (Medium = `ROLL_*`): Light 0.85× time, 1.1× distance, full i-frames; Heavy 1.2×/0.8×, 80% i-frames, +0.12 s recovery; Overloaded 1.4×/0.45×, 45% i-frames, +0.45 s. The starting gear is Light (fast roll). The inventory shows the class with its roll.
+  - **Lock-on:** `lockon.rs`. `LockOn { target }` on the player, `Targetable { height }` on the Hollow and the dummy. `pick_target` (pure, tested). While locked `MoveIntent::face` = toward the target: the controller faces it unless an action runs or you sprint (sprinting runs where you steer), and `start_buffered_action` aims attacks at it (rolls still follow the stick). The camera turns to look past the player at the target (`CAM_LOCK_TURN`, `CAM_LOCK_PITCH`). Markers: `ui/markers.rs` (PostUpdate, world → viewport).
+  - **Gamepad:** leafwing bindings in `input::default_input_map` (layout in §2) plus `Action::LookStick` (rate-based camera). The inventory screen reads `Gamepad` buttons directly. **Not tested** (no pad in this environment).
+  - **The Hollow** (`enemy/mod.rs`): `character_bundle` + `HumanoidSpec::hollow()` (thinner, grey, rags, emissive eyes via `HumanoidLook::eye_glow`) + `HOLLOW_SWORD` (class `HollowBlade`: light combo of 2 with 0.55 s wind-ups; heavy/running/jump from the light sword). AI states Idle → Chase → Attack (1–2 light swings or a charged heavy, `HOLLOW_HEAVY_CHANCE`) → Recover (circle / back off 1–2 s) → … → Home (leash 16 m or the player died). Hit while idle → Chase. Walking into rubble: sidestep for 0.7 s (`stuck` / `detour`). The AI ticks its own `ActionIntent` buffer. Deterministic xorshift RNG.
+  - **Death/reset:** a dead enemy loses `Hurtbox` + `Targetable` (the lock breaks), lies `CORPSE_TIME`, then hides and gets `ColliderDisabled`. `WorldReset` (rest or respawn) restores all enemies at home.
+  - **Combat:** the player now has a `Hurtbox` and `Team::Player`, the Hollow `Team::Hostile`; `sword_hits` skips same-team targets. `guard::stun_parried` (FixedUpdate, right after damage) forces `Stunned` on the parried attacker; a hit on a `Stunned` target deals `RIPOSTE_MULT` (logged as "RIPOSTE").
+  - **Autopilot `enemy`:** the Hollow is moved 4 m in front of the player (and walks around the rubble at (0.7, 6.8)), lands its 2-swing combo (HP 72), lock-on at 3 s, then the script raises the shield timed to the swing (`raise shield`) → "parried" → "attacker stunned" → "RIPOSTE … for 50" → "hit … for 20" → "a Hollow falls" → "lock-on lost" → 5 s later "enemies reset" → it repeats. Logs the Hollow's AI state every 0.5 s.
+  - **Known gaps:** no strafe leg animation; no poise (every hit flinches, so a fast player can stun-lock a Hollow); one enemy type; no target switching.

@@ -11,6 +11,7 @@ use bevy::prelude::*;
 
 use super::models::ModelBuilder;
 use super::{ArmorSlot, ItemId, ItemKind};
+use crate::character::action::RollWeight;
 use crate::character::guard::Guard;
 use crate::character::stats::{DamageAbsorption, Health};
 use crate::humanoid::{HumanoidRig, HumanoidSpec};
@@ -190,13 +191,18 @@ impl EquipStats {
         self.weight / self.max_load
     }
 
-    /// Light / Medium / Heavy / Overloaded (roll weight classes use this in Phase 8).
+    /// The roll this load gives.
+    pub fn roll_weight(&self) -> RollWeight {
+        RollWeight::from_load(self.load_ratio())
+    }
+
+    /// Light / Medium / Heavy / Overloaded, with the roll it gives.
     pub fn load_class(&self) -> &'static str {
-        match self.load_ratio() {
-            r if r <= LOAD_LIGHT => "Light",
-            r if r <= LOAD_MEDIUM => "Medium",
-            r if r <= 1.0 => "Heavy",
-            _ => "Overloaded",
+        match self.roll_weight() {
+            RollWeight::Light => "Light (fast roll)",
+            RollWeight::Medium => "Medium (normal roll)",
+            RollWeight::Heavy => "Heavy (slow roll)",
+            RollWeight::Overloaded => "Overloaded (fat roll)",
         }
     }
 }
@@ -221,11 +227,19 @@ fn handle_equip_requests(mut requests: MessageReader<EquipRequest>, mut q: Query
 #[allow(clippy::type_complexity)]
 fn apply_equip_stats(
     mut q: Query<
-        (&Inventory, &Equipment, &mut EquipStats, Option<&mut Health>, Option<&mut DamageAbsorption>, Option<&mut Guard>),
+        (
+            &Inventory,
+            &Equipment,
+            &mut EquipStats,
+            Option<&mut Health>,
+            Option<&mut DamageAbsorption>,
+            Option<&mut Guard>,
+            Option<&mut RollWeight>,
+        ),
         Or<(Changed<Equipment>, Changed<Inventory>)>,
     >,
 ) {
-    for (inventory, equipment, mut stats, health, absorption, guard) in &mut q {
+    for (inventory, equipment, mut stats, health, absorption, guard, roll) in &mut q {
         let new = EquipStats::compute(inventory, equipment);
         if let Some(mut health) = health {
             let delta = new.max_hp_bonus - stats.max_hp_bonus;
@@ -238,6 +252,9 @@ fn apply_equip_stats(
         }
         if let Some(mut a) = absorption {
             a.0 = new.absorption;
+        }
+        if let Some(mut r) = roll {
+            r.set_if_neq(new.roll_weight());
         }
         if let Some(mut g) = guard {
             g.strength = new.block; // 0 without a shield: can't guard
@@ -353,6 +370,6 @@ mod tests {
         assert_eq!(s.weight, 3.0 + 3.0 + 1.0);
         assert!((s.absorption - 0.06).abs() < 1e-6);
         assert_eq!(s.block, 0.6);
-        assert_eq!(s.load_class(), "Light");
+        assert_eq!(s.roll_weight(), RollWeight::Light);
     }
 }

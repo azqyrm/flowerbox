@@ -6,8 +6,9 @@
 //! - **Raising** takes `GUARD_RAISE_TIME`. The shield already blocks while it comes up; the **last
 //!   third** of the raise (`PARRY_WINDOW_START..1` of it) is the **parry window**.
 //! - A frontal hit (within `GUARD_ANGLE` of the facing) on a raised guard is:
-//!   - **parried** inside the window: no damage, no stamina, a [`Parried`] message (the attacker
-//!     gets stunned once enemies exist, see ROADMAP N19);
+//!   - **parried** inside the window: no damage, no stamina, a [`Parried`] message; the attacker
+//!     is **stunned** (`ActionKind::Stunned`, `PARRY_STUN_TIME`) and takes `RIPOSTE_MULT` damage
+//!     from the next hit;
 //!   - **blocked** otherwise: `strength` of the damage is stopped, the guard costs stamina
 //!     (`GUARD_STAMINA_PER_DAMAGE` × the hit). Without enough stamina the guard **breaks**: stamina
 //!     goes to 0, the character staggers and takes the damage that got through.
@@ -89,6 +90,16 @@ pub enum GuardOutcome {
 pub struct Parried {
     pub defender: Entity,
     pub attacker: Option<Entity>,
+}
+
+/// A parry staggers the attacker for `PARRY_STUN_TIME`: open to a riposte (`RIPOSTE_MULT`).
+pub(super) fn stun_parried(mut parries: MessageReader<Parried>, mut actions: Query<&mut CharacterAction>) {
+    for p in parries.read() {
+        if let Some(mut action) = p.attacker.and_then(|a| actions.get_mut(a).ok()) {
+            action.force(super::action::ActionKind::Stunned, Vec3::ZERO);
+            info!("attacker stunned by the parry");
+        }
+    }
 }
 
 /// Raises/lowers guards from the intent. Runs after the action state machine, so starting a roll

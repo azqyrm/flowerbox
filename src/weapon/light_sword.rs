@@ -120,7 +120,7 @@ pub static LONGSWORD: WeaponDef = WeaponDef {
 
 const RUST: Color = Color::srgb(0.45, 0.3, 0.2);
 
-const SHORTSWORD_PARTS: [WeaponPart; 4] = [
+pub(super) const SHORTSWORD_PARTS: [WeaponPart; 4] = [
     WeaponPart { shape: PartShape::Sphere(0.03), color: RUST, metallic: 0.6, roughness: 0.7, offset: Vec3::new(0.0, -0.09, 0.0) },
     WeaponPart {
         shape: PartShape::Cylinder { radius: 0.02, height: 0.17 },

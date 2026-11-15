@@ -1,5 +1,6 @@
 //! Third-person orbit camera that follows the player and never clips through walls.
-//! Mouse = look (only while the cursor is grabbed).
+//! Mouse = look (only while the cursor is grabbed), or the gamepad's right stick. Locked on
+//! (`crate::lockon`), the camera turns to keep the target in front.
 //! `FLOWERBOX_CAM="yaw,pitch,distance"` overrides the starting pose (for screenshots, see ROADMAP N5).
 
 use avian3d::prelude::*;
@@ -13,7 +14,8 @@ use bevy::window::{CursorOptions, PrimaryWindow};
 use leafwing_input_manager::prelude::*;
 
 use crate::combat::CameraShake;
-use crate::input::{Action, cursor_grabbed};
+use crate::input::{Action, GameplayBlocked, cursor_grabbed};
+use crate::lockon::{LockOn, Targetable};
 use crate::player::Player;
 use crate::tuning::*;
 
@@ -34,10 +36,12 @@ pub struct ThirdPersonCamera {
     pub distance: f32,
     /// Actual distance this frame (shorter when a wall is in the way).
     current_distance: f32,
+    /// Swing to this yaw (lock-on pressed with nothing to lock onto: look where the player faces).
+    pub recenter: Option<f32>,
 }
 
 fn spawn_camera(mut commands: Commands) {
-    let mut cam = ThirdPersonCamera { yaw: 0.0, pitch: 0.35, distance: CAM_DISTANCE, current_distance: CAM_DISTANCE };
+    let mut cam = ThirdPersonCamera { yaw: 0.0, pitch: 0.35, distance: CAM_DISTANCE, current_distance: CAM_DISTANCE, recenter: None };
     if let Ok(s) = std::env::var("FLOWERBOX_CAM") {
         let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
         if let [y, p, d] = v[..] {
@@ -60,21 +64,47 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn follow_camera(
     time: Res<Time>,
     real: Res<Time<Real>>,
     mut shake: ResMut<CameraShake>,
     spatial: SpatialQuery,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
-    player: Single<(Entity, &Transform, &ActionState<Action>), (With<Player>, Without<ThirdPersonCamera>)>,
+    blocked: Res<GameplayBlocked>,
+    player: Single<(Entity, &Transform, &ActionState<Action>, Option<&LockOn>), (With<Player>, Without<ThirdPersonCamera>)>,
+    targets: Query<(&Transform, &Targetable), (Without<Player>, Without<ThirdPersonCamera>)>,
     mut cams: Query<(&mut ThirdPersonCamera, &mut Transform)>,
 ) {
-    let (player_entity, player_tf, actions) = player.into_inner();
+    let (player_entity, player_tf, actions, lock) = player.into_inner();
+    let dt = time.delta_secs();
+    let target = lock.and_then(|l| l.target).and_then(|t| targets.get(t).ok());
     for (mut cam, mut tf) in &mut cams {
-        if cursor_grabbed(&cursor) {
-            let look = actions.axis_pair(&Action::Look);
-            cam.yaw -= look.x * CAM_SENSITIVITY;
-            cam.pitch = (cam.pitch + look.y * CAM_SENSITIVITY).clamp(CAM_PITCH_MIN, CAM_PITCH_MAX);
+        if let Some((ttf, _)) = target {
+            // Locked on: look from behind the player toward the target.
+            let d = (ttf.translation - player_tf.translation).with_y(0.0);
+            if d.length_squared() > 1e-4 {
+                let want = f32::atan2(-d.x, -d.z);
+                cam.yaw += angle_diff(cam.yaw, want) * (1.0 - (-CAM_LOCK_TURN * dt).exp());
+            }
+            cam.pitch += (CAM_LOCK_PITCH - cam.pitch) * (1.0 - (-4.0 * dt).exp());
+            cam.recenter = None;
+        } else if let Some(want) = cam.recenter {
+            let d = angle_diff(cam.yaw, want);
+            cam.yaw += d * (1.0 - (-CAM_LOCK_TURN * dt).exp());
+            if d.abs() < 0.02 {
+                cam.recenter = None;
+            }
+        } else if !blocked.0 {
+            if cursor_grabbed(&cursor) {
+                let look = actions.axis_pair(&Action::Look);
+                cam.yaw -= look.x * CAM_SENSITIVITY;
+                cam.pitch = (cam.pitch + look.y * CAM_SENSITIVITY).clamp(CAM_PITCH_MIN, CAM_PITCH_MAX);
+            }
+            // Gamepad right stick (rate-based, so scaled by time).
+            let stick = actions.clamped_axis_pair(&Action::LookStick);
+            cam.yaw -= stick.x * CAM_STICK_SPEED * dt;
+            cam.pitch = (cam.pitch - stick.y * CAM_STICK_SPEED * 0.6 * dt).clamp(CAM_PITCH_MIN, CAM_PITCH_MAX);
         }
 
         // Focus slightly above the capsule center (≈ shoulder height).
@@ -110,4 +140,10 @@ fn follow_camera(
         let offset = tf.rotation * jitter;
         tf.translation += offset;
     }
+}
+
+/// Shortest signed angle `to - from`, in (-π, π].
+fn angle_diff(from: f32, to: f32) -> f32 {
+    let d = (to - from).rem_euclid(std::f32::consts::TAU);
+    if d > std::f32::consts::PI { d - std::f32::consts::TAU } else { d }
 }

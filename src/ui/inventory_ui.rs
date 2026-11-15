@@ -4,7 +4,8 @@
 //! Layout: equipment slots (left) · filter tabs + item grid (middle) · details of the selected
 //! item, Equip/Unequip button and the status summary with a preview of what equipping the
 //! selection would change (right). Keys: arrows/WASD move, Q/E filter, Enter equip/unequip,
-//! Backspace unequip, Tab/I/Esc close. Mouse: hover selects, click selects, double-click or the
+//! Backspace unequip, Tab/I/Esc close. Gamepad: D-pad move, L1/R1 filter, A equip/unequip,
+//! X unequip, Start/B close. Mouse: hover selects, click selects, double-click or the
 //! button equips.
 //!
 //! The content is rebuilt whenever something it shows changes (it's small, so this is cheap and
@@ -136,6 +137,7 @@ fn spawn_menu_root(mut commands: Commands) {
 
 fn toggle_menu(
     keys: Res<ButtonInput<KeyCode>>,
+    pads: Query<&Gamepad>,
     mut menu: ResMut<InventoryMenu>,
     mut blocked: ResMut<GameplayBlocked>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
@@ -143,7 +145,8 @@ fn toggle_menu(
     mut root: Query<&mut Visibility, With<MenuRoot>>,
 ) {
     let Ok((actions, dying)) = player.single() else { return };
-    let toggle = actions.just_pressed(&Action::Inventory) || (menu.open && keys.just_pressed(KeyCode::Escape));
+    let back = keys.just_pressed(KeyCode::Escape) || pads.iter().any(|g| g.just_pressed(GamepadButton::East));
+    let toggle = actions.just_pressed(&Action::Inventory) || (menu.open && back);
     let want = !dying && (menu.open != toggle);
     if want != menu.open || blocked.0 != want {
         menu.open = want;
@@ -158,6 +161,7 @@ fn toggle_menu(
 
 fn menu_keys(
     keys: Res<ButtonInput<KeyCode>>,
+    pads: Query<&Gamepad>,
     mut menu: ResMut<InventoryMenu>,
     mut equip: MessageWriter<EquipRequest>,
     player: Query<(Entity, &Inventory, &Equipment), With<Player>>,
@@ -167,24 +171,27 @@ fn menu_keys(
     }
     let Ok((entity, inventory, equipment)) = player.single() else { return };
     let pressed = |ks: &[KeyCode]| ks.iter().any(|k| keys.just_pressed(*k));
+    let pad = |b: GamepadButton| pads.iter().any(|g| g.just_pressed(b));
+    use GamepadButton as G;
     use KeyCode::*;
-    if pressed(&[KeyQ]) || pressed(&[KeyE]) {
-        menu.filter = menu.filter.step(if pressed(&[KeyQ]) { -1 } else { 1 });
+    let (prev, next) = (pressed(&[KeyQ]) || pad(G::LeftTrigger), pressed(&[KeyE]) || pad(G::RightTrigger));
+    if prev || next {
+        menu.filter = menu.filter.step(if prev { -1 } else { 1 });
         menu.cursor = 0;
         menu.dirty = true;
     }
     let list = visible(inventory, menu.filter);
     let mut c = menu.cursor as i32;
-    if pressed(&[ArrowLeft, KeyA]) {
+    if pressed(&[ArrowLeft, KeyA]) || pad(G::DPadLeft) {
         c -= 1;
     }
-    if pressed(&[ArrowRight, KeyD]) {
+    if pressed(&[ArrowRight, KeyD]) || pad(G::DPadRight) {
         c += 1;
     }
-    if pressed(&[ArrowUp, KeyW]) {
+    if pressed(&[ArrowUp, KeyW]) || pad(G::DPadUp) {
         c -= COLS as i32;
     }
-    if pressed(&[ArrowDown, KeyS]) {
+    if pressed(&[ArrowDown, KeyS]) || pad(G::DPadDown) {
         c += COLS as i32;
     }
     let c = c.clamp(0, list.len().saturating_sub(1) as i32) as usize;
@@ -193,11 +200,11 @@ fn menu_keys(
         menu.dirty = true;
     }
     let Some(&index) = list.get(menu.cursor) else { return };
-    if pressed(&[Enter, NumpadEnter, Space, KeyF]) {
+    if pressed(&[Enter, NumpadEnter, Space, KeyF]) || pad(G::South) {
         if let Some(req) = toggle_request(entity, equipment, index) {
             equip.write(req);
         }
-    } else if pressed(&[Backspace, KeyX]) && equipment.can_unequip(index) {
+    } else if (pressed(&[Backspace, KeyX]) || pad(G::West)) && equipment.can_unequip(index) {
         equip.write(EquipRequest { character: entity, index, equip: false });
     }
 }

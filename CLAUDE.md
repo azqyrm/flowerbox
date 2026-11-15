@@ -3,7 +3,7 @@
 Soulslike prototype in Rust (Bevy 0.20 + avian3d 0.8 + leafwing-input-manager 0.22).
 
 - **Start every session by reading `ROADMAP.md`** — it holds the design spec, controls, architecture, phase checklist and decision log. Continue at the first unchecked task; tick boxes and log decisions as you go.
-- Code map: `character/` = generic movement/actions/stats, `humanoid/` = reusable body + animations, `weapon/` = weapon classes (movesets) + weapon definitions (models), `player/` = the player built from these, `items/` = item registry, inventory/equipment, pickups, `interact.rs` = the shared E prompt, `healing.rs` / `hearth.rs` = Healing Ale, rest and death/respawn, `ui/` = HUD and the inventory screen (player-facing text in `ui/strings.rs`; the Hearth is drawn as a sunflower) (see ROADMAP §4, N13, N15, N17, N18).
+- Code map: `character/` = generic movement/actions/stats, `humanoid/` = reusable body + animations, `weapon/` = weapon classes (movesets) + weapon definitions (models), `player/` = the player built from these, `items/` = item registry, inventory/equipment, pickups, `enemy/` = the Hollow (AI writes the same intents as input), `lockon.rs` = lock-on, `interact.rs` = the shared E prompt, `healing.rs` / `hearth.rs` = Healing Ale, rest and death/respawn, `ui/` = HUD and the inventory screen (player-facing text in `ui/strings.rs`; the Hearth is drawn as a sunflower) (see ROADMAP §4, N13, N15, N17, N18, N19, N20).
 - `PROMPT.md` is the user's original request (cleaned up). Treat it as the source of truth for intent.
 - Problems and findings go in the **Notes** section of `ROADMAP.md` (N1, N2, …). Check the open ones first.
 - Commit every finished step with a descriptive message (no need to ask). Branch when it's useful.

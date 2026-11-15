@@ -45,7 +45,7 @@ impl Plugin for CharacterPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    stats::apply_damage.in_set(CharacterSystems::Damage),
+                    (stats::apply_damage, guard::stun_parried).chain().in_set(CharacterSystems::Damage),
                     (action::start_buffered_action, action::release_heavy_charge, action::tick_action, guard::update_guard)
                         .chain()
                         .in_set(CharacterSystems::Actions),
@@ -74,6 +74,8 @@ pub struct MoveIntent {
     pub sprint: bool,
     /// Seconds left in which a jump request is still honoured.
     pub jump_buffer: f32,
+    /// Keep facing this direction while moving (locked on: strafe around the target).
+    pub face: Option<Vec3>,
 }
 
 /// Which action the character wants next (the input buffer) and whether the attack is held.
@@ -112,6 +114,7 @@ pub fn character_bundle(transform: Transform, max_hp: f32, max_stamina: f32) -> 
         CharacterController::default(),
         CharacterAction::default(),
         guard::Guard::default(),
+        action::RollWeight::default(),
         Health::new(max_hp),
         Stamina::new(max_stamina),
         transform,
