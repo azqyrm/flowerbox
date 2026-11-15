@@ -14,16 +14,36 @@
             (152, 686, 308, 746), (152, 626, 211, 746), (45, 567, 211, 626), (45, 567, 101, 732),
         ]),
         (name: "Vault", floor: -3.5, rects: [(521, 564, 701, 720)]),
+        // ── The northern sector (behind the locked door) ──
+        (name: "North Hall", floor: -3.5, rects: [(584, 436, 672, 564)]),
+        // Back up to the upper halls' level (stairs 3 climb north), along the top, down the west.
+        // Diagonal walls in the drawing are stepped rectangles here.
+        (name: "Forge Loop", floor: -1.5, rects: [
+            (336, 340, 621, 372),                        // the long hall along the top
+            (320, 318, 360, 340),                        // NW nook
+            (440, 312, 508, 340), (456, 298, 492, 312),  // the peaked hall
+            (440, 372, 515, 386), (458, 386, 498, 402),  // the V-shaped dip
+            (336, 372, 377, 561),                        // west corridor down to the T room
+            (280, 408, 305, 466), (305, 438, 336, 466),  // alcove
+            (377, 420, 503, 490),                        // the forgery
+        ]),
     ],
     // The U-shaped block in the middle hall.
     blocks: [(571, 826, 594, 890), (594, 868, 634, 890), (634, 826, 652, 890)],
     stairs: [
         (rect: (451, 1023, 502, 1053), down: East, top: 0.0, bottom: -1.5),
         (rect: (405, 676, 521, 718), down: East, top: -1.5, bottom: -3.5),
+        (rect: (584, 372, 621, 436), down: South, top: -1.5, bottom: -3.5),
     ],
     doors: [
         (id: 1, at: (409.5, 1228), width: 2.6, hinge: East, opens: North),
         (id: 2, at: (502, 789), width: 2.4, hinge: South, opens: West),
+        // Stairs 2 → vault.
+        (id: 3, at: (521, 697), width: 2.6, hinge: North, opens: East),
+        // Vault → north hall: locked, the vault warg carries the key.
+        (id: 4, at: (628, 564), width: 2.2, hinge: West, opens: North, key: Some(ForgeKey)),
+        // Forge loop → T room: opens only from the forgery's side.
+        (id: 5, at: (356.5, 561), width: 2.6, hinge: East, opens: South),
     ],
     torches: [
         (at: (372, 1150), wall: West),
@@ -44,6 +64,14 @@
         (at: (660, 566), wall: North),
         (at: (699, 660), wall: East),
         (at: (611, 718), wall: South),
+        (at: (586, 500), wall: West),
+        (at: (670, 520), wall: East),
+        (at: (619, 400), wall: East),
+        (at: (400, 342), wall: North),
+        (at: (560, 342), wall: North),
+        (at: (338, 520), wall: West),
+        (at: (282, 440), wall: West),
+        (at: (501, 470), wall: East),
     ],
     enemies: [
         (at: (353, 1041)),
@@ -55,7 +83,18 @@
         (at: (171, 710)),
         (at: (320, 579)),
         (at: (393, 580)),
-        (kind: Warg, at: (619, 644)),
+        (kind: Warg, at: (619, 644), drops: [(item: ForgeKey, unique: Some(200))]),
+        // North hall, the top hall (nook, peak, dip), the forgery and its corridor.
+        (at: (599, 452)),
+        (at: (625, 452)),
+        (at: (655, 452)),
+        (at: (342, 334)),
+        (at: (474, 318)),
+        (at: (474, 392)),
+        (kind: Warg, at: (382, 450)),
+        (at: (358, 472)),
+        (at: (388, 478)),
+        (at: (418, 455)),
     ],
     treasures: [
         (id: 100, item: Poppy, at: (351, 1024)),
@@ -64,7 +103,17 @@
         (id: 103, item: ThornbriarRing, at: (284, 619)),
         (id: 104, item: HopCone, at: (449, 616)),
         (id: 105, item: HopCone, at: (86, 692)),
+        (id: 106, item: WellForgedSword, at: (454, 455)),
+        (id: 107, item: HopCone, at: (291, 426)),
+        (id: 108, item: Poppy, at: (494, 430)),
+        (id: 109, item: Camomile, at: (492, 478)),
     ],
     // Moved a little north of the drawing's dot so the flower bed clears the south wall.
     sunflowers: [(id: 1, at: (72, 712), facing: North)],
+    // The forgery: forge on the north wall, the anvil (the sword lies beside it) under the grate.
+    props: [
+        (kind: Forge, at: (425, 431), facing: South),
+        (kind: Anvil, at: (442, 462), facing: East),
+        (kind: SkyGrate, at: (444, 456), size: (4.4, 3.4)),
+    ],
 )

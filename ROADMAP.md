@@ -176,7 +176,8 @@ claude_ds/
    ├─ level/            # levels from data files (assets/levels/*.ron)
    │  ├─ mod.rs         # LevelPlugin: load the file, spawn floors/ceilings/walls/stairs/torches/sunflowers/spawn points; line_of_sight
    │  ├─ layout.rs      # file format + pure geometry: grid rasterisation, wall runs, doors, stairs (unit-tested)
-   │  └─ door.rs        # Door: E to open, swing, stays open; DoorRequest / DoorOpened
+   │  ├─ door.rs        # Door: one-way + locked (key), swing, blocker collider; DoorRequest / DoorOpened / DoorRefused
+   │  └─ props.rs       # forgery props: anvil, forge (fire, hood, trough), sky grate (bars, sunbeam, dust), steam
    └─ ui/
       ├─ mod.rs         # UiPlugin, Banner message, display font path
       ├─ hud.rs         # bars, Ale, equipment quadrant, prompt, banner, death band + fades
@@ -386,15 +387,16 @@ Decisions:
 - Diagonal walls in the plan (NW nook, peaked hall, V dip) are approximated with stepped rectangles (the builder is axis-aligned).
 - Doors: `opens` gives the swing direction; you can open a door only from the opposite side. Locked doors name their key item, which isn't used up. Keys are unique drops.
 - Treasures in the new sector (unspecified in the plan): a Hop Cone in the alcove; a Poppy and a Camomile in the forgery.
+- (While building) Stairs 3 start at the top hall's south edge (overlapping it left a wall stub); floor slabs are cut away under every stair (a slab reaching under a ramp stuck up as a step). Light shafts are dust motes in the sunbeam, not translucent slabs (those read as grey walls; real volumetric light needs a directional light, which would also light the arena).
 
 Steps:
-- [ ] Doors: collide when open; one-way rule + wrong-side notification (local + online "PlayerX…"); locked doors (key) + "Locked" notice
-- [ ] Doors on stair ends (the stairs 2 → vault door)
-- [ ] Enemy drops: level data (`drops`), unique drops remembered (save), host-owned online (`WorldEvent::Dropped`), Forge Key item + icon
-- [ ] Well-Forged Sword (weapon + item + icon)
-- [ ] New rooms, stairs, doors, enemies (second warg), treasures, torches in `lvl1.ron`
-- [ ] Forgery props: anvil, forge + fire pit (flicker light), ceiling grate with bars, sunlight shaft, rising steam
-- [ ] Autopilot through the new sector, screenshots, two-instance check, notes
+- [x] Doors: collide when open; one-way rule + wrong-side notification (local + online "PlayerX…"); locked doors (key) + "Locked" notice
+- [x] Doors on stair ends (the stairs 2 → vault door)
+- [x] Enemy drops: level data (`drops`), unique drops remembered (save), host-owned online (`WorldEvent::Dropped`), Forge Key item + icon
+- [x] Well-Forged Sword (weapon + item + icon)
+- [x] New rooms, stairs, doors, enemies (second warg), treasures, torches in `lvl1.ron`
+- [x] Forgery props: anvil, forge + fire pit (flicker light), ceiling grate with bars, sunlight shaft, rising steam
+- [x] Autopilot through the new sector, screenshots, two-instance check, notes
 
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
@@ -439,6 +441,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Hop Cone (consumable): +1 Healing Ale for good when eaten (Estus-shard equivalent, no sunflower needed). Thornbriar Ring: 10 % absorption. Sunflower 1 moved ~1 m north of the drawing's dot so its bed clears the wall; the Hop Cone beside it moved too. |
 | 2026-11-16 | Quadrupeds mirror humanoids: own skeleton/spec/pose/animator module (`quadruped/`), driven by the same character actions. A beast's jaws are a **natural weapon class** (moveset + no model) so bites reuse the action/attack pipeline; the grab is a generic `Pounce` action available to any moveset with a `PounceSpec`. Beast AI = one system + a data profile per species. |
 | 2026-11-16 | Grabs are **victim-side** (like enemy hits online): each machine checks only its own player against pouncing creatures. Rolling i-frames at the first contact = dodged for that pounce. The bite is unblockable because a held character has no guard. The warg's bite is 120 (≥ 100 after the best armour). Each declined pounce chance raises the next (`pounce_urge`). Player HP bars show only over *other* players (your own is the HUD bar). |
+| 2026-11-16 | Doors are one-way by their swing (`opens` points away from the side that can open them); locked doors name a key item that stays in the bag. A door's collider is a separate static blocker spawned where the leaf rests (closed or open), never moved. Enemy drops come from the level file (`drops`), roll on the machine that owns the enemy (offline/host) and are broadcast; unique drops (keys) are remembered once taken (`ClaimedDrops`, saved). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -670,4 +673,12 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **AI** (`BeastProfile` for the warg: aggro 13 m, leash 24, chases at 0.95× walk, sprints beyond 6 m, recovers 0.35–0.9 s): after a combo, with the pounce ready, it backs off into pounce range (2.2–4.8 m) and decides (55 % + 20 % per declined chance, cooldown 5 s). Without backing off it never pounced (combos end at < 1 m).
   - **Tests:** unit tests for the skeleton, gaits, bite and pounce poses, HP bar fade. `warg` autopilot: two bites, back off, pounce, grab 0.08–0.16 s into the leap, "the jaws close: 120 damage"; with `FLOWERBOX_WARG_TANK=1`: 4 pounces, 4 grabs in 45 s. `wargroll`: 4 of 5 runs dodged every pounce; the one grab came from a roll pressed during a bite's stagger, which starts too late (fair). Online (host `warg` in the arena, guest `warg` placed in the vault after joining): the guest's machine detects the host warg's bites and grabs from its puppet ("grabbed … the jaws close: 120"). HP bar: guest screenshot 0.7 s after the host was hit shows the bar; 4.5 s after, it's gone.
   - **Screenshots in test runs** can catch real keystrokes: the test window takes focus, and typing elsewhere opened the Online panel / Esc menu in two warg shots.
+- **N28 (2026-11-16) — the forgery sector, drops, one-way and locked doors (Phase 8.10):**
+  - **Open doors you could walk through (reported):** reproduced with `FLOWERBOX_AUTOPILOT=still FLOWERBOX_SWING=1 FLOWERBOX_WALK=-1,0` (the player walked through door 1's open leaf from x 2.14 to −2.14; opened instantly it blocked at 1.67). The leaf was a static body moved by its transform with `ColliderDisabled` toggled during the swing, and after the swing physics kept the old pose. Now a separate static `DoorBlocker` is spawned wherever the leaf comes to rest and despawned while it swings; verified it stops at 1.67 after a swing.
+  - **One-way doors:** `Door::opens_from(pos)`: the opener must be on the side opposite `opens`. From the wrong side E shows "This door only opens from the other side" (door icon); online `WorldEvent::DoorTried` → others get "Guest 1 tried a door: it only opens from the other side". Locked doors (`key: Some(ForgeKey)`): "Locked: it needs the Forge Key"; with it, "Unlocked with the Forge Key". Door 1 opens N, 2 W, 3 E (stairs 2 → vault), 4 N (locked), 5 S (forge loop → T room: only from the forgery).
+  - **Builder:** a door also cuts a lintel where no wall would be (door 3 sits on stairs 2's lower end). Ceilings get holes (`subtract_rect`) for sky grates; floor slabs are cut away under stairs.
+  - **Drops** (`enemy::DropDef { item, chance, unique }` in the level file, `Drops` on the enemy): rolled when a non-remote enemy becomes a corpse (`drop_loot`), spawned as a pickup by the body; online `WorldEvent::Dropped` (protocol v7). Unique ids are listed in `UniqueDrops`; taking one (local grant or a guest's request on the host) records it in `ClaimedDrops` (saved as `claimed_drops`). Tested (`wargkill`): kill → "dropped Forge Key" → take → world reset → kill again → no drop; after a restart with the save, no drop either. Online: the guest sees the drop and "Host picked up Forge Key".
+  - **Items:** Well-Forged Sword (LightSword class, base 24 vs the Longsword's 20, blade 1.08 vs 1.03, brass guard, fuller; rare), Forge Key (Key kind; rare). Rare pickups glow cold blue and brighter.
+  - **Forgery props** (`level/props.rs`): anvil on a stump with a hammer; forge = stone hearth with glowing coals, five flickering flames and a fire light (`arena::spawn_fire`, counted with the torches for shadows), brick hood and chimney, quench trough; a 4.4 × 3.4 m sky grate (iron bars, an emissive daylight plane above, a slanted shadow-casting `SpotLight` sunbeam, 90 drifting dust motes). Steam: vents on the forge and trough emit puffs that rise, swell, fade (alpha steps) and drift toward the nearest grate.
+  - **Level walk** (`level` autopilot, now 59 waypoints): door 5 refused from the T room, door 3, door 4 locked → key → opens, stairs 3 up, peak, dip, nook, alcove, sword picked up, door 5 opens from the forgery, back in the T room: all reached ("open doors [1, 2, 3, 4, 5]; has the sword: true"). Online (host `menu`, guest `level`): the host logs every door, the refused door, the sword pickup.
 

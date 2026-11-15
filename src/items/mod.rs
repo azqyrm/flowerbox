@@ -44,11 +44,13 @@ pub enum ItemId {
     Camomile,
     HopCone,
     ThornbriarRing,
+    WellForgedSword,
+    ForgeKey,
 }
 
 impl ItemId {
     #[allow(dead_code)] // tests
-    pub const ALL: [ItemId; 12] = [
+    pub const ALL: [ItemId; 14] = [
         ItemId::Longsword,
         ItemId::RustedShortsword,
         ItemId::RustedAxe,
@@ -61,6 +63,8 @@ impl ItemId {
         ItemId::Camomile,
         ItemId::HopCone,
         ItemId::ThornbriarRing,
+        ItemId::WellForgedSword,
+        ItemId::ForgeKey,
     ];
 
     pub fn def(self) -> &'static ItemDef {
@@ -77,6 +81,8 @@ impl ItemId {
             ItemId::Camomile => &CAMOMILE,
             ItemId::HopCone => &HOP_CONE,
             ItemId::ThornbriarRing => &THORNBRIAR_RING,
+            ItemId::WellForgedSword => &WELL_FORGED_SWORD,
+            ItemId::ForgeKey => &FORGE_KEY,
         }
     }
 }
@@ -99,7 +105,6 @@ pub enum ItemKind {
     Armor(ArmorSlot),
     Ring,
     Consumable,
-    #[allow(dead_code)] // no keys yet
     Key,
 }
 
@@ -133,6 +138,8 @@ pub enum ItemIcon {
     ThornRing,
     Tankard,
     HopCone,
+    FineSword,
+    Key,
     Poppy,
     Camomile,
 }
@@ -162,6 +169,8 @@ pub struct ItemDef {
     pub model: Option<ItemModel>,
     /// What using (eating) it does; such items stack and are used from the inventory.
     pub effect: Option<ItemEffect>,
+    /// A rare find: its pickup glows brighter and bluer.
+    pub rare: bool,
 }
 
 /// Effect of a usable consumable.
@@ -189,6 +198,7 @@ impl ItemDef {
             weapon: None,
             model: None,
             effect: None,
+            rare: false,
         }
     }
 }
@@ -317,6 +327,28 @@ static THORNBRIAR_RING: ItemDef = ItemDef {
         ItemKind::Ring,
         ItemIcon::ThornRing,
         "A ring of dried briar, its thorns turned outward. Blows seem to snag on it before they reach you.",
+    )
+};
+
+static WELL_FORGED_SWORD: ItemDef = ItemDef {
+    weight: 3.5,
+    weapon: Some(&light_sword::WELL_FORGED_SWORD),
+    rare: true,
+    ..ItemDef::base(
+        "Well-Forged Sword",
+        ItemKind::Weapon,
+        ItemIcon::FineSword,
+        "Folded steel with a brass guard, left on the anvil by a smith who never came back for it. Cuts deeper and reaches a little further than a plain longsword.",
+    )
+};
+
+static FORGE_KEY: ItemDef = ItemDef {
+    rare: true,
+    ..ItemDef::base(
+        "Forge Key",
+        ItemKind::Key,
+        ItemIcon::Key,
+        "A heavy iron key, warm to the touch, taken from the warg of the sunken vault. It opens the door to the old forgery.",
     )
 };
 

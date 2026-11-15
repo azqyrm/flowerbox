@@ -119,6 +119,34 @@ pub static LONGSWORD: WeaponDef = WeaponDef {
     model: ModelSource::Parts(&LONGSWORD_PARTS),
 };
 
+const BRASS: Color = Color::srgb(0.8, 0.6, 0.25);
+const BRIGHT_STEEL: Color = Color::srgb(0.86, 0.88, 0.92);
+
+/// A smith's best work: brighter steel, a brass guard and pommel, a slightly longer blade.
+const WELL_FORGED_PARTS: [WeaponPart; 5] = [
+    WeaponPart { shape: PartShape::Sphere(0.04), color: BRASS, metallic: 1.0, roughness: 0.35, offset: Vec3::new(0.0, -0.11, 0.0) },
+    WeaponPart {
+        shape: PartShape::Cylinder { radius: 0.022, height: 0.21 },
+        color: Color::srgb(0.2, 0.08, 0.06),
+        metallic: 0.0,
+        roughness: 0.7,
+        offset: Vec3::ZERO,
+    },
+    WeaponPart { shape: PartShape::Box(Vec3::new(0.26, 0.04, 0.045)), color: BRASS, metallic: 1.0, roughness: 0.35, offset: Vec3::new(0.0, 0.11, 0.0) },
+    WeaponPart { shape: PartShape::Box(Vec3::new(0.065, 0.95, 0.014)), color: BRIGHT_STEEL, metallic: 1.0, roughness: 0.18, offset: Vec3::new(0.0, 0.6, 0.0) },
+    // The fuller: a darker groove down the blade.
+    WeaponPart { shape: PartShape::Box(Vec3::new(0.018, 0.7, 0.016)), color: Color::srgb(0.5, 0.52, 0.56), metallic: 1.0, roughness: 0.3, offset: Vec3::new(0.0, 0.5, 0.0) },
+];
+
+/// The forgery's prize: a longsword with a bit more bite and reach.
+pub static WELL_FORGED_SWORD: WeaponDef = WeaponDef {
+    name: "Well-Forged Sword",
+    class: WeaponClass::LightSword,
+    base_damage: 24.0,
+    blade: (0.13, 1.08),
+    model: ModelSource::Parts(&WELL_FORGED_PARTS),
+};
+
 const RUST: Color = Color::srgb(0.45, 0.3, 0.2);
 
 pub(super) const SHORTSWORD_PARTS: [WeaponPart; 4] = [

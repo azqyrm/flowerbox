@@ -13,6 +13,7 @@
 
 pub mod door;
 pub mod layout;
+pub mod props;
 
 use std::path::PathBuf;
 
@@ -22,7 +23,7 @@ use bevy::prelude::*;
 use crate::arena::{ArenaOpenings, TorchAssets, spawn_torch};
 use crate::enemy::SpawnPoint;
 use crate::hearth::spawn_sunflower;
-use crate::items::pickup::PickupLayout;
+use crate::items::pickup::{PickupLayout, UniqueDrops};
 use crate::tuning::*;
 use layout::{EdgeKind, Layout, LevelFile};
 
@@ -34,11 +35,13 @@ const EMBEDDED: &str = include_str!("../../assets/levels/lvl1.ron");
 
 impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(door::DoorPlugin);
+        app.add_plugins((door::DoorPlugin, props::PropsPlugin));
         let Some(layout) = load_level() else { return };
         info!("level \"{}\": {} rooms, {} wall runs, {} doors", layout.file.name, layout.floors.len(), layout.walls.len(), layout.doors.len());
         let treasures: Vec<_> = layout.file.treasures.iter().map(|t| (t.id, t.item, layout.ground(t.at))).collect();
         app.world_mut().get_resource_or_init::<PickupLayout>().0.extend(treasures);
+        let unique: Vec<u32> = layout.file.enemies.iter().flat_map(|e| e.drops.iter().filter_map(|d| d.unique)).collect();
+        app.world_mut().get_resource_or_init::<UniqueDrops>().0.extend(unique);
         // Doors on the arena's ring wall open a gap in it.
         let openings = layout
             .doors
@@ -113,10 +116,21 @@ fn spawn_level(
         }
     };
 
+    let holes = layout.ceiling_holes();
+    let ceiling = |rect: (Vec2, Vec2)| holes.iter().fold(vec![rect], |pieces, h| pieces.into_iter().flat_map(|p| layout::subtract_rect(p, *h)).collect());
     for f in &layout.floors {
+        for (a, b) in ceiling((f.min, f.max)) {
+            block(&mut commands, "Ceiling", Vec3::new(a.x, LEVEL_CEILING, a.y), Vec3::new(b.x, LEVEL_CEILING + 0.3, b.y), &ceiling_mat, true);
+        }
+        // No floor under stairs: their ramp is solid, and a floor slab reaching under a stair
+        // from the upper room would stick up through the ramp as a step.
         let name = format!("Floor: {}", layout.file.rooms[f.room].name);
-        block(&mut commands, &name, Vec3::new(f.min.x, f.floor - 0.5, f.min.y), Vec3::new(f.max.x, f.floor, f.max.y), &floor_mat, true);
-        block(&mut commands, "Ceiling", Vec3::new(f.min.x, LEVEL_CEILING, f.min.y), Vec3::new(f.max.x, LEVEL_CEILING + 0.3, f.max.y), &ceiling_mat, true);
+        let pieces = layout.stairs.iter().fold(vec![(f.min, f.max)], |pieces, st| {
+            pieces.into_iter().flat_map(|p| layout::subtract_rect(p, (st.min, st.max))).collect()
+        });
+        for (a, b) in pieces {
+            block(&mut commands, &name, Vec3::new(a.x, f.floor - 0.5, a.y), Vec3::new(b.x, f.floor, b.y), &floor_mat, true);
+        }
     }
     let t = LEVEL_WALL_THICKNESS * 0.5;
     for (n, w) in layout.walls.iter().enumerate() {
@@ -183,11 +197,12 @@ fn spawn_level(
     for d in &layout.doors {
         door::spawn_door(&mut commands, &mut meshes, &mut materials, d);
     }
+    props::spawn_props(&mut commands, &mut meshes, &mut materials, &torches, &layout);
     for f in &layout.file.sunflowers {
         spawn_sunflower(&mut commands, &mut meshes, &mut materials, f.id, layout.ground(f.at), f.facing.yaw());
     }
     for (n, e) in layout.file.enemies.iter().enumerate() {
-        let point = SpawnPoint::new(e.kind, layout.ground(e.at), e.patrol.map(|p| layout.ground(p)), 100 + n as u32);
+        let point = SpawnPoint::new(e.kind, layout.ground(e.at), e.patrol.map(|p| layout.ground(p)), 100 + n as u32).with_drops(e.drops.clone());
         commands.spawn((Name::new(format!("Spawn point: {:?}", e.kind)), point));
     }
 }

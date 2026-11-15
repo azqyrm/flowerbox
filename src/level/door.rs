@@ -1,9 +1,18 @@
 //! Doors: a wooden leaf on a hinge. Near a closed door, E opens it; it swings open over
 //! `DOOR_OPEN_TIME` and stays open (saved, and shared online: the world's owner decides, like
-//! pickups). While swinging it doesn't block, so it can't trap anyone.
+//! pickups).
 //!
-//! [`DoorRequest`] (local E) → offline/host: [`DoorOpened`] at once (net tells everyone); a guest's
-//! request goes to the host (`crate::net::world`), whose answer opens it here.
+//! - **One way:** a door only opens from the side it swings away from (`opens` points away from
+//!   the opener). From the other side E still works but only tells you so (a notification; online
+//!   everyone hears that you tried: [`DoorRefused`]).
+//! - **Locked doors** need their key item in the bag (it isn't used up); without it: "Locked".
+//! - **Collision:** the leaf blocks through a separate static [`DoorBlocker`] collider that exists
+//!   only while the door is at rest (closed or open), spawned fresh where it rests. (Moving a
+//!   static collider and toggling `ColliderDisabled` left the open door's collider behind: you
+//!   could walk through opened doors.) While swinging nothing blocks, so it can't trap anyone.
+//!
+//! [`DoorRequest`] (local E, allowed) → offline/host: [`DoorOpened`] at once (net tells everyone);
+//! a guest's request goes to the host (`crate::net::world`), whose answer opens it here.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -14,7 +23,11 @@ use crate::character::controller::CharacterController;
 use crate::hearth::DeathSequence;
 use crate::input::{GameplayBlocked, PlayerInput};
 use crate::interact::{InteractPrompt, InteractSystems};
+use crate::items::ItemId;
+use crate::items::inventory::Inventory;
 use crate::items::pickup::PickupAuthority;
+use crate::ui::icons::NoticeIcon;
+use crate::ui::notifications::Notify;
 use crate::player::Player;
 use crate::tuning::*;
 use crate::ui::strings;
@@ -25,6 +38,7 @@ impl Plugin for DoorPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<DoorRequest>()
             .add_message::<DoorOpened>()
+            .add_message::<DoorRefused>()
             .add_systems(Update, (door_interaction.in_set(InteractSystems::Doors), grant_doors, swing_doors).chain());
     }
 }
@@ -33,13 +47,23 @@ impl Plugin for DoorPlugin {
 pub struct Door {
     pub id: u32,
     pub open: bool,
+    /// The key item it needs, if locked.
+    pub key: Option<ItemId>,
     /// Shown opening 0 (closed) … 1 (open).
     swing: f32,
     hinge: Vec3,
     width: f32,
     closed_yaw: f32,
     open_yaw: f32,
+    /// Direction the leaf swings to (x, z): it opens only from the other side.
+    opens: Vec2,
+    /// The collider while at rest.
+    blocker: Option<Entity>,
 }
+
+/// The collider of a door at rest (see the module docs).
+#[derive(Component, Debug)]
+pub struct DoorBlocker;
 
 impl Door {
     /// Open without the swing (loading a save, joining a world).
@@ -58,6 +82,13 @@ impl Door {
         self.hinge + Quat::from_rotation_y(self.closed_yaw) * Vec3::X * self.width * 0.5
     }
 
+    /// Whether someone standing at `pos` is on the side the door can be opened from (the side it
+    /// swings away from).
+    pub fn opens_from(&self, pos: Vec3) -> bool {
+        let to = (pos - self.centre()).with_y(0.0);
+        Vec2::new(to.x, to.z).dot(self.opens) <= 0.0
+    }
+
     fn transform(&self) -> Transform {
         let k = ease(self.swing);
         let d = (self.open_yaw - self.closed_yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
@@ -72,7 +103,7 @@ fn ease(x: f32) -> f32 {
     x * x * (3.0 - 2.0 * x)
 }
 
-/// The local player wants door `id` opened.
+/// The local player wants door `id` opened (from the right side, with the key if it needs one).
 #[derive(Message, Debug, Clone, Copy)]
 pub struct DoorRequest {
     pub id: u32,
@@ -84,10 +115,16 @@ pub struct DoorOpened {
     pub id: u32,
 }
 
+/// The local player tried a door from the side it doesn't open from (others hear about it).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct DoorRefused;
+
 /// Yaw that turns local +X toward `v` (x, z).
 fn yaw_of(v: Vec2) -> f32 {
     f32::atan2(-v.y, v.x)
 }
+
+const LEAF_THICKNESS: f32 = 0.12;
 
 pub fn spawn_door(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, plan: &DoorPlan) {
     let wood = materials.add(StandardMaterial { base_color: Color::srgb(0.3, 0.19, 0.1), perceptual_roughness: 0.85, ..default() });
@@ -98,24 +135,19 @@ pub fn spawn_door(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials:
     let door = Door {
         id: plan.id,
         open: false,
+        key: plan.key,
         swing: 0.0,
         hinge: Vec3::new(h.x, plan.floor, h.y),
         width,
         closed_yaw: yaw_of(-plan.hinge.vec()),
         open_yaw: yaw_of(plan.opens.vec()),
+        opens: plan.opens.vec(),
+        blocker: None,
     };
-    let thick = 0.12;
+    let thick = LEAF_THICKNESS;
     let tf = door.transform();
-    let leaf = commands
-        .spawn((
-            Name::new(format!("Door {}", plan.id)),
-            door,
-            tf,
-            Visibility::default(),
-            RigidBody::Static,
-            Collider::cuboid(width, DOOR_HEIGHT, thick),
-        ))
-        .id();
+    let locked = door.key.is_some();
+    let leaf = commands.spawn((Name::new(format!("Door {}", plan.id)), door, tf, Visibility::default())).id();
     let mut part = |mesh: Mesh, mat: &Handle<StandardMaterial>, at: Vec3| {
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat.clone()), Transform::from_translation(at), ChildOf(leaf)));
     };
@@ -132,18 +164,24 @@ pub fn spawn_door(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials:
     }
     for z in [-1.0, 1.0] {
         part(Torus::new(0.05, 0.075).into(), &iron, Vec3::new(width * 0.35, -0.25, z * (thick * 0.5 + 0.03)));
+        if locked {
+            // A big iron lock plate with a keyhole.
+            part(Cuboid::new(0.18, 0.26, 0.04).into(), &iron, Vec3::new(width * 0.35, 0.05, z * (thick * 0.5 + 0.02)));
+        }
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn door_interaction(
     mut prompt: ResMut<InteractPrompt>,
     blocked: Res<GameplayBlocked>,
     mut requests: MessageWriter<DoorRequest>,
+    mut refused: MessageWriter<DoorRefused>,
+    mut notify: MessageWriter<Notify>,
     doors: Query<&Door>,
-    mut player: Query<(&Transform, &CharacterAction, &CharacterController, &mut PlayerInput, Has<DeathSequence>), With<Player>>,
+    mut player: Query<(&Transform, &CharacterAction, &CharacterController, &mut PlayerInput, &Inventory, Has<DeathSequence>), With<Player>>,
 ) {
-    let Ok((tf, action, ctrl, mut input, dying)) = player.single_mut() else { return };
+    let Ok((tf, action, ctrl, mut input, inventory, dying)) = player.single_mut() else { return };
     if prompt.0.is_some() || blocked.0 || dying || action.current.is_some() || !ctrl.grounded {
         return;
     }
@@ -154,7 +192,20 @@ fn door_interaction(
     });
     let Some(door) = near else { return };
     prompt.0 = Some(strings::PROMPT_OPEN_DOOR);
-    if std::mem::take(&mut input.interact) {
+    if !std::mem::take(&mut input.interact) {
+        return;
+    }
+    if !door.opens_from(feet) {
+        notify.write(Notify::new(NoticeIcon::Door, strings::DOOR_OTHER_SIDE.to_string()));
+        refused.write(DoorRefused);
+        info!("door {} only opens from the other side", door.id);
+    } else if let Some(key) = door.key.filter(|k| inventory.count(*k) == 0) {
+        notify.write(Notify::new(NoticeIcon::Door, strings::door_locked(key.def().name)));
+        info!("door {} is locked ({} needed)", door.id, key.def().name);
+    } else {
+        if let Some(key) = door.key {
+            notify.write(Notify::new(NoticeIcon::Item(key.def().icon), strings::door_unlocked(key.def().name)));
+        }
         requests.write(DoorRequest { id: door.id });
     }
 }
@@ -178,25 +229,35 @@ fn grant_doors(
     }
 }
 
-/// Swings opening doors; they don't block while moving.
-fn swing_doors(time: Res<Time>, mut commands: Commands, mut doors: Query<(Entity, &mut Door, &mut Transform, Has<ColliderDisabled>)>) {
-    for (entity, mut door, mut tf, disabled) in &mut doors {
+/// Swings opening doors; at rest a fresh blocker collider stands where the leaf is.
+fn swing_doors(time: Res<Time>, mut commands: Commands, mut doors: Query<(&mut Door, &mut Transform)>) {
+    for (mut door, mut tf) in &mut doors {
         let target = if door.open { 1.0 } else { 0.0 };
         if door.swing == target {
-            if disabled {
-                commands.entity(entity).remove::<ColliderDisabled>();
-            }
-            if disabled || door.is_changed() {
+            if door.is_changed() || door.blocker.is_none() {
                 *tf = door.transform(); // also: opened at once (a save, a joined world)
+                if let Some(old) = door.blocker.take() {
+                    commands.entity(old).despawn();
+                }
+                let blocker = commands
+                    .spawn((
+                        Name::new(format!("Door {} blocker", door.id)),
+                        DoorBlocker,
+                        *tf,
+                        RigidBody::Static,
+                        Collider::cuboid(door.width, DOOR_HEIGHT, LEAF_THICKNESS),
+                    ))
+                    .id();
+                door.blocker = Some(blocker);
             }
             continue;
+        }
+        if let Some(old) = door.blocker.take() {
+            commands.entity(old).despawn(); // nothing blocks while it swings
         }
         let step = time.delta_secs() / DOOR_OPEN_TIME;
         door.swing = if door.swing < target { (door.swing + step).min(target) } else { (door.swing - step).max(target) };
         *tf = door.transform();
-        if !disabled {
-            commands.entity(entity).insert(ColliderDisabled);
-        }
     }
 }
 
@@ -216,6 +277,9 @@ mod tests {
             width: 2.0,
             closed_yaw: yaw_of(-Dir::East.vec()),
             open_yaw: yaw_of(Dir::North.vec()),
+            opens: Dir::North.vec(),
+            key: None,
+            blocker: None,
         };
         let closed = d.transform().translation;
         assert!((closed - Vec3::new(0.0, DOOR_HEIGHT * 0.5, 0.0)).length() < 1e-4, "{closed}");
@@ -223,5 +287,8 @@ mod tests {
         d.open_now();
         let open = d.transform().translation;
         assert!((open - Vec3::new(1.0, DOOR_HEIGHT * 0.5, -1.0)).length() < 1e-4, "{open}");
+        // It swings north, so it opens from the south side only.
+        assert!(d.opens_from(Vec3::new(0.0, 0.0, 1.5)));
+        assert!(!d.opens_from(Vec3::new(0.0, 0.0, -1.5)));
     }
 }

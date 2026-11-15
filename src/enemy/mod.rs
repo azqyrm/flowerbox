@@ -25,6 +25,9 @@ use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::lockon::Targetable;
 use crate::tuning::*;
 use crate::weapon::{EquipWeapon, WeaponSystems, hollow_blade};
+use crate::character::Remote;
+use crate::items::ItemId;
+use crate::items::pickup::{ClaimedDrops, ItemDropped, Pickup, PickupAssets, spawn_pickup};
 
 pub mod beast;
 pub mod warg;
@@ -34,7 +37,7 @@ pub struct EnemyPlugin;
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         // The older autopilot scripts (combat, hearth, …) were written for an empty arena.
-        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll")) {
+        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll" | "wargkill")) {
             return;
         }
         app.init_resource::<EnemiesSuppressed>()
@@ -42,7 +45,7 @@ impl Plugin for EnemyPlugin {
             .add_systems(Update, trigger_spawn_points.before(WeaponSystems::Equip))
             .add_systems(FixedUpdate, (hollow_ai, beast::beast_ai).before(CharacterSystems::Actions))
             .add_systems(FixedUpdate, beast::pounce_tracking.in_set(CharacterSystems::Combat))
-            .add_systems(Update, (enemy_death, revive_corpses, enemy_reset));
+            .add_systems(Update, (enemy_death, drop_loot, revive_corpses, enemy_reset).chain());
     }
 }
 
@@ -54,6 +57,25 @@ pub struct Enemy {
     pub patrol: Option<Vec3>,
     pub kind: EnemyKind,
 }
+
+/// Something an enemy may drop when killed. With `unique` (a pickup id) it drops only until
+/// someone has taken it (`ClaimedDrops`, saved) — keys.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct DropDef {
+    pub item: ItemId,
+    #[serde(default = "always")]
+    pub chance: f32,
+    #[serde(default)]
+    pub unique: Option<u32>,
+}
+
+fn always() -> f32 {
+    1.0
+}
+
+/// What this enemy drops when killed (from its spawn point).
+#[derive(Component, Clone, Debug, Default)]
+pub struct Drops(pub Vec<DropDef>);
 
 /// Which enemy a spawn point makes (level files name it; online it picks the puppet's body).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -134,6 +156,7 @@ pub struct SpawnPoint {
     /// Floor point the enemy stands on.
     pub pos: Vec3,
     pub patrol: Option<Vec3>,
+    pub drops: Vec<DropDef>,
     /// The enemy it spawned (alive or a corpse) since the last reset.
     pub spawned: Option<Entity>,
     seed: u32,
@@ -142,7 +165,12 @@ pub struct SpawnPoint {
 impl SpawnPoint {
     /// `n` makes each spawn point's AI rolls different (but the same every run).
     pub fn new(kind: EnemyKind, pos: Vec3, patrol: Option<Vec3>, n: u32) -> Self {
-        Self { kind, pos, patrol, spawned: None, seed: 0x9E37_79B9 ^ (n * 7919 + 1) }
+        Self { kind, pos, patrol, drops: vec![], spawned: None, seed: 0x9E37_79B9 ^ (n * 7919 + 1) }
+    }
+
+    pub fn with_drops(mut self, drops: Vec<DropDef>) -> Self {
+        self.drops = drops;
+        self
     }
 }
 
@@ -179,7 +207,9 @@ fn trigger_spawn_points(
         let to_centre = (-home).with_y(0.0).normalize_or(Vec3::NEG_Z);
         let facing = f32::atan2(-to_centre.x, -to_centre.z);
         if point.kind == EnemyKind::Warg {
-            point.spawned = Some(warg::spawn_warg(&mut commands, &mut meshes, &mut materials, home, point.patrol, facing, point.seed));
+            let warg = warg::spawn_warg(&mut commands, &mut meshes, &mut materials, home, point.patrol, facing, point.seed);
+            commands.entity(warg).insert(Drops(point.drops.clone()));
+            point.spawned = Some(warg);
             info!("a warg prowls (spawn point at {:?})", point.pos);
             continue;
         }
@@ -189,6 +219,7 @@ fn trigger_spawn_points(
             .spawn((
                 Name::new("Hollow"),
                 Enemy { home, patrol: point.patrol, kind: EnemyKind::Hollow },
+                Drops(point.drops.clone()),
                 HollowAi::new(point.seed),
                 Hurtbox,
                 Team::Hostile,
@@ -384,6 +415,50 @@ fn enemy_death(
                 }
             }
             None => {}
+        }
+    }
+}
+
+/// First pickup id for chance drops (unique drops use their own ids from the level).
+const DROP_ID_BASE: u32 = 50_000;
+
+/// A freshly killed enemy (owned here, not a remote puppet) drops its loot by its body.
+#[allow(clippy::too_many_arguments)]
+fn drop_loot(
+    mut commands: Commands,
+    assets: Option<Res<PickupAssets>>,
+    claimed: Res<ClaimedDrops>,
+    mut next_id: Local<u32>,
+    mut rng: Local<u32>,
+    mut dropped: MessageWriter<ItemDropped>,
+    dead: Query<(&Transform, &Drops), (Added<Corpse>, Without<Remote>)>,
+    pickups: Query<&Pickup>,
+) {
+    let Some(assets) = assets else { return };
+    for (tf, drops) in &dead {
+        let floor = tf.translation - Vec3::Y * (PLAYER_HALF_HEIGHT + GROUND_SKIN);
+        for (n, drop) in drops.0.iter().enumerate() {
+            if let Some(u) = drop.unique
+                && (claimed.0.contains(&u) || pickups.iter().any(|p| p.id == u))
+            {
+                continue; // already taken (or still lying here from an earlier kill)
+            }
+            // xorshift for the chance (deterministic per run).
+            *rng = if *rng == 0 { 0x2545_F491 } else { *rng };
+            *rng ^= *rng << 13;
+            *rng ^= *rng >> 17;
+            *rng ^= *rng << 5;
+            if (*rng & 0xFFFF) as f32 / 65536.0 >= drop.chance {
+                continue;
+            }
+            let id = drop.unique.unwrap_or_else(|| {
+                *next_id += 1;
+                DROP_ID_BASE + *next_id
+            });
+            let pos = floor + Vec3::new(0.3 * n as f32, 0.0, 0.25);
+            spawn_pickup(&mut commands, &assets, id, drop.item, pos);
+            dropped.write(ItemDropped { id, item: drop.item, pos });
+            info!("an enemy dropped {}", drop.item.def().name);
         }
     }
 }

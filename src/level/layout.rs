@@ -16,8 +16,9 @@ pub type PxRect = (f32, f32, f32, f32);
 pub type Px = (f32, f32);
 
 /// A compass direction in the drawing (North = up = world -Z).
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Dir {
+    #[default]
     North,
     South,
     East,
@@ -69,6 +70,29 @@ pub struct LevelFile {
     pub treasures: Vec<TreasureDef>,
     #[serde(default)]
     pub sunflowers: Vec<SunflowerDef>,
+    #[serde(default)]
+    pub props: Vec<PropDef>,
+}
+
+/// Furniture and fixtures (`crate::level::props`).
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropKind {
+    Anvil,
+    /// A smith's hearth with a fire pit, a hood and a quench trough (to its right).
+    Forge,
+    /// An opening in the ceiling (`size` metres, x × z) with iron bars: daylight and a sunbeam.
+    SkyGrate,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct PropDef {
+    pub kind: PropKind,
+    pub at: Px,
+    /// Which way its front faces.
+    #[serde(default)]
+    pub facing: Dir,
+    #[serde(default)]
+    pub size: (f32, f32),
 }
 
 /// A room: one or more rectangles sharing a floor height. No walls between its own rectangles.
@@ -99,6 +123,9 @@ pub struct DoorDef {
     pub width: f32,
     pub hinge: Dir,
     pub opens: Dir,
+    /// Locked: needs this item in the bag.
+    #[serde(default)]
+    pub key: Option<ItemId>,
 }
 
 /// A torch on the wall that lies `wall`-wards of `at`.
@@ -117,6 +144,8 @@ pub struct EnemyDef {
     pub at: Px,
     #[serde(default)]
     pub patrol: Option<Px>,
+    #[serde(default)]
+    pub drops: Vec<crate::enemy::DropDef>,
 }
 
 /// An item lying on the floor. `id` must be unique among all pickups (the arena's are 0..).
@@ -178,6 +207,7 @@ pub struct DoorPlan {
     pub opening: f32,
     pub hinge: Dir,
     pub opens: Dir,
+    pub key: Option<ItemId>,
     along_x: bool,
     /// Grid index of the wall line, and the cell span of the hole.
     line: i32,
@@ -315,6 +345,20 @@ impl Layout {
         })
     }
 
+    /// Openings in the ceiling (min, max on x/z), from the sky grates.
+    pub fn ceiling_holes(&self) -> Vec<(Vec2, Vec2)> {
+        self.file
+            .props
+            .iter()
+            .filter(|p| p.kind == PropKind::SkyGrate)
+            .map(|p| {
+                let c = self.world(p.at);
+                let half = Vec2::new(p.size.0, p.size.1) * 0.5;
+                (c - half, c + half)
+            })
+            .collect()
+    }
+
     /// Builds the grid, doors and walls from the file.
     pub fn build(file: LevelFile) -> Self {
         // Bounds of everything walkable, plus a margin.
@@ -399,6 +443,7 @@ impl Layout {
                 opening: hole - LEVEL_WALL_THICKNESS,
                 hinge: d.hinge,
                 opens: d.opens,
+                key: d.key,
                 along_x,
                 line,
                 span,
@@ -416,6 +461,15 @@ impl Layout {
             (Cell::Stair(s), Cell::Room(_)) => !self.is_stair_end(s, dir),
             (Cell::Room(_), Cell::Stair(s)) => !self.is_stair_end(s, opposite(dir)),
             (x, y) => x.walkable() != y.walkable(),
+        }
+    }
+
+    /// What stands between cells `a` and `b`: a wall, a door's lintel (also where no wall would
+    /// be, e.g. a door at the end of stairs), or nothing.
+    fn edge(&self, a: Cell, b: Cell, dir: Dir, door: Option<usize>) -> Option<EdgeKind> {
+        match door {
+            Some(d) if a != b => Some(EdgeKind::Lintel(d)),
+            _ => self.needs_wall(a, b, dir).then_some(EdgeKind::Wall),
         }
     }
 
@@ -438,8 +492,8 @@ impl Layout {
             for j in 0..=self.nz {
                 let kind = (j < self.nz)
                     .then(|| {
-                        let wall = self.needs_wall(self.cell(bx - 1, j), self.cell(bx, j), Dir::East);
-                        wall.then(|| self.door_on(false, bx, j).map_or(EdgeKind::Wall, EdgeKind::Lintel))
+                        let (a, b) = (self.cell(bx - 1, j), self.cell(bx, j));
+                        self.edge(a, b, Dir::East, self.door_on(false, bx, j))
                     })
                     .flatten();
                 if current.map(|c| c.0) != kind {
@@ -458,8 +512,8 @@ impl Layout {
             for i in 0..=self.nx {
                 let kind = (i < self.nx)
                     .then(|| {
-                        let wall = self.needs_wall(self.cell(i, bz - 1), self.cell(i, bz), Dir::South);
-                        wall.then(|| self.door_on(true, bz, i).map_or(EdgeKind::Wall, EdgeKind::Lintel))
+                        let (a, b) = (self.cell(i, bz - 1), self.cell(i, bz));
+                        self.edge(a, b, Dir::South, self.door_on(true, bz, i))
                     })
                     .flatten();
                 if current.map(|c| c.0) != kind {
@@ -474,6 +528,29 @@ impl Layout {
         }
         runs
     }
+}
+
+/// `rect` minus `hole` as up to four rectangles (min, max).
+pub fn subtract_rect(rect: (Vec2, Vec2), hole: (Vec2, Vec2)) -> Vec<(Vec2, Vec2)> {
+    let (a, b) = rect;
+    let (h0, h1) = (hole.0.max(a), hole.1.min(b));
+    if h0.x >= h1.x || h0.y >= h1.y {
+        return vec![rect]; // no overlap
+    }
+    let mut out = vec![];
+    if h0.y > a.y {
+        out.push((a, Vec2::new(b.x, h0.y))); // north strip
+    }
+    if h1.y < b.y {
+        out.push((Vec2::new(a.x, h1.y), b)); // south strip
+    }
+    if h0.x > a.x {
+        out.push((Vec2::new(a.x, h0.y), Vec2::new(h0.x, h1.y))); // west
+    }
+    if h1.x < b.x {
+        out.push((Vec2::new(h1.x, h0.y), Vec2::new(b.x, h1.y))); // east
+    }
+    out
 }
 
 fn opposite(d: Dir) -> Dir {
@@ -520,6 +597,16 @@ mod tests {
             )"#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn subtracting_a_hole_leaves_a_frame() {
+        let r = (Vec2::ZERO, Vec2::new(10.0, 10.0));
+        let pieces = subtract_rect(r, (Vec2::new(4.0, 4.0), Vec2::new(6.0, 6.0)));
+        let area: f32 = pieces.iter().map(|(a, b)| (b.x - a.x) * (b.y - a.y)).sum();
+        assert_eq!(pieces.len(), 4);
+        assert!((area - 96.0).abs() < 1e-4);
+        assert_eq!(subtract_rect(r, (Vec2::new(20.0, 20.0), Vec2::new(30.0, 30.0))), vec![r]);
     }
 
     #[test]

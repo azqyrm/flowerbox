@@ -23,8 +23,11 @@ use crate::hearth::{DeathSequence, Hearth, RestComplete, SharedRest, SunRevived}
 use crate::tuning::REST_STARTUP;
 use super::sync::Puppet;
 use crate::items::inventory::Inventory;
-use crate::items::pickup::{ItemPickedUp, Pickup, PickupAssets, PickupAuthority, PickupLayout, PickupRequest, PickupTaken, spawn_layout, spawn_pickup};
-use crate::level::door::{Door, DoorOpened, DoorRequest};
+use crate::items::pickup::{
+    ClaimedDrops, ItemDropped, ItemPickedUp, Pickup, PickupAssets, PickupAuthority, PickupLayout, PickupRequest, PickupTaken, UniqueDrops, claim,
+    spawn_layout, spawn_pickup,
+};
+use crate::level::door::{Door, DoorOpened, DoorRefused, DoorRequest};
 use crate::player::Player;
 use crate::pvp::PvpChanged;
 use crate::ui::icons::NoticeIcon;
@@ -78,7 +81,8 @@ fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
         WorldEvent::Pvp { who, on, item } => Notify::new(NoticeIcon::Item(item.def().icon), strings::ate(&player_name(who), item.def().name, on)),
         WorldEvent::RestWaiting { who, resting, total } => Notify::new(NoticeIcon::Sunflower, strings::rest_waiting(&player_name(who), resting, total)),
         WorldEvent::RestComplete => Notify::new(NoticeIcon::Sunflower, strings::REST_COMPLETE),
-        WorldEvent::DummyHit { .. } | WorldEvent::DoorOpened { .. } => return,
+        WorldEvent::DoorTried { who } => Notify::new(NoticeIcon::Door, strings::door_tried(&player_name(who))),
+        WorldEvent::DummyHit { .. } | WorldEvent::DoorOpened { .. } | WorldEvent::Dropped { .. } => return,
     };
     info!("world event: {}", n.text);
     notify.write(n);
@@ -91,7 +95,7 @@ fn world_inbox(
     link: Res<NetLink>,
     session: Res<NetSession>,
     assets: Option<Res<PickupAssets>>,
-    layout: Res<PickupLayout>,
+    (layout, unique, mut claimed): (Res<PickupLayout>, Res<UniqueDrops>, ResMut<ClaimedDrops>),
     mut stash: Local<Option<Stash>>,
     mut authority: ResMut<PickupAuthority>,
     mut notify: MessageWriter<Notify>,
@@ -162,6 +166,7 @@ fn world_inbox(
                 let Some(&by) = session.peers.get(peer) else { continue };
                 let Some((e, p, _)) = pickups.iter().find(|(_, p, _)| p.id == *pickup) else { continue };
                 commands.entity(e).despawn();
+                claim(&unique, &mut claimed, p.id);
                 let event = WorldEvent::PickedUp { by, pickup: p.id, item: p.item };
                 broadcast(event);
                 notice(&mut notify, &event);
@@ -183,6 +188,7 @@ fn world_inbox(
                         WorldEvent::SunRevived { by, id }
                     }
                     WorldEvent::Died { .. } => WorldEvent::Died { who: by },
+                    WorldEvent::DoorTried { .. } => WorldEvent::DoorTried { who: by },
                     WorldEvent::Pvp { on, item, .. } => WorldEvent::Pvp { who: by, on, item },
                     _ => continue,
                 };
@@ -208,7 +214,11 @@ fn world_inbox(
             NetInbox::Reliable(HOST_PEER, Reliable::Event(event)) if session.role == Role::Client => {
                 let mine = |id: &NetId| *id == session.my_id;
                 match event {
-                    WorldEvent::Joined { who } | WorldEvent::Left { who } | WorldEvent::Died { who } | WorldEvent::Pvp { who, .. }
+                    WorldEvent::Joined { who }
+                    | WorldEvent::Left { who }
+                    | WorldEvent::Died { who }
+                    | WorldEvent::Pvp { who, .. }
+                    | WorldEvent::DoorTried { who }
                         if mine(who) =>
                     {
                         continue
@@ -220,6 +230,11 @@ fn world_inbox(
                         if mine(by) {
                             continue; // we already saw the banner
                         }
+                    }
+                    WorldEvent::Dropped { id, item, pos } => {
+                        info!("world event: an enemy dropped {}", item.def().name);
+                        spawn_pickup(&mut commands, &assets, *id, *item, Vec3::from_array(*pos));
+                        continue;
                     }
                     WorldEvent::DoorOpened { id, .. } => {
                         for mut d in doors.iter_mut().filter(|d| d.id == *id) {
@@ -268,6 +283,7 @@ fn local_events(
     mut revived: MessageReader<SunRevived>,
     mut door_requests: MessageReader<DoorRequest>,
     mut doors_opened: MessageReader<DoorOpened>,
+    (mut doors_refused, mut drops): (MessageReader<DoorRefused>, MessageReader<ItemDropped>),
     mut pvp: MessageReader<PvpChanged>,
     mut struck: MessageReader<DummyStruck>,
     dummy: Query<&Health, With<Dummy>>,
@@ -296,6 +312,12 @@ fn local_events(
             for d in doors_opened.read() {
                 send(None, Reliable::Event(WorldEvent::DoorOpened { by: me, id: d.id }));
             }
+            for _ in doors_refused.read() {
+                send(None, Reliable::Event(WorldEvent::DoorTried { who: me }));
+            }
+            for d in drops.read() {
+                send(None, Reliable::Event(WorldEvent::Dropped { id: d.id, item: d.item, pos: d.pos.to_array() }));
+            }
             if !died.is_empty() {
                 send(None, Reliable::Event(WorldEvent::Died { who: me }));
             }
@@ -312,8 +334,12 @@ fn local_events(
                 send(Some(HOST_PEER), Reliable::Report(WorldEvent::SunRevived { by: me, id: r.id }));
             }
             doors_opened.clear();
+            drops.clear(); // guests have no real enemies
             for d in door_requests.read() {
                 send(Some(HOST_PEER), Reliable::RequestDoor { id: d.id });
+            }
+            for _ in doors_refused.read() {
+                send(Some(HOST_PEER), Reliable::Report(WorldEvent::DoorTried { who: me }));
             }
             if !died.is_empty() {
                 send(Some(HOST_PEER), Reliable::Report(WorldEvent::Died { who: me }));
@@ -328,6 +354,8 @@ fn local_events(
             revived.clear();
             door_requests.clear();
             doors_opened.clear();
+            doors_refused.clear();
+            drops.clear();
         }
     }
 }

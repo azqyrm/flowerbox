@@ -23,6 +23,9 @@ impl Plugin for PickupPlugin {
             .add_message::<PickupTaken>()
             .init_resource::<PickupAuthority>()
             .init_resource::<PickupLayout>()
+            .init_resource::<UniqueDrops>()
+            .init_resource::<ClaimedDrops>()
+            .add_message::<ItemDropped>()
             .add_systems(Startup, (load_pickup_assets, spawn_pickups).chain())
             .add_systems(Update, (pickup_interaction.in_set(InteractSystems::Pickups), grant_pickups, animate_pickups));
     }
@@ -54,6 +57,23 @@ impl PickupLayout {
         ids.sort_unstable();
         ids
     }
+}
+
+/// Pickup ids of unique enemy drops (a key): they drop only until someone takes them (levels
+/// register theirs).
+#[derive(Resource, Debug, Default, Clone)]
+pub struct UniqueDrops(pub Vec<u32>);
+
+/// Unique drops already taken in this world (saved): their enemies don't drop them again.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub struct ClaimedDrops(pub Vec<u32>);
+
+/// An enemy dropped an item here (offline / host; online the host tells the guests).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct ItemDropped {
+    pub id: u32,
+    pub item: ItemId,
+    pub pos: Vec3,
 }
 
 /// An item waiting on the floor. `id` is stable across machines (layout index, or a host id for
@@ -100,6 +120,8 @@ impl Default for PickupAuthority {
 pub struct PickupAssets {
     mote: Handle<Mesh>,
     glow: Handle<StandardMaterial>,
+    /// Rare items glow colder and brighter.
+    rare_glow: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -114,7 +136,12 @@ fn load_pickup_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, 
         emissive: LinearRgba::rgb(40.0, 30.0, 14.0),
         ..default()
     });
-    commands.insert_resource(PickupAssets { mote: meshes.add(Sphere::new(0.06)), glow });
+    let rare_glow = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.75, 0.85, 1.0),
+        emissive: LinearRgba::rgb(30.0, 45.0, 80.0),
+        ..default()
+    });
+    commands.insert_resource(PickupAssets { mote: meshes.add(Sphere::new(0.06)), glow, rare_glow });
 }
 
 /// Spawns one item on the floor at `pos`.
@@ -122,15 +149,17 @@ pub fn spawn_pickup(commands: &mut Commands, assets: &PickupAssets, id: u32, ite
     let root = commands
         .spawn((Name::new(format!("Pickup: {}", item.def().name)), Pickup { id, item }, Transform::from_translation(pos), Visibility::default()))
         .id();
+    let rare = item.def().rare;
+    let (glow, light) = if rare { (&assets.rare_glow, Color::srgb(0.7, 0.8, 1.0)) } else { (&assets.glow, Color::srgb(1.0, 0.85, 0.55)) };
     commands
         .spawn((
             Wisp { phase: id as f32 * 2.3 },
             Mesh3d(assets.mote.clone()),
-            MeshMaterial3d(assets.glow.clone()),
-            Transform::from_xyz(0.0, 0.35, 0.0),
+            MeshMaterial3d(glow.clone()),
+            Transform::from_xyz(0.0, 0.35, 0.0).with_scale(Vec3::splat(if rare { 1.4 } else { 1.0 })),
             ChildOf(root),
         ))
-        .with_child(PointLight { color: Color::srgb(1.0, 0.85, 0.55), intensity: 30_000.0, range: 3.5, radius: 0.05, ..default() });
+        .with_child(PointLight { color: light, intensity: if rare { 60_000.0 } else { 30_000.0 }, range: 3.5, radius: 0.05, ..default() });
 }
 
 /// The world's own items (`taken` = ids already picked up in this world).
@@ -182,6 +211,8 @@ fn pickup_interaction(
 fn grant_pickups(
     mut commands: Commands,
     authority: Res<PickupAuthority>,
+    unique: Res<UniqueDrops>,
+    mut claimed: ResMut<ClaimedDrops>,
     mut requests: MessageReader<PickupRequest>,
     mut picked: MessageWriter<ItemPickedUp>,
     mut taken: MessageWriter<PickupTaken>,
@@ -197,7 +228,15 @@ fn grant_pickups(
         inventory.add(pickup.item);
         picked.write(ItemPickedUp { item: pickup.item });
         taken.write(PickupTaken { pickup: pickup.id, item: pickup.item });
+        claim(&unique, &mut claimed, pickup.id);
         commands.entity(entity).despawn();
         info!("picked up {}", pickup.item.def().name);
+    }
+}
+
+/// Remembers a taken unique drop (so its enemy won't drop it again).
+pub fn claim(unique: &UniqueDrops, claimed: &mut ClaimedDrops, id: u32) {
+    if unique.0.contains(&id) && !claimed.0.contains(&id) {
+        claimed.0.push(id);
     }
 }

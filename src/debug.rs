@@ -33,7 +33,10 @@
 //!   → stands still: the warg bites and pounces; logs its actions, grabs and the bite's damage.
 //!   `wargroll` → rolls toward the warg as each leap starts: the i-frames carry you through it.
 //!   `FLOWERBOX_WARG_TANK=1` gives the player 1000 HP (to see several pounces).
+//! - `FLOWERBOX_AUTOPILOT=wargkill` (with `FLOWERBOX_POS` in the vault) → kills the vault warg,
+//!   takes the dropped Forge Key, resets the world, kills it again: the unique key doesn't drop twice.
 //! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
+//!   `FLOWERBOX_WALK="x,z"` walks that way instead (collision checks), logging the position.
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
 use bevy::prelude::*;
@@ -89,7 +92,19 @@ impl Plugin for DebugPlugin {
                     .insert_resource(WargRun { roll: mode == "wargroll", ..default() })
                     .add_systems(Update, warg_script);
             }
+            Ok("wargkill") => {
+                app.add_systems(Update, wargkill_script);
+            }
             Ok("still") => {
+                // `FLOWERBOX_WALK="x,z"`: walk that way (world direction), logging the position.
+                let walk: Vec<f32> = std::env::var("FLOWERBOX_WALK").unwrap_or_default().split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                if let [x, z] = walk[..] {
+                    *LEVEL_DIR.lock().unwrap() = (Vec3::new(x, 0.0, z).normalize_or_zero(), false, false);
+                    // Starts after 2.5 s, so swinging doors (`FLOWERBOX_SWING=1`) have finished.
+                    let movement: fn(f32, f32) -> (Vec3, bool, bool) = |t, _| if t > 2.5 { *LEVEL_DIR.lock().unwrap() } else { (Vec3::ZERO, false, false) };
+                    app.insert_resource(Autopilot { movement: Some(movement), attack_button: None, guard_button: None })
+                        .add_systems(Update, log_player_pos.run_if(on_timer(std::time::Duration::from_millis(500))));
+                }
                 app.add_systems(Update, open_all_doors);
             }
             Ok("level") => {
@@ -1150,6 +1165,8 @@ enum At {
     Go,
     /// Press E, then wait this long.
     Interact(f32),
+    /// Put the Forge Key in the bag (the warg that drops it isn't there without enemies).
+    GiveKey,
 }
 
 /// Drawing pixels (level 1's design) → world (x, z).
@@ -1157,8 +1174,9 @@ const fn px(x: f32, y: f32) -> (f32, f32) {
     ((x - 409.5) / 14.0, -18.0 + (y - 1228.0) / 14.0)
 }
 
-const LEVEL_ROUTE: [((f32, f32), At); 33] = [
-    ((2.5, 3.0), At::Go), // around the training dummy
+const LEVEL_ROUTE: [((f32, f32), At); 59] = [
+    ((2.8, 7.6), At::Go), // around the rubble…
+    ((2.5, 3.0), At::Go), // …and the training dummy
     ((1.5, -12.0), At::Go),
     ((0.0, -16.6), At::Interact(1.8)), // door 1, from the arena
     (px(409.5, 1180.0), At::Go),
@@ -1175,7 +1193,7 @@ const LEVEL_ROUTE: [((f32, f32), At); 33] = [
     (px(356.0, 795.0), At::Go),
     (px(356.0, 720.0), At::Go),
     (px(355.0, 650.0), At::Go), // the narrow neck into the T room
-    (px(355.0, 600.0), At::Go),
+    (px(356.0, 578.0), At::Interact(0.8)), // door 5 from the T room: the wrong side
     (px(355.0, 650.0), At::Go),
     (px(356.0, 720.0), At::Go),
     (px(230.0, 716.0), At::Go),
@@ -1189,8 +1207,33 @@ const LEVEL_ROUTE: [((f32, f32), At); 33] = [
     (px(180.0, 716.0), At::Go),
     (px(356.0, 716.0), At::Go),
     (px(392.0, 697.0), At::Go),
-    (px(530.0, 697.0), At::Go), // stairs 2 (down east) into the vault
+    (px(505.0, 697.0), At::Interact(1.8)), // door 3, stairs 2 → vault
+    (px(540.0, 697.0), At::Go),
     (px(610.0, 650.0), At::Go),
+    (px(628.0, 578.0), At::Interact(0.8)), // door 4 without the key: locked
+    (px(628.0, 580.0), At::GiveKey),
+    (px(628.0, 578.0), At::Interact(1.8)), // with the key
+    (px(628.0, 540.0), At::Go),
+    (px(602.0, 470.0), At::Go),
+    (px(602.0, 430.0), At::Go), // stairs 3, climbing north
+    (px(602.0, 360.0), At::Go),
+    (px(560.0, 356.0), At::Go),
+    (px(474.0, 356.0), At::Go),
+    (px(474.0, 318.0), At::Go), // the peak
+    (px(474.0, 392.0), At::Go), // the dip
+    (px(420.0, 356.0), At::Go),
+    (px(345.0, 352.0), At::Go),
+    (px(340.0, 330.0), At::Go), // the nook
+    (px(356.0, 360.0), At::Go),
+    (px(356.0, 440.0), At::Go),
+    (px(300.0, 452.0), At::Go), // the alcove
+    (px(356.0, 452.0), At::Go),
+    (px(400.0, 478.0), At::Go), // into the forgery, around the anvil
+    (px(458.0, 478.0), At::Go),
+    (px(454.0, 461.0), At::Interact(1.2)), // the Well-Forged Sword
+    (px(356.0, 478.0), At::Go),
+    (px(356.0, 548.0), At::Interact(1.8)), // door 5 from the forgery: opens
+    (px(356.0, 600.0), At::Go), // back in the T room
 ];
 
 #[derive(Resource, Default)]
@@ -1212,9 +1255,12 @@ fn level_script(
     mut exit: MessageWriter<AppExit>,
     hearths: Query<&crate::hearth::Hearth>,
     doors: Query<&crate::level::door::Door>,
-    mut player: Query<(&Transform, &CharacterController, &mut PlayerInput), With<Player>>,
+    mut player: Query<(Entity, &Transform, &CharacterController, &mut PlayerInput, &mut Inventory), With<Player>>,
+    spatial: avian3d::prelude::SpatialQuery,
+    names: Query<&Name>,
+    parents: Query<&ChildOf>,
 ) {
-    let Ok((tf, ctrl, mut input)) = player.single_mut() else { return };
+    let Ok((player_entity, tf, ctrl, mut input, mut inventory)) = player.single_mut() else { return };
     let dt = time.delta_secs();
     *LEVEL_DIR.lock().unwrap() = (Vec3::ZERO, false, false);
     if run.done {
@@ -1235,7 +1281,8 @@ fn level_script(
         run.done = true;
         let revived: Vec<u32> = hearths.iter().filter(|h| h.kindled).map(|h| h.id).collect();
         let open: Vec<u32> = doors.iter().filter(|d| d.open).map(|d| d.id).collect();
-        info!("level walk: done at {:.2}; revived sunflowers {revived:?}; open doors {open:?}", tf.translation);
+        let sword = inventory.items.contains(&ItemId::WellForgedSword);
+        info!("level walk: done at {:.2}; revived sunflowers {revived:?}; open doors {open:?}; has the sword: {sword}", tf.translation);
         exit.write(AppExit::Success);
         return;
     };
@@ -1246,9 +1293,16 @@ fn level_script(
         run.next += 1;
         run.stall = 0.0;
         run.best = f32::MAX;
-        if let At::Interact(wait) = at {
-            input.interact = true;
-            run.wait = wait;
+        match at {
+            At::Interact(wait) => {
+                input.interact = true;
+                run.wait = wait;
+            }
+            At::GiveKey => {
+                inventory.add(ItemId::ForgeKey);
+                info!("level walk: got the Forge Key");
+            }
+            At::Go => {}
         }
         return;
     }
@@ -1258,7 +1312,19 @@ fn level_script(
     } else {
         run.stall += dt;
         if run.stall > 3.0 {
-            warn!("level walk: STUCK before waypoint {} at {:.2} ({dist:.2} m away)", run.next, tf.translation);
+            // Name what's in the way.
+            let blocker = Dir3::new(to).ok().and_then(|d| {
+                spatial.cast_shape(
+                    &avian3d::prelude::Collider::capsule(PLAYER_RADIUS, PLAYER_CAPSULE_LENGTH),
+                    tf.translation,
+                    Quat::IDENTITY,
+                    d,
+                    &avian3d::prelude::ShapeCastConfig::from_max_distance(0.5),
+                    &avian3d::prelude::SpatialQueryFilter::from_excluded_entities([player_entity]),
+                )
+            });
+            let what = blocker.map(|h| (h.entity, names.get(h.entity).map(|n| n.to_string()).unwrap_or_default(), parents.get(h.entity).ok().and_then(|p| names.get(p.parent()).ok()).map(|n| n.to_string())));
+            warn!("level walk: STUCK before waypoint {} at {:.2} ({dist:.2} m away), blocked by {what:?}", run.next, tf.translation);
             run.stall = 0.0;
             run.best = f32::MAX;
             run.next += 1; // try the next one
@@ -1267,10 +1333,21 @@ fn level_script(
     *LEVEL_DIR.lock().unwrap() = (to / dist, false, false);
 }
 
+fn log_player_pos(q: Query<&Transform, With<Player>>) {
+    if let Ok(tf) = q.single() {
+        info!("player at {:.2}", tf.translation);
+    }
+}
+
 fn open_all_doors(mut doors: Query<&mut crate::level::door::Door>) {
+    let swing = std::env::var("FLOWERBOX_SWING").is_ok();
     for mut d in &mut doors {
         if !d.open {
-            d.open_now();
+            if swing {
+                d.open = true; // opens with the swing animation, like in play
+            } else {
+                d.open_now();
+            }
         }
     }
 }
@@ -1391,5 +1468,44 @@ fn warg_script(
         info!("warg test: {} pounces, {} grabs, HP {}, dead {dead}", run.pounces, run.grabs, hp.current);
         exit.write(AppExit::Success);
         run.end_at = Some(f32::INFINITY);
+    }
+}
+
+/// Drop test: kill the warg (3 s), take its drop (5 s), world reset (7 s), kill it again (10 s).
+fn wargkill_script(
+    time: Res<Time>,
+    mut damage: MessageWriter<DamageMessage>,
+    mut reset: MessageWriter<WorldReset>,
+    mut requests: MessageWriter<crate::items::pickup::PickupRequest>,
+    mut exit: MessageWriter<AppExit>,
+    wargs: Query<(Entity, &Enemy, &Health)>,
+    pickups: Query<(&crate::items::pickup::Pickup, &Transform), Without<Player>>,
+    mut player: Query<(&mut Transform, &Inventory), With<Player>>,
+) {
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let at = |s: f32| crossed(t, dt, s);
+    let warg = wargs.iter().find(|(_, e, h)| e.kind == crate::enemy::EnemyKind::Warg && e.home.y < -3.0 && !h.is_dead());
+    if at(3.0) || at(10.0) {
+        if let Some((e, _, _)) = warg {
+            info!("autopilot: killing the vault warg");
+            damage.write(DamageMessage { target: e, amount: 10_000.0, from: None, attacker: None });
+        }
+    }
+    let key = pickups.iter().find(|(p, _)| p.item == ItemId::ForgeKey);
+    if at(5.0) {
+        if let (Some((p, ptf)), Ok((mut tf, _))) = (key, player.single_mut()) {
+            tf.translation = ptf.translation + Vec3::Y * (PLAYER_HALF_HEIGHT + GROUND_SKIN);
+            requests.write(crate::items::pickup::PickupRequest { pickup: p.id });
+            info!("autopilot: taking the key (pickup {})", p.id);
+        }
+    }
+    if at(7.0) {
+        info!("autopilot: world reset (the warg comes back)");
+        reset.write(WorldReset);
+    }
+    if at(12.5) {
+        let keys = player.single().map_or(0, |(_, inv)| inv.count(ItemId::ForgeKey));
+        info!("drop test: keys in the bag {keys}, key lying on the floor: {}", key.is_some());
+        exit.write(AppExit::Success);
     }
 }

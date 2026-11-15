@@ -26,8 +26,13 @@ pub fn spawn_icon(commands: &mut Commands, parent: Entity, icon: ItemIcon, scale
         commands.spawn((node, BackgroundColor(color), ChildOf(parent))).id()
     };
     match icon {
-        ItemIcon::Sword | ItemIcon::ShortSword => {
-            let (len, metal) = if icon == ItemIcon::Sword { (34.0, STEEL) } else { (24.0, RUST) };
+        ItemIcon::Sword | ItemIcon::ShortSword | ItemIcon::FineSword => {
+            let (len, metal) = match icon {
+                ItemIcon::Sword => (34.0, STEEL),
+                ItemIcon::FineSword => (36.0, Color::srgb(0.88, 0.9, 0.95)),
+                _ => (24.0, RUST),
+            };
+            let guard = if icon == ItemIcon::FineSword { BRASS } else { IRON };
             let sword = commands
                 .spawn((
                     Node { width: s(16.0), height: s(len + 20.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, ..default() },
@@ -35,7 +40,7 @@ pub fn spawn_icon(commands: &mut Commands, parent: Entity, icon: ItemIcon, scale
                     ChildOf(root),
                 ))
                 .id();
-            let parts = [(5.0, len, metal, 2.0), (16.0, 4.0, IRON, 1.0), (4.0, 10.0, GRIP, 1.0), (7.0, 6.0, IRON, 3.0)];
+            let parts = [(5.0, len, metal, 2.0), (16.0, 4.0, guard, 1.0), (4.0, 10.0, GRIP, 1.0), (7.0, 6.0, guard, 3.0)];
             for (w, h, c, rad) in parts {
                 block(commands, sword, Node { width: s(w), height: s(h), border_radius: r(rad), ..default() }, c);
             }
@@ -126,6 +131,18 @@ pub fn spawn_icon(commands: &mut Commands, parent: Entity, icon: ItemIcon, scale
                     ));
                 }
             }
+        }
+        ItemIcon::Key => {
+            // A big iron key: a ring bow, a shaft, two bits.
+            let iron = Color::srgb(0.42, 0.4, 0.38);
+            commands.spawn((
+                Node { position_type: PositionType::Absolute, left: s(10.0), top: s(18.0), width: s(18.0), height: s(18.0), border: UiRect::all(s(4.0)), border_radius: BorderRadius::MAX, ..default() },
+                BorderColor::all(iron),
+                ChildOf(root),
+            ));
+            block(commands, root, Node { position_type: PositionType::Absolute, left: s(27.0), top: s(25.0), width: s(22.0), height: s(4.0), ..default() }, iron);
+            block(commands, root, Node { position_type: PositionType::Absolute, left: s(40.0), top: s(29.0), width: s(4.0), height: s(8.0), ..default() }, iron);
+            block(commands, root, Node { position_type: PositionType::Absolute, left: s(45.0), top: s(29.0), width: s(4.0), height: s(6.0), ..default() }, iron);
         }
         ItemIcon::HopCone => {
             // Overlapping green scales, widest in the middle, a stalk on top.
@@ -225,6 +242,8 @@ pub enum NoticeIcon {
     Left,
     /// Somebody was composted.
     Died,
+    /// A door (locked, or opens from the other side).
+    Door,
 }
 
 /// Spawns a notification icon (same ~56 px box at scale 1); returns its root.
@@ -235,6 +254,39 @@ pub fn spawn_notice_icon(commands: &mut Commands, parent: Entity, icon: NoticeIc
         NoticeIcon::Sunflower => {
             let root = commands.spawn((Node { width: s(56.0), height: s(56.0), ..default() }, ChildOf(parent))).id();
             flower(commands, root, s(1.0), Color::srgb(1.0, 0.78, 0.1), Color::srgb(0.32, 0.18, 0.06), 10);
+            root
+        }
+        NoticeIcon::Door => {
+            // An arched plank door with two iron bands and a ring.
+            let root = commands
+                .spawn((Node { width: s(56.0), height: s(56.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, ChildOf(parent)))
+                .id();
+            let door = commands
+                .spawn((
+                    Node {
+                        width: s(28.0),
+                        height: s(38.0),
+                        border: UiRect::all(s(2.0)),
+                        border_radius: BorderRadius::new(s(14.0), s(14.0), s(1.0), s(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.42, 0.26, 0.13)),
+                    BorderColor::all(Color::srgb(0.08, 0.06, 0.05)),
+                    ChildOf(root),
+                ))
+                .id();
+            for top in [10.0, 24.0] {
+                commands.spawn((
+                    Node { position_type: PositionType::Absolute, top: s(top), width: Val::Percent(100.0), height: s(3.0), ..default() },
+                    BackgroundColor(Color::srgb(0.15, 0.15, 0.16)),
+                    ChildOf(door),
+                ));
+            }
+            commands.spawn((
+                Node { position_type: PositionType::Absolute, left: s(16.0), top: s(15.0), width: s(5.0), height: s(5.0), border_radius: BorderRadius::MAX, ..default() },
+                BackgroundColor(Color::srgb(0.75, 0.6, 0.3)),
+                ChildOf(door),
+            ));
             root
         }
         NoticeIcon::Joined | NoticeIcon::Left | NoticeIcon::Died => {

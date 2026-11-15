@@ -20,7 +20,7 @@ use crate::healing::HealingAle;
 use crate::hearth::{Hearth, RespawnPoint};
 use crate::items::ItemId;
 use crate::items::inventory::{Equipment, Inventory};
-use crate::items::pickup::{Pickup, PickupLayout};
+use crate::items::pickup::{ClaimedDrops, Pickup, PickupLayout};
 use crate::level::door::Door;
 use crate::net::NetSession;
 use crate::player::Player;
@@ -64,6 +64,8 @@ pub struct SaveData {
     /// Revived sunflowers and open doors (ids).
     pub suns: Vec<u32>,
     pub doors: Vec<u32>,
+    /// Unique enemy drops already taken (keys): not dropped again.
+    pub claimed_drops: Vec<u32>,
 }
 
 impl SaveData {
@@ -82,6 +84,7 @@ struct SaveState {
     /// The own world's state (not updated while visiting someone else's world).
     suns: Vec<u32>,
     doors: Vec<u32>,
+    claimed: Vec<u32>,
     respawn: Option<([f32; 3], f32)>,
     taken: Vec<u32>,
 }
@@ -125,6 +128,7 @@ fn load_save(
     mut hearths: Query<&mut Hearth>,
     mut doors: Query<&mut Door>,
     pickups: Query<(Entity, &Pickup)>,
+    mut claimed: ResMut<ClaimedDrops>,
 ) {
     let Some(data) = read_save() else { return };
     let Ok((entity, mut inventory, mut equipment, mut ale, mut tf)) = player.single_mut() else { return };
@@ -154,6 +158,8 @@ fn load_save(
     }
     state.suns = suns;
     state.doors = data.doors.clone();
+    claimed.0 = data.claimed_drops.clone();
+    state.claimed = data.claimed_drops.clone();
     state.respawn = data.respawn;
     state.taken = data.taken.clone();
     info!("save loaded ({} items, {} Ale)", data.items.len(), data.ale_charges);
@@ -166,6 +172,7 @@ fn track_world(
     hearths: Query<&Hearth>,
     doors: Query<&Door>,
     layout: Res<PickupLayout>,
+    claimed: Res<ClaimedDrops>,
     player: Query<Option<&RespawnPoint>, With<Player>>,
     pickups: Query<&Pickup>,
 ) {
@@ -179,7 +186,8 @@ fn track_world(
     let respawn = player.single().ok().flatten().map(|r| (r.position.to_array(), r.facing));
     let present: Vec<u32> = pickups.iter().map(|p| p.id).collect();
     let taken = layout.taken(&present);
-    if suns != state.suns || open != state.doors || respawn != state.respawn || taken != state.taken {
+    if suns != state.suns || open != state.doors || respawn != state.respawn || taken != state.taken || claimed.0 != state.claimed {
+        state.claimed = claimed.0.clone();
         state.suns = suns;
         state.doors = open;
         state.respawn = respawn;
@@ -213,6 +221,7 @@ fn snapshot(state: &SaveState, inventory: &Inventory, equipment: &Equipment, ale
         taken: state.taken.clone(),
         suns: state.suns.clone(),
         doors: state.doors.clone(),
+        claimed_drops: state.claimed.clone(),
     }
 }
 

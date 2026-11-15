@@ -108,6 +108,32 @@ pub fn spawn_torch(commands: &mut Commands, assets: &TorchAssets, wall_point: Ve
     ));
 }
 
+/// A fire (a forge's): flickering flames at `flames` (world positions, each `size` × a torch
+/// flame) and one flickering light above them, counted with the torches for shadows.
+pub fn spawn_fire(commands: &mut Commands, assets: &TorchAssets, light_at: Vec3, flames: &[Vec3], size: f32, seed: u32, intensity: f32, range: f32) {
+    let (tr, tg, tb) = TORCH_COLOR;
+    for (i, &at) in flames.iter().enumerate() {
+        let phase = hash01(seed + 700 + i as u32) * 100.0;
+        commands.spawn((
+            Name::new("Fire Flame"),
+            TorchFlame { phase },
+            Mesh3d(assets.flame.clone()),
+            MeshMaterial3d(assets.fire.clone()),
+            Transform::from_translation(at).with_scale(Vec3::splat(size)),
+        )).insert(FlameSize(size));
+    }
+    commands.spawn((
+        Name::new("Fire Light"),
+        Torch { base_intensity: intensity, phase: hash01(seed + 900) * 100.0 },
+        PointLight { color: Color::srgb(tr, tg * 0.9, tb * 0.8), intensity, range, radius: 0.3, shadow_maps_enabled: true, ..default() },
+        Transform::from_translation(light_at),
+    ));
+}
+
+/// A flame bigger than a torch's (the flicker scales around it).
+#[derive(Component)]
+struct FlameSize(f32);
+
 /// Cheap deterministic pseudo-random value in [0, 1) so the layout is stable between runs.
 fn hash01(n: u32) -> f32 {
     let mut x = n.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
@@ -252,7 +278,7 @@ fn spawn_arena(
 fn flicker_torches(
     time: Res<Time>,
     mut lights: Query<(&Torch, &mut PointLight)>,
-    mut flames: Query<(&TorchFlame, &mut Transform)>,
+    mut flames: Query<(&TorchFlame, &mut Transform, Option<&FlameSize>)>,
 ) {
     let t = time.elapsed_secs();
     let flicker = |p: f32| {
@@ -261,9 +287,9 @@ fn flicker_torches(
     for (torch, mut light) in &mut lights {
         light.intensity = torch.base_intensity * flicker(torch.phase);
     }
-    for (flame, mut tf) in &mut flames {
+    for (flame, mut tf, size) in &mut flames {
         let f = flicker(flame.phase);
-        tf.scale = Vec3::new(1.0, 1.6 * f, 1.0) * (0.9 + 0.1 * f);
+        tf.scale = Vec3::new(1.0, 1.6 * f, 1.0) * (0.9 + 0.1 * f) * size.map_or(1.0, |s| s.0);
     }
 }
 
