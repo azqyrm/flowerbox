@@ -265,12 +265,11 @@ fn spawn_puppet(
             ));
         }
         BodyKind::Hollow => {
-            let facing = body.facing;
             commands.entity(e).insert((
                 Team::Hostile,
                 Hurtbox,
                 Targetable { height: 0.55 },
-                Enemy { home: pos.with_y(0.0), home_facing: facing },
+                Enemy { home: pos.with_y(0.0) },
             ));
             equip_weapon.write(EquipWeapon { character: e, def: &hollow_blade::HOLLOW_SWORD });
         }

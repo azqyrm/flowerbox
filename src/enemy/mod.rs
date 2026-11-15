@@ -16,8 +16,8 @@ use bevy::prelude::*;
 
 use crate::character::action::{ActionKind, ActionRequest, CharacterAction};
 use crate::character::controller::CharacterController;
-use crate::character::stats::{Health, Stamina};
-use crate::character::{ActionIntent, CharacterSystems, MoveIntent, Remote, character_bundle};
+use crate::character::stats::Health;
+use crate::character::{ActionIntent, CharacterSystems, MoveIntent, character_bundle};
 use crate::combat::{Hurtbox, Team};
 use crate::hearth::WorldReset;
 use crate::humanoid::anim::HumanoidAnimator;
@@ -35,7 +35,8 @@ impl Plugin for EnemyPlugin {
             return;
         }
         app.init_resource::<EnemiesSuppressed>()
-            .add_systems(Update, spawn_enemies.before(WeaponSystems::Equip))
+            .add_systems(Startup, create_spawn_points)
+            .add_systems(Update, trigger_spawn_points.before(WeaponSystems::Equip))
             .add_systems(FixedUpdate, hollow_ai.before(CharacterSystems::Actions))
             .add_systems(Update, (enemy_death, revive_corpses, enemy_reset));
     }
@@ -45,7 +46,6 @@ impl Plugin for EnemyPlugin {
 #[derive(Component, Debug)]
 pub struct Enemy {
     pub home: Vec3,
-    pub home_facing: f32,
 }
 
 /// Lying dead for this many seconds.
@@ -105,31 +105,65 @@ impl HollowAi {
 #[derive(Resource, Default)]
 pub struct EnemiesSuppressed(pub bool);
 
-/// Spawns the arena's enemies whenever there are none of our own (at start, and after leaving
-/// someone else's world).
-fn spawn_enemies(
+/// A place in the world where an enemy appears when a player comes near — any player, local or
+/// an online guest. It spawns once; a world reset (rest / respawn of the world's owner) clears its
+/// enemy and arms it again. World-centred: a player joining later doesn't trigger another one.
+#[derive(Component, Debug)]
+pub struct SpawnPoint {
+    pub pos: Vec2,
+    pub radius: f32,
+    /// The enemy it spawned (alive or a corpse) since the last reset.
+    pub spawned: Option<Entity>,
+    seed: u32,
+}
+
+fn create_spawn_points(mut commands: Commands) {
+    for (i, (x, z)) in HOLLOW_SPAWNS.into_iter().enumerate() {
+        commands.spawn((
+            Name::new("Spawn point: Hollow"),
+            SpawnPoint { pos: Vec2::new(x, z), radius: HOLLOW_SPAWN_RADIUS, spawned: None, seed: 0x9E37_79B9 ^ (i as u32 * 7919 + 1) },
+        ));
+    }
+}
+
+/// Spawns a spawn point's enemy when a player enters its area. Not on guests: the host's world
+/// owns all enemies (`EnemiesSuppressed`).
+#[allow(clippy::too_many_arguments)]
+fn trigger_spawn_points(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut equip: MessageWriter<EquipWeapon>,
     suppressed: Res<EnemiesSuppressed>,
-    existing: Query<(), (With<Enemy>, Without<Remote>)>,
+    mut points: Query<&mut SpawnPoint>,
+    players: Query<(&Transform, &Team)>,
+    alive: Query<(), With<Enemy>>,
 ) {
-    if suppressed.0 || !existing.is_empty() {
+    if suppressed.0 {
         return;
     }
-    for (i, (x, z)) in HOLLOW_SPAWNS.into_iter().enumerate() {
-        let home = Vec3::new(x, 0.0, z);
+    for mut point in &mut points {
+        // Its enemy was removed (we visited another world): arm again.
+        if point.spawned.is_some_and(|e| !alive.contains(e)) {
+            point.spawned = None;
+        }
+        if point.spawned.is_some() {
+            continue;
+        }
+        let near = players.iter().any(|(tf, team)| *team == Team::Player && Vec2::new(tf.translation.x, tf.translation.z).distance(point.pos) < point.radius);
+        if !near {
+            continue;
+        }
+        let home = Vec3::new(point.pos.x, 0.0, point.pos.y);
         let to_centre = (-home).normalize_or(Vec3::NEG_Z);
         let facing = f32::atan2(-to_centre.x, -to_centre.z);
         let spec = HumanoidSpec::hollow();
-        let mut tf = Transform::from_xyz(x, PLAYER_HALF_HEIGHT + 0.05, z);
-        tf.rotation = Quat::from_rotation_y(facing);
+        let tf = Transform::from_translation(home + Vec3::Y * (PLAYER_HALF_HEIGHT + 0.05)).with_rotation(Quat::from_rotation_y(facing));
         let enemy = commands
             .spawn((
                 Name::new("Hollow"),
-                Enemy { home, home_facing: facing },
-                HollowAi::new(0x9E37_79B9 ^ (i as u32 * 7919 + 1)),
+                Enemy { home },
+                HollowAi::new(point.seed),
                 Hurtbox,
                 Team::Hostile,
                 Targetable { height: 0.55 },
@@ -137,9 +171,10 @@ fn spawn_enemies(
             ))
             .id();
         let rig = spawn_humanoid(&mut commands, &mut meshes, &mut materials, enemy, &spec, PLAYER_HALF_HEIGHT);
-        commands.entity(enemy).insert((spec, rig, HumanoidAnimator::default()));
-        commands.entity(enemy).insert(CharacterController { facing, ..default() });
+        commands.entity(enemy).insert((spec, rig, HumanoidAnimator::default(), CharacterController { facing, ..default() }));
         equip.write(EquipWeapon { character: enemy, def: &hollow_blade::HOLLOW_SWORD });
+        point.spawned = Some(enemy);
+        info!("a Hollow rises (spawn point at {:?})", point.pos);
     }
 }
 
@@ -321,42 +356,21 @@ fn revive_corpses(mut commands: Commands, mut q: Query<(Entity, &CharacterAction
     }
 }
 
-/// Resting / respawning: every enemy back at home, alive and unhurt.
-#[allow(clippy::type_complexity)]
+/// Resting / respawning (the world's owner): every spawned enemy goes, every spawn point is armed
+/// again — the enemies come back when someone comes near.
 fn enemy_reset(
     mut resets: MessageReader<WorldReset>,
     mut commands: Commands,
-    mut q: Query<(
-        Entity,
-        &Enemy,
-        &mut HollowAi,
-        &mut Transform,
-        &mut CharacterController,
-        &mut CharacterAction,
-        &mut ActionIntent,
-        &mut Health,
-        &mut Stamina,
-        &mut Visibility,
-    )>,
+    suppressed: Res<EnemiesSuppressed>,
+    mut points: Query<&mut SpawnPoint>,
 ) {
-    if resets.read().count() == 0 {
+    if resets.read().count() == 0 || suppressed.0 {
         return;
     }
-    for (entity, enemy, mut ai, mut tf, mut ctrl, mut action, mut intent, mut health, mut stamina, mut vis) in &mut q {
-        tf.translation = enemy.home + Vec3::Y * (PLAYER_HALF_HEIGHT + 0.05);
-        tf.rotation = Quat::from_rotation_y(enemy.home_facing);
-        *ctrl = CharacterController { facing: enemy.home_facing, ..default() };
-        action.revive();
-        *intent = ActionIntent::default();
-        *health = Health::new(health.max);
-        *stamina = Stamina::new(stamina.max);
-        *vis = Visibility::Inherited;
-        ai.state = AiState::Idle;
-        ai.timer = 0.0;
-        commands
-            .entity(entity)
-            .remove::<(Corpse, ColliderDisabled)>()
-            .insert((Hurtbox, Targetable { height: 0.55 }));
+    for mut point in &mut points {
+        if let Some(e) = point.spawned.take() {
+            commands.entity(e).despawn();
+        }
     }
-    info!("enemies reset");
+    info!("enemies reset (spawn points armed)");
 }

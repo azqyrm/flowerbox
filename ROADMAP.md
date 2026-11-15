@@ -299,9 +299,9 @@ Decisions (2026-11-15, from looking at how Souls games do it and at our code):
 Steps:
 - [x] Plan, decisions (this list)
 - [x] Notification feed (`ui/notifications.rs`, `NotificationSettings`), the pickup toast becomes a notification (F7 / `FLOWERBOX_AUTOPILOT=notify` for samples)
-- [ ] Player names; join / leave / death notifications
-- [ ] World state on the host (`net/world.rs`): revived sunflower, taken pickups, sent to joiners; kindle + pickup requests from guests; banner for the actor, notification for others
-- [ ] Spawn points (world-centred, area trigger, once per world cycle); guests never spawn
+- [x] Player names; join / leave / death notifications
+- [x] World state on the host (`net/world.rs`): revived sunflower, taken pickups, sent to joiners; kindle + pickup requests from guests; banner for the actor, notification for others
+- [x] Spawn points (world-centred, area trigger, once per world cycle); guests never spawn
 - [ ] Consumables: stack counts, "Use" from the inventory, `UseItem` action; Poppy + Camomile items and icons
 - [ ] PvP flag (replicated), marker, damage routing between players, parry stun between players, off on death, Poppy on respawn
 - [ ] Hit immunity (0.1 s, players)

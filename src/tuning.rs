@@ -186,6 +186,8 @@ pub const CAM_STICK_SPEED: f32 = 3.0;
 // ── Enemies (the Hollow, see enemy/mod.rs) ───────────────────────────────
 /// Where Hollows stand (floor x, z): across the arena from the player's start, past the dummy.
 pub const HOLLOW_SPAWNS: [(f32, f32); 1] = [(-4.0, -10.0)];
+/// A Hollow spawns when any player comes this close to its spawn point.
+pub const HOLLOW_SPAWN_RADIUS: f32 = 12.0;
 pub const HOLLOW_HP: f32 = 70.0;
 pub const HOLLOW_STAMINA: f32 = 90.0;
 /// Notices the player within this distance; gives up beyond `HOLLOW_LEASH` from home.

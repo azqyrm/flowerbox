@@ -12,6 +12,22 @@ pub const PROMPT_REST: &str = "[E] Rest by the Sunflower";
 pub const ONLINE_TITLE: &str = "Online";
 pub const ONLINE_EXPLAINER: &str = "Play together over the internet, peer to peer. One player hosts and shares the code; \
 the other copies it and presses Join. No server or account needed.";
+/// Notifications about other players ("Guest 1 picked up Rusted Axe").
+pub fn joined(who: &str) -> String {
+    format!("{who} joined")
+}
+pub fn left(who: &str) -> String {
+    format!("{who} left")
+}
+pub fn revived_sun(who: &str) -> String {
+    format!("{who} vigorated the Sun")
+}
+pub fn picked_up_by(who: &str, item: &str) -> String {
+    format!("{who} picked up {item}")
+}
+pub fn composted(who: &str) -> String {
+    format!("{who} was composted")
+}
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
 /// Toast after picking something up ("Picked up: Rusted Shortsword").
