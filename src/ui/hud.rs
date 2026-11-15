@@ -1,24 +1,28 @@
 //! In-game HUD (bevy_ui):
 //! - top left: HP (red, with a lagging "damage taken" chunk), stamina (green), Healing Ale count
 //! - bottom left: the equipment quadrant (spells / left hand / right hand / quick item)
-//! - bottom centre: the interaction prompt (see `ui::strings`)
+//! - bottom centre: the interaction prompt (see `ui::strings`) and the "Picked up" toast
 //! - centre: banners and the death screen (band text, fade to black)
 
 use bevy::prelude::*;
 
-use super::{Banner, DISPLAY_FONT};
+use super::icons::spawn_icon;
+use super::{Banner, DISPLAY_FONT, strings};
 use crate::character::stats::{Health, Stamina};
 use crate::healing::HealingAle;
-use crate::hearth::{DeathSequence, InteractPrompt, death_screen};
+use crate::hearth::{DeathSequence, death_screen};
+use crate::interact::InteractPrompt;
+use crate::items::inventory::{EquipSlot, Equipment, Inventory};
+use crate::items::pickup::ItemPickedUp;
+use crate::items::ItemIcon;
 use crate::player::Player;
-use crate::weapon::EquippedWeapon;
 
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_hud)
-            .add_systems(Update, (update_bars, update_ale, update_weapon, update_prompt, update_banner, update_death_screen));
+            .add_systems(Update, (update_bars, update_ale.after(update_hands), update_hands, update_prompt, update_toast, update_banner, update_death_screen));
     }
 }
 
@@ -29,13 +33,14 @@ const STAMINA_BAR_PX_PER_POINT: f32 = 2.8;
 const LAG_HOLD: f32 = 0.7;
 const LAG_DRAIN: f32 = 0.8;
 const BANNER_TIME: f32 = 3.4;
+const TOAST_TIME: f32 = 3.0;
 
-const FRAME: Color = Color::srgb(0.42, 0.36, 0.25);
-const PANEL: Color = Color::srgba(0.03, 0.025, 0.02, 0.8);
+pub(super) const FRAME: Color = Color::srgb(0.42, 0.36, 0.25);
+pub(super) const PANEL: Color = Color::srgba(0.03, 0.025, 0.02, 0.8);
 const HP_RED: Color = Color::srgb(0.62, 0.08, 0.06);
 const HP_LAG: Color = Color::srgb(0.85, 0.62, 0.25);
 const STAMINA_GREEN: Color = Color::srgb(0.2, 0.55, 0.22);
-const GOLD_TEXT: Color = Color::srgb(0.93, 0.82, 0.55);
+pub(super) const GOLD_TEXT: Color = Color::srgb(0.93, 0.82, 0.55);
 
 #[derive(Component)]
 struct HpFrame;
@@ -58,6 +63,17 @@ struct AleCount;
 struct AleIcon;
 #[derive(Component)]
 struct WeaponName;
+/// A hand slot of the equipment quadrant; its icon follows the equipment.
+#[derive(Component)]
+struct HandSlot(EquipSlot);
+#[derive(Component)]
+struct ToastRoot {
+    t: f32,
+}
+#[derive(Component)]
+struct ToastIcon;
+#[derive(Component)]
+struct ToastText;
 #[derive(Component)]
 struct PromptRoot;
 #[derive(Component)]
@@ -130,7 +146,11 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
             ChildOf(top_left),
         ))
         .id();
-    spawn_tankard_icon(&mut commands, ale_row, 1.0);
+    let tankard = spawn_icon(&mut commands, ale_row, ItemIcon::Tankard, 1.0);
+    commands.entity(tankard).insert((
+        AleIcon,
+        Node { width: px(28.0), height: px(32.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
+    ));
     commands.spawn((
         Text::new("3"),
         TextFont::from_font_size(20.0),
@@ -165,11 +185,13 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
             .id()
     };
     slot(&mut commands, 67.0, 0.0); // top: spells (none yet)
-    slot(&mut commands, 0.0, 67.0); // left hand (empty until shields exist)
+    let left = slot(&mut commands, 0.0, 67.0);
     let right = slot(&mut commands, 134.0, 67.0);
     let quick = slot(&mut commands, 67.0, 134.0);
-    spawn_sword_icon(&mut commands, right);
-    spawn_tankard_icon(&mut commands, quick, 1.25);
+    commands.entity(left).insert(HandSlot(EquipSlot::LeftHand));
+    commands.entity(right).insert(HandSlot(EquipSlot::RightHand));
+    let tankard = spawn_icon(&mut commands, quick, ItemIcon::Tankard, 1.25);
+    commands.entity(tankard).insert(AleIcon);
     commands.spawn((
         Text::new("3"),
         TextFont::from_font_size(15.0),
@@ -211,6 +233,32 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
         ))
         .id();
     commands.spawn((Text::new(""), TextFont::from_font_size(20.0), TextColor(Color::srgb(0.92, 0.9, 0.84)), PromptText, ChildOf(panel)));
+
+    // ── Bottom centre, above the prompt: "Picked up: X" toast ──
+    let toast = commands
+        .spawn((
+            Name::new("HUD Toast"),
+            ToastRoot { t: TOAST_TIME },
+            Node { width: Val::Percent(100.0), bottom: Val::Percent(24.0), justify_content: JustifyContent::Center, ..absolute() },
+            Visibility::Hidden,
+        ))
+        .id();
+    let panel = commands
+        .spawn((
+            Node {
+                padding: UiRect::new(px(10.0), px(24.0), px(4.0), px(4.0)),
+                border: UiRect::vertical(px(1.0)),
+                align_items: AlignItems::Center,
+                column_gap: px(8.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+            BorderColor::all(FRAME),
+            ChildOf(toast),
+        ))
+        .id();
+    commands.spawn((ToastIcon, Node { width: px(44.0), height: px(44.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, ChildOf(panel)));
+    commands.spawn((Text::new(""), TextFont::from_font_size(19.0), TextColor(Color::srgb(0.92, 0.9, 0.84)), ToastText, ChildOf(panel)));
 
     // ── Centre: banner ──
     let banner = commands
@@ -269,65 +317,6 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
         BackgroundColor(Color::NONE),
         GlobalZIndex(20),
     ));
-}
-
-/// A little tankard of ale: wooden mug, iron hoops, foam, handle.
-fn spawn_tankard_icon(commands: &mut Commands, parent: Entity, scale: f32) {
-    let s = |v: f32| px(v * scale);
-    let mug = commands
-        .spawn((
-            AleIcon,
-            Node { width: s(26.0), height: s(30.0), ..default() },
-            ChildOf(parent),
-        ))
-        .id();
-    // Handle (a hollow box on the right).
-    commands.spawn((
-        Node { left: s(15.0), top: s(9.0), width: s(10.0), height: s(13.0), border: UiRect::all(s(3.0)), border_radius: BorderRadius::all(s(4.0)), ..absolute() },
-        BorderColor::all(Color::srgb(0.38, 0.22, 0.1)),
-        ChildOf(mug),
-    ));
-    let body = commands
-        .spawn((
-            Node { left: s(2.0), top: s(6.0), width: s(17.0), height: s(23.0), border_radius: BorderRadius::new(s(2.0), s(2.0), s(4.0), s(4.0)), ..absolute() },
-            BackgroundColor(Color::srgb(0.5, 0.3, 0.13)),
-            ChildOf(mug),
-        ))
-        .id();
-    for top in [4.0, 16.0] {
-        commands.spawn((
-            Node { top: s(top), width: Val::Percent(100.0), height: s(3.0), ..absolute() },
-            BackgroundColor(Color::srgb(0.25, 0.25, 0.27)),
-            ChildOf(body),
-        ));
-    }
-    commands.spawn((
-        Node { left: s(0.0), top: s(1.0), width: s(21.0), height: s(7.0), border_radius: BorderRadius::all(s(4.0)), ..absolute() },
-        BackgroundColor(Color::srgb(0.95, 0.9, 0.74)),
-        ChildOf(mug),
-    ));
-}
-
-/// A straight sword drawn diagonally: blade, crossguard, grip, pommel.
-fn spawn_sword_icon(commands: &mut Commands, parent: Entity) {
-    let sword = commands
-        .spawn((
-            Node { width: px(12.0), height: px(54.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, ..default() },
-            UiTransform { rotation: Rot2::degrees(45.0), ..UiTransform::IDENTITY },
-            ChildOf(parent),
-        ))
-        .id();
-    let part = |commands: &mut Commands, w: f32, h: f32, color: Color, radius: f32| {
-        commands.spawn((
-            Node { width: px(w), height: px(h), border_radius: BorderRadius::all(px(radius)), ..default() },
-            BackgroundColor(color),
-            ChildOf(sword),
-        ));
-    };
-    part(commands, 5.0, 34.0, Color::srgb(0.78, 0.8, 0.83), 2.0);
-    part(commands, 16.0, 4.0, Color::srgb(0.45, 0.42, 0.38), 1.0);
-    part(commands, 4.0, 10.0, Color::srgb(0.25, 0.15, 0.08), 1.0);
-    part(commands, 7.0, 6.0, Color::srgb(0.45, 0.42, 0.38), 3.0);
 }
 
 fn update_bars(
@@ -403,11 +392,52 @@ fn update_ale(
     }
 }
 
-fn update_weapon(player: Query<&EquippedWeapon, (With<Player>, Changed<EquippedWeapon>)>, mut text: Query<&mut Text, With<WeaponName>>) {
-    let Ok(weapon) = player.single() else { return };
-    for mut t in &mut text {
-        t.0 = weapon.def.name.to_string();
+/// Hand slot icons and the weapon name follow the equipment (bare fist when the right hand is empty).
+fn update_hands(
+    mut commands: Commands,
+    player: Query<(&Inventory, &Equipment), (With<Player>, Changed<Equipment>)>,
+    slots: Query<(Entity, &HandSlot)>,
+    mut text: Query<&mut Text, With<WeaponName>>,
+) {
+    let Ok((inventory, equipment)) = player.single() else { return };
+    for (entity, slot) in &slots {
+        commands.entity(entity).despawn_children();
+        let icon = match (slot.0, equipment.item(slot.0, inventory)) {
+            (_, Some(item)) => Some(item.def().icon),
+            (EquipSlot::RightHand, None) => Some(ItemIcon::Fist),
+            _ => None,
+        };
+        if let Some(icon) = icon {
+            spawn_icon(&mut commands, entity, icon, 1.0);
+        }
     }
+    for mut t in &mut text {
+        t.0 = equipment.weapon(inventory).name.to_string();
+    }
+}
+
+fn update_toast(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut picked: MessageReader<ItemPickedUp>,
+    mut root: Query<(&mut ToastRoot, &mut Visibility)>,
+    icon: Query<Entity, With<ToastIcon>>,
+    mut text: Query<&mut Text, With<ToastText>>,
+) {
+    let Ok((mut toast, mut vis)) = root.single_mut() else { return };
+    if let Some(ItemPickedUp { item }) = picked.read().last() {
+        toast.t = 0.0;
+        for e in &icon {
+            commands.entity(e).despawn_children();
+            let i = spawn_icon(&mut commands, e, item.def().icon, 0.75);
+            commands.entity(i).insert(Node { width: px(42.0), height: px(42.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() });
+        }
+        for mut t in &mut text {
+            t.0 = format!("{}: {}", strings::PICKED_UP, item.def().name);
+        }
+    }
+    toast.t = (toast.t + time.delta_secs()).min(TOAST_TIME);
+    vis.set_if_neq(if toast.t < TOAST_TIME { Visibility::Inherited } else { Visibility::Hidden });
 }
 
 fn update_prompt(

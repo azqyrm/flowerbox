@@ -150,3 +150,12 @@ pub const DEATH_FADE_OUT_AT: f32 = 3.6;
 pub const DEATH_FADE_OUT: f32 = 0.9;
 /// Fade back in after respawning.
 pub const RESPAWN_FADE_IN: f32 = 0.9;
+
+// ── Items ────────────────────────────────────────────────────────────────
+/// How close (m) the player must be to pick an item up.
+pub const PICKUP_RANGE: f32 = 1.4;
+/// Equip load the player can carry; the load class is the worn weight / this.
+pub const PLAYER_MAX_LOAD: f32 = 30.0;
+/// Load ratio up to which the load class is Light / Medium (above Medium: Heavy, over 1: Overloaded).
+pub const LOAD_LIGHT: f32 = 0.3;
+pub const LOAD_MEDIUM: f32 = 0.7;

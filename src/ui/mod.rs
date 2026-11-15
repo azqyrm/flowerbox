@@ -1,16 +1,19 @@
 //! Screen UI. `hud` = bars, Healing Ale, equipment quadrant, interaction prompt, banners and
-//! the death screen. The inventory UI comes in Phase 7.
+//! the death screen. `inventory_ui` = the Tab/I inventory and equipment screen. `icons` = item
+//! icons drawn from nodes. `strings` = all player-facing wording.
 
 use bevy::prelude::*;
 
 pub mod hud;
+pub mod icons;
+pub mod inventory_ui;
 pub mod strings;
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<Banner>().add_plugins(hud::HudPlugin);
+        app.add_message::<Banner>().add_plugins((hud::HudPlugin, inventory_ui::InventoryUiPlugin));
     }
 }
 

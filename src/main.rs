@@ -9,6 +9,8 @@ mod healing;
 mod hearth;
 mod humanoid;
 mod input;
+mod interact;
+mod items;
 mod player;
 mod tuning;
 mod ui;
@@ -32,6 +34,8 @@ fn main() {
             camera::CameraPlugin,
             combat::CombatPlugin,
             input::InputPlugin,
+            interact::InteractPlugin,
+            items::ItemsPlugin,
             character::CharacterPlugin,
             humanoid::HumanoidPlugin,
             weapon::WeaponPlugin,

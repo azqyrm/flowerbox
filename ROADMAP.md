@@ -43,7 +43,7 @@
 | Drink Healing Ale | **R** | |
 | Interact / rest at Hearth | **E** | |
 | Lock-on target | **Q** or Middle Mouse | Familiar element (Phase 8) |
-| Inventory / Equipment | **Tab** or **I** | Pauses gameplay input |
+| Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
 | Pause menu | **Esc** | |
 
 All tuning values (timings, costs, damage) live in one `tuning.rs` constants module, or in a RON file later, so it's easy to adjust game feel.
@@ -137,23 +137,26 @@ claude_ds/
    │  ├─ pose.rs        # HumanoidPose (+ blending/masks), forward kinematics
    │  └─ anim.rs        # locomotion (idle/walk/run/jump/land) + action poses, HumanoidAnimator
    ├─ player/
-   │  └─ mod.rs         # Player = character_bundle + HumanoidSpec::human() + longsword + input
+   │  └─ mod.rs         # Player = character_bundle + HumanoidSpec::human() + starting inventory + input
    ├─ weapon/          # weapon CLASSES (movesets + swing animations) and weapon DEFINITIONS (models)
    │  ├─ mod.rs         # WeaponClass, Moveset/AttackSpec/SwingKey/GuardSpec, WeaponDef, ModelSource, EquipWeapon
-   │  └─ light_sword.rs # LightSword moveset + Longsword / Rusted Shortsword definitions
+   │  └─ light_sword.rs # LightSword moveset + Longsword / Rusted Shortsword / Rusted Axe / Fists
    ├─ combat.rs         # blade hitbox via FK (uses the equipped WeaponDef), hitstop, camera shake, dummy
    ├─ debug.rs          # F3 overlay, debug keys, screenshots, autopilot scripts
+   ├─ interact.rs       # InteractPrompt + InteractSystems order (pickups before the Hearth)
    ├─ items/
-   │  ├─ mod.rs         # ItemDef registry, ItemId
-   │  ├─ inventory.rs   # Inventory, Equipment components, equip/unequip events
-   │  └─ pickup.rs      # world pickups
+   │  ├─ mod.rs         # ItemId → ItemDef registry (kind, icon, weight, absorption, block, HP bonus, weapon, model)
+   │  ├─ inventory.rs   # Inventory, Equipment, EquipSlot, EquipRequest, EquipStats; weapon/model sync
+   │  ├─ models.rs      # primitive shield/armour models on bones
+   │  └─ pickup.rs      # glowing world pickups (E), ItemPickedUp
    ├─ healing.rs        # HealingAle charges, swallow + heal over time, tankard prop
    ├─ hearth.rs         # Hearth (kindle/rest), RespawnPoint, WorldReset, DeathSequence → respawn
    └─ ui/
       ├─ mod.rs         # UiPlugin, Banner message, display font path
       ├─ hud.rs         # bars, Ale, equipment quadrant, prompt, banner, death band + fades
-      ├─ strings.rs     # all player-facing wording (COMPOSTED, SUN VIGORATED, prompts)
-      └─ inventory_ui.rs  (Phase 7)
+      ├─ icons.rs       # item icons drawn from UI nodes
+      ├─ inventory_ui.rs # Tab/I screen: equipment, filters + grid, details, status preview
+      └─ strings.rs     # all player-facing wording (COMPOSTED, SUN VIGORATED, prompts)
 ```
 
 **Principles**
@@ -227,11 +230,13 @@ claude_ds/
 - [x] HUD: HP and stamina bars, Ale counter, equipped-items quadrant (plus the HP "damage chunk", the interact prompt and banners)
 
 ### Phase 7 — Inventory and equipment
-- [ ] Item registry (in code first, `assets/items.ron` later), `Inventory`, `Equipment`
-- [ ] Equip/Unequip events, plus stat recalculation (damage, defense, equip load)
-- [ ] Inventory UI on Tab: grid, filters, details panel, equip/unequip, pauses gameplay input
-- [ ] Swap the visual weapon or shield in hand when equipment changes
-- [ ] World pickups (E to pick up) with a "Picked up: X" toast
+- [x] Item registry (in code first, `assets/items.ron` later), `Inventory`, `Equipment`
+- [x] Equip/Unequip events, plus stat recalculation (damage, defense, equip load)
+- [x] Inventory UI on Tab: grid, filters, details panel, equip/unequip, pauses gameplay input
+- [x] Swap the visual weapon or shield in hand when equipment changes (also the hood)
+- [x] World pickups (E to pick up) with a "Picked up: X" toast
+- [ ] `assets/items.ron` instead of the code registry (when there are many items)
+- [ ] Chest/hand/leg armour items and models (slots exist)
 
 ### Phase 8 — Familiar extras (after the core works)
 - [ ] Lock-on (Q): the camera focuses the target and movement strafes around it
@@ -272,6 +277,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | `Dead` never ends by itself (infinite recovery). Whoever owns revival (the Hearth's `DeathSequence` for the player) calls `CharacterAction::revive()`. Future enemies stay dead until a `WorldReset`. |
 | 2026-11-14 | UI display font: PT Serif (ParaType Free Font License, `assets/fonts/PTSerif-LICENSE.txt`), for banners and YOU DIED. Body text uses Bevy's default font. |
 | 2026-11-15 | The Hearth is shown as a **sunflower**: drooping and wilted until first rested at, then it stands up over 2.2 s (`STAND_UP_TIME`), turns gold and lights the area. Death text is "COMPOSTED", the revive banner "SUN VIGORATED". All player-facing wording lives in `src/ui/strings.rs`; code keeps the names `Hearth`/`kindled`. |
+| 2026-11-15 | Phase 7: the world does **not** pause in the inventory (Souls-style); the player just gets no gameplay input (`GameplayBlocked`). Equipment points at inventory indices (items are never removed yet). Defence = multiplicative armour **absorption** (generic `DamageAbsorption` on characters). Empty right hand = **Fists** (a `WeaponDef` with no model). The Rusted Axe uses the LightSword moveset until it gets its own class. Shields only add weight and show a block value until blocking (Phase 8). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -407,3 +413,12 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
     5. Lethal damage: "YOU DIED", then "respawned at [0, 0.91, 10.40]" with full HP and Ale.
   - **Default autopilot:** death at 7.5 s, respawn at the Hearth at about 12 s, backstep test at 13.5 s (standing still 13.3–14.1 s).
   - In this environment the log fills with audio (rodio/ALSA) errors; they're harmless, so filter them out.
+- **N18 (2026-11-15) — Phase 7 (inventory and equipment):**
+  - **Data:** `items::ItemId` → `ItemDef` (static, in `items/mod.rs`): name, kind (Weapon/Shield/Armor(slot)/Ring/Consumable/Key), description, `ItemIcon`, weight, absorption, block, `max_hp_bonus`, `weapon: Option<&'static WeaponDef>`, `model: Option<ItemModel { bone, build }>`.
+  - **State:** `Inventory { items }` (bag order, equipped items stay in it) and `Equipment` (slot → inventory index; slots: right/left hand, head/chest/hands/legs, 2 rings, quick item). `Equipment::equip/unequip` are pure and unit tested; rings fill the free ring slot, else replace the first; the quick item (Healing Ale) can't be removed.
+  - **Flow:** anything sends `EquipRequest { character, index, equip }` → `handle_equip_requests` → on `Changed<Equipment>`: `EquipStats` recomputed (attack, absorption, block, weight / `PLAYER_MAX_LOAD`, load class, max HP bonus → `Health::max` and `DamageAbsorption`), `sync_weapon` sends `EquipWeapon` (Fists when empty), `sync_models` attaches shield/armour parts to bones.
+  - **UI:** `ui/inventory_ui.rs`, rebuilt whenever what it shows changes. Mouse via picking observers (`On<PointerOver>`, `On<PointerClick>`, double click equips). The default font lacks "—", "→", "·": use ASCII in body text.
+  - **Interact:** `interact.rs` clears `InteractPrompt` each frame; pickups claim E before the Hearth.
+  - **Pickups:** Rusted Shortsword (-7, -6), Studded Buckler (9, -7), Sunseed Ring (-9, 7.5). They don't respawn.
+  - **Debug:** F6 equips the next weapon in the bag. `FLOWERBOX_AUTOPILOT=inventory` (see `inventory_script`): menu with the axe selected (1.6 s), gear on (3.3 s), toast (4.4 s), 50 damage → HP 53 (6% absorbed), shortsword equip/unequip → Fists. The combat autopilot now adds the shortsword to the bag and equips it through `EquipRequest`; hits unchanged.
+  - **Not tested by script:** real Tab/I/Esc presses and mouse clicks (the autopilot drives the `InventoryMenu` resource directly).

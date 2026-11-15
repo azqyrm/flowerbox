@@ -20,7 +20,8 @@ use crate::character::controller::CharacterController;
 use crate::character::stats::{Health, Stamina};
 use crate::character::{ActionIntent, CharacterSystems};
 use crate::healing::HealingAle;
-use crate::input::PlayerInput;
+use crate::input::{GameplayBlocked, PlayerInput};
+use crate::interact::{InteractPrompt, InteractSystems};
 use crate::player::Player;
 use crate::tuning::*;
 use crate::ui::{Banner, strings};
@@ -30,10 +31,9 @@ pub struct HearthPlugin;
 impl Plugin for HearthPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<WorldReset>()
-            .init_resource::<InteractPrompt>()
             .add_systems(Startup, spawn_hearth)
             .add_systems(FixedUpdate, rest_at_hearth.after(CharacterSystems::Actions).before(CharacterSystems::Stats))
-            .add_systems(Update, (hearth_interaction, start_death_sequence, run_death_sequence, animate_hearth));
+            .add_systems(Update, (hearth_interaction.in_set(InteractSystems::Hearth), start_death_sequence, run_death_sequence, animate_hearth));
     }
 }
 
@@ -63,10 +63,6 @@ pub struct RespawnPoint {
 /// Something restored the world (a rest or a respawn): enemies and dummies reset.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct WorldReset;
-
-/// Interaction hint for the HUD ("[E] Rest at Hearth"), `None` when nothing is in reach.
-#[derive(Resource, Default, Debug)]
-pub struct InteractPrompt(pub Option<&'static str>);
 
 /// Running on a dead player: seconds since death. Removed after the fade-in.
 #[derive(Component, Debug, Default)]
@@ -354,14 +350,17 @@ fn animate_hearth(
 /// Shows the prompt near a Hearth and turns E into a rest request.
 fn hearth_interaction(
     mut prompt: ResMut<InteractPrompt>,
+    blocked: Res<GameplayBlocked>,
     hearths: Query<(&Hearth, &Transform)>,
     mut player: Query<
         (&Transform, &CharacterAction, &CharacterController, &mut PlayerInput, &mut ActionIntent, Has<DeathSequence>),
         With<Player>,
     >,
 ) {
-    prompt.0 = None;
     let Ok((tf, action, ctrl, mut input, mut intent, dying)) = player.single_mut() else { return };
+    if prompt.0.is_some() || blocked.0 {
+        return; // something closer claimed E, or a menu is open
+    }
     let interact = std::mem::take(&mut input.interact);
     let near = hearths
         .iter()

@@ -17,6 +17,7 @@ pub struct InputPlugin;
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(InputManagerPlugin::<Action>::default())
+            .init_resource::<GameplayBlocked>()
             .add_systems(Startup, grab_cursor)
             .add_systems(Update, (toggle_cursor, gather_player_input));
     }
@@ -57,6 +58,11 @@ pub fn default_input_map() -> InputMap<Action> {
     .with_dual_axis(Action::Move, VirtualDPad::wasd())
     .with_dual_axis(Action::Look, MouseMove::default())
 }
+
+/// True while a menu (the inventory) has the input: the character gets no movement or actions,
+/// the camera doesn't turn and clicks don't grab the cursor. The world keeps running.
+#[derive(Resource, Default, Debug)]
+pub struct GameplayBlocked(pub bool);
 
 /// Player-only input state (button timings). Gameplay reads the generic
 /// [`MoveIntent`] / [`ActionIntent`] that `gather_player_input` fills from it.
@@ -120,6 +126,7 @@ pub struct Autopilot {
 
 fn gather_player_input(
     time: Res<Time>,
+    blocked: Res<GameplayBlocked>,
     autopilot: Option<Res<Autopilot>>,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     cam: Query<&ThirdPersonCamera>,
@@ -134,6 +141,16 @@ fn gather_player_input(
 
     for (actions, mut input, mut movement, mut intent) in &mut players {
         intent.tick(dt);
+        if blocked.0 {
+            // A menu is open: stand still, drop held buttons (no sprint, no charging heavy).
+            movement.dir = Vec3::ZERO;
+            movement.sprint = false;
+            input.dodge_held = 0.0;
+            input.attack = AttackTracker::default();
+            input.interact = false;
+            intent.attack_held = false;
+            continue;
+        }
 
         // Movement: WASD relative to the camera (or the autopilot's script).
         let stick = actions.clamped_axis_pair(&Action::Move);
@@ -185,7 +202,7 @@ pub fn is_dodge_tap(held_seconds: f32) -> bool {
     held_seconds < SPRINT_HOLD_THRESHOLD
 }
 
-fn set_grab(options: &mut CursorOptions, grab: bool) {
+pub fn set_grab(options: &mut CursorOptions, grab: bool) {
     options.grab_mode = if grab { CursorGrabMode::Locked } else { CursorGrabMode::None };
     options.visible = !grab;
 }
@@ -195,11 +212,15 @@ fn grab_cursor(mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
 }
 
 /// Esc releases the cursor, a left click grabs it again.
-fn toggle_cursor(
+pub fn toggle_cursor(
+    blocked: Res<GameplayBlocked>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
+    if blocked.0 {
+        return; // the menu owns the cursor
+    }
     if keys.just_pressed(KeyCode::Escape) {
         set_grab(&mut cursor, false);
     } else if mouse.just_pressed(MouseButton::Left) && cursor.grab_mode == CursorGrabMode::None {
