@@ -339,6 +339,16 @@ Steps:
 - [x] Dead bodies and the fallen dummy don't block movement
 - [x] Two-instance tests, notes
 
+### Phase 8.8 — Level 1 "the sunken halls" (user request, 2026-11-16; design: `assets/levels/lvl1.png`)
+Plan (measured from the drawing; 1 px = 1/14 m; origin px (409.5, 1228) = world (0, -18), the arena's north wall):
+- [x] Several sunflowers: `Hearth { id, kindled, revive }`, reusable `hearth::spawn_sunflower(id, pos, facing)`, per-flower animation, respawn spot from the flower's facing and floor height
+- [ ] Level data file `assets/levels/lvl1.ron` + generic builder (`src/level/`): rooms = rectangles with a floor height; walls generated on a 0.25 m grid wherever a room borders nothing or another room (except doors / stair ends); floors; solid blocks; stairs = ramp collider + visible steps, always going down away from the start; torches; arena wall opening + filler walls
+- [ ] Rooms (px rects): corridor y0 [(370,1055,449,1228),(341,995,451,1055)]; middle −1.5 [(502,765,718,967),(502,967,567,1053),(451,992,567,1053)] + U block [(571,826,594,890),(594,868,634,890),(634,826,652,890)]; upper halls −1.5 [(308,765,502,826),(308,673,405,765),(329,633,380,673),(263,561,462,633),(152,686,308,746),(152,626,211,746),(45,567,211,626),(45,567,101,732)]; vault −3.5 [(521,564,701,720)]; stairs S1 (451,1023,502,1053) corridor→middle east, S2 (405,676,521,718) upper→vault east
+- [ ] Doors (interact + swing animation, stay open, saved, host-synced): D1 corridor south wall at (409.5,1228) 2.6 m; D2 middle west wall at (502,789) 2.4 m
+- [ ] Enemies (px): (353,1041),(360,1012),(580,791),(671,841 patrol N–S),(332,806),(354,782),(171,710),(320,579),(393,580),(619,644); line-of-sight for aggro
+- [ ] Treasures: (351,1024) Poppy, (617,854) Hop Cone (new, +1 Ale), (357,713) Camomile, (284,619) Thornbriar Ring (new, armour ring), (449,616) Hop Cone, (70,713) Hop Cone; sunflower id 1 at (72,726) facing north
+- [ ] Sync/save per sunflower id and door id (protocol v5), pickups with 3D positions
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked

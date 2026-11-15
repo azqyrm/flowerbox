@@ -40,20 +40,34 @@ impl Plugin for HearthPlugin {
     }
 }
 
+/// A rest site (drawn as a sunflower). Several can exist (the arena's is id 0; levels add more).
 #[derive(Component, Debug)]
 pub struct Hearth {
+    /// Stable id (saves, online sync).
+    pub id: u32,
     /// Unrested Hearths droop; the first rest revives ("kindles") them.
     pub kindled: bool,
+    /// Shown revival 0..1 (eases toward `kindled`).
+    revive: f32,
 }
 
 impl Hearth {
-    /// Where a character respawns: in front of the Hearth, facing the arena centre.
+    /// Where a character respawns: in front of the flower (the way it faces), on its floor.
     pub fn respawn_spot(tf: &Transform) -> (Vec3, f32) {
-        let pos = tf.translation.with_y(0.0);
-        let to_centre = (-pos).normalize_or(Vec3::NEG_Z);
-        let spot = pos + to_centre * HEARTH_RESPAWN_OFFSET;
-        (spot, f32::atan2(-to_centre.x, -to_centre.z))
+        let forward = (tf.rotation * Vec3::NEG_Z).with_y(0.0).normalize_or(Vec3::NEG_Z);
+        let spot = tf.translation + forward * HEARTH_RESPAWN_OFFSET;
+        (spot, f32::atan2(-forward.x, -forward.z))
     }
+}
+
+/// The animated parts of one sunflower.
+#[derive(Component)]
+struct SunflowerParts {
+    segments: Vec<Entity>,
+    head: Entity,
+    petals: Vec<Entity>,
+    leaves: Vec<Entity>,
+    light: Entity,
 }
 
 /// Where this character comes back after dying (floor position, facing). Set by resting.
@@ -75,7 +89,9 @@ pub struct SharedRest(pub bool);
 
 /// The local player just revived the sunflower (online, the host tells everyone: `net::world`).
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SunRevived;
+pub struct SunRevived {
+    pub id: u32,
+}
 
 /// Something restored the world (a rest or a respawn): enemies and dummies reset.
 #[derive(Message, Debug, Clone, Copy)]
@@ -184,7 +200,24 @@ fn ease_out_back(x: f32) -> f32 {
     1.0 + c3 * x * x * x + c1 * x * x
 }
 
+/// The arena's sunflower (id 0), facing the arena centre.
 fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let (x, z) = HEARTH_POSITION;
+    let to_centre = Vec3::new(-x, 0.0, -z).normalize_or(Vec3::NEG_Z);
+    let facing = f32::atan2(-to_centre.x, -to_centre.z);
+    spawn_sunflower(&mut commands, &mut meshes, &mut materials, 0, Vec3::new(x, 0.0, z), facing);
+}
+
+/// Spawns a rest site at `pos` (on the floor), its face toward `facing` (yaw, 0 = -Z). Reusable
+/// for levels (`crate::level`).
+pub fn spawn_sunflower(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    id: u32,
+    pos: Vec3,
+    facing: f32,
+) -> Entity {
     let stone = materials.add(StandardMaterial {
         base_color: Color::srgb(0.36, 0.34, 0.31),
         perceptual_roughness: 0.95,
@@ -202,15 +235,13 @@ fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
     let seeds = materials.add(StandardMaterial { base_color: Color::srgb(0.16, 0.09, 0.04), perceptual_roughness: 0.95, ..default() });
     let calyx = materials.add(StandardMaterial { base_color: Color::srgb(0.2, 0.32, 0.1), perceptual_roughness: 0.85, ..default() });
 
-    let (x, z) = HEARTH_POSITION;
-    let (_, facing) = Hearth::respawn_spot(&Transform::from_xyz(x, 0.0, z));
     let hearth = commands
         .spawn((
-            Name::new("Hearth (Sunflower)"),
-            Hearth { kindled: false },
+            Name::new(format!("Hearth {id} (Sunflower)")),
+            Hearth { id, kindled: false, revive: 0.0 },
             SunflowerMaterials { petal: petal.clone(), stem: stem.clone() },
-            // Local -Z faces the arena centre, so the flower bows (and later looks) that way.
-            Transform::from_xyz(x, 0.0, z).with_rotation(Quat::from_rotation_y(facing)),
+            // Local -Z faces `facing`, so the flower bows (and later looks) that way.
+            Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(facing)),
             Visibility::default(),
             RigidBody::Static,
         ))
@@ -221,12 +252,12 @@ fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
     let pivot = |commands: &mut Commands, t: Transform, parent: Entity| commands.spawn((t, Visibility::default(), ChildOf(parent))).id();
 
     // A ring of stones around a mound of soil.
-    mesh(&mut commands, Sphere::new(1.0).into(), &soil, Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::new(0.58, 0.12, 0.58)), hearth);
+    mesh(commands, Sphere::new(1.0).into(), &soil, Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::new(0.58, 0.12, 0.58)), hearth);
     for i in 0..10 {
         let a = i as f32 / 10.0 * TAU;
         let s = 0.85 + 0.3 * ((i * 7 % 5) as f32 / 4.0);
         mesh(
-            &mut commands,
+            commands,
             Cuboid::new(0.3 * s, 0.2 * s, 0.2).into(),
             &stone,
             Transform::from_xyz(a.cos() * 0.62, 0.09 * s, a.sin() * 0.62).with_rotation(Quat::from_rotation_y(-a + 1.57)),
@@ -237,13 +268,15 @@ fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
     // The stem: a chain of pivots, each bending a little.
     let mut parent = hearth;
     let mut at = Vec3::Y * 0.08;
+    let (mut segments, mut petals, mut leaves) = (vec![], vec![], vec![]);
     for i in 0..STEM_SEGMENTS {
         let seg = commands
             .spawn((StemSegment(i), Transform::from_translation(at), Visibility::default(), ChildOf(parent)))
             .id();
+        segments.push(seg);
         let r = 0.05 - 0.003 * i as f32;
         mesh(
-            &mut commands,
+            commands,
             Cylinder::new(r, STEM_SEGMENT_LENGTH + 0.02).into(),
             &stem,
             Transform::from_xyz(0.0, STEM_SEGMENT_LENGTH * 0.5, 0.0),
@@ -256,8 +289,9 @@ fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
                 let leaf = commands
                     .spawn((Leaf { yaw }, Transform::from_xyz(0.0, STEM_SEGMENT_LENGTH * 0.5, 0.0), Visibility::default(), ChildOf(seg)))
                     .id();
+                leaves.push(leaf);
                 mesh(
-                    &mut commands,
+                    commands,
                     Sphere::new(1.0).into(),
                     &stem,
                     Transform::from_xyz(0.2, 0.0, 0.0).with_scale(Vec3::new(0.21, 0.014, 0.1)),
@@ -272,23 +306,24 @@ fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
     // The head: a green calyx behind, the dark seed disc in front (facing local -Z), petals around.
     let head = commands.spawn((FlowerHead, Transform::from_translation(at), Visibility::default(), ChildOf(parent))).id();
     let disc = |z: f32| Transform::from_xyz(0.0, 0.08, z).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
-    mesh(&mut commands, Cylinder::new(0.2, 0.08).into(), &calyx, disc(-0.04), head);
-    mesh(&mut commands, Cylinder::new(0.25, 0.06).into(), &seeds, disc(-0.1), head);
-    mesh(&mut commands, Sphere::new(1.0).into(), &seeds, Transform::from_xyz(0.0, 0.08, -0.13).with_scale(Vec3::new(0.22, 0.22, 0.04)), head);
-    let ring = pivot(&mut commands, Transform::from_xyz(0.0, 0.08, -0.08), head);
+    mesh(commands, Cylinder::new(0.2, 0.08).into(), &calyx, disc(-0.04), head);
+    mesh(commands, Cylinder::new(0.25, 0.06).into(), &seeds, disc(-0.1), head);
+    mesh(commands, Sphere::new(1.0).into(), &seeds, Transform::from_xyz(0.0, 0.08, -0.13).with_scale(Vec3::new(0.22, 0.22, 0.04)), head);
+    let ring = pivot(commands, Transform::from_xyz(0.0, 0.08, -0.08), head);
     for i in 0..PETALS {
         let around = i as f32 / PETALS as f32 * TAU;
         let jitter = ((i * 37 % 11) as f32 / 10.0 - 0.5) * 2.0;
         let p = commands.spawn((Petal { jitter, around }, Transform::default(), Visibility::default(), ChildOf(ring))).id();
+        petals.push(p);
         mesh(
-            &mut commands,
+            commands,
             Sphere::new(1.0).into(),
             &petal,
             Transform::from_xyz(0.0, 0.36, 0.0).with_scale(Vec3::new(0.07, 0.15, 0.012)),
             p,
         );
     }
-    commands.spawn((
+    let light = commands.spawn((
         Name::new("Hearth Light"),
         HearthLight,
         PointLight {
@@ -302,9 +337,11 @@ fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
         // In front of the face, so the light falls where the flower looks.
         Transform::from_xyz(0.0, 0.3, -1.3),
         ChildOf(head),
-    ));
+    )).id();
     // Solid, so nobody walks through the flower bed.
     commands.spawn((Collider::cylinder(0.72, 1.2), Transform::from_xyz(0.0, 0.6, 0.0), ChildOf(hearth)));
+    commands.entity(hearth).insert(SunflowerParts { segments, head, petals, leaves, light });
+    hearth
 }
 
 /// Bends the sunflower between drooping and standing, with a gentle sway, and blends its
@@ -312,53 +349,56 @@ fn spawn_hearth(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn animate_hearth(
     time: Res<Time>,
-    mut revive: Local<f32>,
-    hearths: Query<(&Hearth, &SunflowerMaterials)>,
-    mut segments: Query<(&StemSegment, &mut Transform), (Without<FlowerHead>, Without<Petal>, Without<Leaf>)>,
-    mut heads: Query<&mut Transform, (With<FlowerHead>, Without<Petal>, Without<Leaf>)>,
-    mut petals: Query<(&Petal, &mut Transform), Without<Leaf>>,
-    mut leaves: Query<(&Leaf, &mut Transform), Without<Petal>>,
+    mut hearths: Query<(&mut Hearth, &SunflowerMaterials, &SunflowerParts)>,
+    segments: Query<&StemSegment>,
+    petals: Query<&Petal>,
+    leaves: Query<&Leaf>,
+    mut transforms: Query<&mut Transform>,
     mut lights: Query<&mut PointLight, With<HearthLight>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let t = time.elapsed_secs();
-    let Some((hearth, mats)) = hearths.iter().next() else { return };
-    let target = if hearth.kindled { 1.0 } else { 0.0 };
-    let step = time.delta_secs() / STAND_UP_TIME;
-    *revive = if *revive < target { (*revive + step).min(target) } else { (*revive - step).max(target) };
-    let up = ease_out_back(*revive);
-    let lerp = |a: f32, b: f32| a + (b - a) * up;
-
-    // Drooping: a slow, heavy sway. Standing: a lighter breeze.
-    let (sway_amp, sway_freq) = (lerp(0.025, 0.018), lerp(0.55, 1.1));
-    let sway = |phase: f32| (t * sway_freq + phase).sin() * sway_amp;
-    for (seg, mut tf) in &mut segments {
-        let i = seg.0;
-        let k = (i + 1) as f32 / STEM_SEGMENTS as f32;
-        let pitch = lerp(STEM_DROOP[i], STEM_UPRIGHT[i]) + sway(0.0) * k;
-        let roll = sway(1.7) * k * 0.7;
-        tf.rotation = Quat::from_rotation_x(pitch) * Quat::from_rotation_z(roll);
-    }
-    for mut tf in &mut heads {
-        tf.rotation = Quat::from_rotation_x(lerp(HEAD_DROOP, HEAD_UPRIGHT) + sway(0.9) * 1.5);
-    }
-    for (petal, mut tf) in &mut petals {
-        let fold = lerp(PETAL_DROOP + 0.25 * petal.jitter, PETAL_UPRIGHT + 0.05 * petal.jitter);
-        tf.rotation = Quat::from_rotation_z(petal.around) * Quat::from_rotation_x(fold);
-    }
-    for (leaf, mut tf) in &mut leaves {
-        tf.rotation = Quat::from_rotation_y(leaf.yaw) * Quat::from_rotation_z(lerp(LEAF_DROOP, LEAF_UPRIGHT) + sway(2.3) * 2.0);
-    }
-    let shown = revive.clamp(0.0, 1.0);
-    for mut light in &mut lights {
-        light.intensity = 30_000.0 + 380_000.0 * shown * (1.0 + 0.03 * (t * 1.3).sin());
-    }
-    if let Some(mut m) = materials.get_mut(&mats.petal) {
-        m.base_color = mix(PETAL_WILTED, PETAL_VIGOROUS, shown);
-        m.emissive = LinearRgba::rgb(0.18 * shown, 0.1 * shown, 0.0);
-    }
-    if let Some(mut m) = materials.get_mut(&mats.stem) {
-        m.base_color = mix(STEM_WILTED, STEM_VIGOROUS, shown);
+    for (mut hearth, mats, parts) in &mut hearths {
+        let target = if hearth.kindled { 1.0 } else { 0.0 };
+        let step = time.delta_secs() / STAND_UP_TIME;
+        hearth.revive = if hearth.revive < target { (hearth.revive + step).min(target) } else { (hearth.revive - step).max(target) };
+        let up = ease_out_back(hearth.revive);
+        let lerp = |a: f32, b: f32| a + (b - a) * up;
+        // Drooping: a slow, heavy sway. Standing: a lighter breeze. Each flower sways a bit off.
+        let (sway_amp, sway_freq) = (lerp(0.025, 0.018), lerp(0.55, 1.1));
+        let offset = hearth.id as f32 * 1.7;
+        let sway = |phase: f32| (t * sway_freq + phase + offset).sin() * sway_amp;
+        for &e in &parts.segments {
+            let (Ok(seg), Ok(mut tf)) = (segments.get(e), transforms.get_mut(e)) else { continue };
+            let i = seg.0;
+            let k = (i + 1) as f32 / STEM_SEGMENTS as f32;
+            let pitch = lerp(STEM_DROOP[i], STEM_UPRIGHT[i]) + sway(0.0) * k;
+            let roll = sway(1.7) * k * 0.7;
+            tf.rotation = Quat::from_rotation_x(pitch) * Quat::from_rotation_z(roll);
+        }
+        if let Ok(mut tf) = transforms.get_mut(parts.head) {
+            tf.rotation = Quat::from_rotation_x(lerp(HEAD_DROOP, HEAD_UPRIGHT) + sway(0.9) * 1.5);
+        }
+        for &e in &parts.petals {
+            let (Ok(petal), Ok(mut tf)) = (petals.get(e), transforms.get_mut(e)) else { continue };
+            let fold = lerp(PETAL_DROOP + 0.25 * petal.jitter, PETAL_UPRIGHT + 0.05 * petal.jitter);
+            tf.rotation = Quat::from_rotation_z(petal.around) * Quat::from_rotation_x(fold);
+        }
+        for &e in &parts.leaves {
+            let (Ok(leaf), Ok(mut tf)) = (leaves.get(e), transforms.get_mut(e)) else { continue };
+            tf.rotation = Quat::from_rotation_y(leaf.yaw) * Quat::from_rotation_z(lerp(LEAF_DROOP, LEAF_UPRIGHT) + sway(2.3) * 2.0);
+        }
+        let shown = hearth.revive.clamp(0.0, 1.0);
+        if let Ok(mut light) = lights.get_mut(parts.light) {
+            light.intensity = 30_000.0 + 380_000.0 * shown * (1.0 + 0.03 * (t * 1.3).sin());
+        }
+        if let Some(mut m) = materials.get_mut(&mats.petal) {
+            m.base_color = mix(PETAL_WILTED, PETAL_VIGOROUS, shown);
+            m.emissive = LinearRgba::rgb(0.18 * shown, 0.1 * shown, 0.0);
+        }
+        if let Some(mut m) = materials.get_mut(&mats.stem) {
+            m.base_color = mix(STEM_WILTED, STEM_VIGOROUS, shown);
+        }
     }
 }
 
@@ -452,7 +492,7 @@ fn rest_at_hearth(
         if !hearth.kindled {
             hearth.kindled = true;
             banner.write(Banner(strings::HEARTH_REKINDLED));
-            revived.write(SunRevived);
+            revived.write(SunRevived { id: hearth.id });
             info!("hearth kindled");
         }
         info!("resting at the sunflower");
@@ -493,7 +533,7 @@ fn run_death_sequence(
     time: Res<Time>,
     mut commands: Commands,
     mut reset: MessageWriter<WorldReset>,
-    hearths: Query<&Transform, (With<Hearth>, Without<Player>)>,
+    hearths: Query<(&Hearth, &Transform), Without<Player>>,
     mut dying: Query<
         (
             Entity,
@@ -516,7 +556,10 @@ fn run_death_sequence(
             // Fully black: come back at the last Hearth rested at (or the first Hearth).
             let (position, facing) = match point {
                 Some(p) => (p.position, p.facing),
-                None => hearths.iter().next().map_or((tf.translation.with_y(0.0), ctrl.facing), Hearth::respawn_spot),
+                None => hearths
+                    .iter()
+                    .min_by_key(|(h, _)| h.id)
+                    .map_or((tf.translation.with_y(0.0), ctrl.facing), |(_, t)| Hearth::respawn_spot(t)),
             };
             tf.translation = position + Vec3::Y * (PLAYER_HALF_HEIGHT + GROUND_SKIN);
             ctrl.velocity = Vec3::ZERO;
