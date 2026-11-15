@@ -66,6 +66,11 @@ pub enum CharacterSystems {
     Movement,
 }
 
+/// A character simulated on another machine (an online puppet): nothing local moves it, and
+/// damage dealt to it isn't applied here but forwarded to its owner (`crate::net`).
+#[derive(Component, Debug, Default)]
+pub struct Remote;
+
 /// What the character wants to do with its legs this tick.
 #[derive(Component, Default, Debug, Clone)]
 pub struct MoveIntent {

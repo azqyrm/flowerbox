@@ -35,12 +35,12 @@ const LAG_DRAIN: f32 = 0.8;
 const BANNER_TIME: f32 = 3.4;
 const TOAST_TIME: f32 = 3.0;
 
-pub(super) const FRAME: Color = Color::srgb(0.42, 0.36, 0.25);
+pub(crate) const FRAME: Color = Color::srgb(0.42, 0.36, 0.25);
 pub(super) const PANEL: Color = Color::srgba(0.03, 0.025, 0.02, 0.8);
 const HP_RED: Color = Color::srgb(0.62, 0.08, 0.06);
 const HP_LAG: Color = Color::srgb(0.85, 0.62, 0.25);
 const STAMINA_GREEN: Color = Color::srgb(0.2, 0.55, 0.22);
-pub(super) const GOLD_TEXT: Color = Color::srgb(0.93, 0.82, 0.55);
+pub(crate) const GOLD_TEXT: Color = Color::srgb(0.93, 0.82, 0.55);
 
 #[derive(Component)]
 struct HpFrame;

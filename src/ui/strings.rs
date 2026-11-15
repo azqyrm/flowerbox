@@ -8,6 +8,10 @@ pub const HEARTH_REKINDLED: &str = "SUN VIGORATED";
 pub const PROMPT_REKINDLE: &str = "[E] Tend the Sunflower";
 /// Interaction prompt at a Hearth that already stands.
 pub const PROMPT_REST: &str = "[E] Rest by the Sunflower";
+/// Online panel.
+pub const ONLINE_TITLE: &str = "Online";
+pub const ONLINE_EXPLAINER: &str = "Play together over the internet, peer to peer. One player hosts and shares the code; \
+the other copies it and presses Join. No server or account needed.";
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
 /// Toast after picking something up ("Picked up: Rusted Shortsword").

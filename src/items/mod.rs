@@ -30,7 +30,7 @@ impl Plugin for ItemsPlugin {
 }
 
 /// Every item in the game.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ItemId {
     Longsword,
     RustedShortsword,

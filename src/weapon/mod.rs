@@ -29,14 +29,21 @@ pub struct WeaponPlugin;
 
 impl Plugin for WeaponPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<EquipWeapon>().add_systems(Update, equip_weapons);
+        app.add_message::<EquipWeapon>().add_systems(Update, equip_weapons.in_set(WeaponSystems::Equip));
     }
+}
+
+/// Systems that spawn characters and send `EquipWeapon` for them in `Update` must run
+/// `.before(WeaponSystems::Equip)`, so the new entity exists when the request is handled.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum WeaponSystems {
+    Equip,
 }
 
 // ── Classes and movesets ─────────────────────────────────────────────────
 
 /// How a weapon fights. Each class has its own [`Moveset`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum WeaponClass {
     /// One-handed sword (the starting longsword).
     #[default]
