@@ -15,6 +15,8 @@
 //!   logic (see `COMBAT_PRESSES` / `combat_movement`).
 //! - `FLOWERBOX_AUTOPILOT=inventory` → inventory screen, equipping, a pickup, armour absorption
 //!   (see `inventory_script`).
+//! - `FLOWERBOX_AUTOPILOT=guard` → shield block, parry, hits from behind, guard break (see
+//!   `guard_script`).
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 
@@ -26,6 +28,7 @@ use crate::character::action::{ActionKind, ActionPhase, ActionRequest, Character
 use crate::character::controller::CharacterController;
 use crate::character::stats::{DamageMessage, Health, Invulnerable, Stamina};
 use crate::character::ActionIntent;
+use crate::character::guard::Guard;
 use crate::combat::{Dummy, blade_world};
 use crate::healing::HealingAle;
 use crate::items::ItemId;
@@ -56,24 +59,28 @@ impl Plugin for DebugPlugin {
         }
         match std::env::var("FLOWERBOX_AUTOPILOT").as_deref() {
             Ok("combat") => {
-                app.insert_resource(Autopilot { movement: Some(combat_movement), attack_button: Some(combat_attack_button) })
+                app.insert_resource(Autopilot { movement: Some(combat_movement), attack_button: Some(combat_attack_button), guard_button: None })
                     .add_systems(Update, (combat_script, log_dummy));
             }
             Ok("hearth") => {
-                app.insert_resource(Autopilot { movement: Some(hearth_movement), attack_button: None })
+                app.insert_resource(Autopilot { movement: Some(hearth_movement), attack_button: None, guard_button: None })
                     .add_systems(Update, (hearth_script, log_ale));
             }
             Ok("inventory") => {
-                app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None })
+                app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: None })
                     .add_systems(Update, (inventory_script, log_ale));
             }
+            Ok("guard") => {
+                app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: Some(guard_held) })
+                    .add_systems(Update, (guard_script, log_ale));
+            }
             Ok("wall") => {
-                app.insert_resource(Autopilot { movement: Some(wall_movement), attack_button: None })
+                app.insert_resource(Autopilot { movement: Some(wall_movement), attack_button: None, guard_button: None })
                     .add_systems(Update, wall_script)
                     .add_systems(FixedLast, log_wall_tick);
             }
             Ok(_) => {
-                app.insert_resource(Autopilot { movement: Some(default_movement), attack_button: None })
+                app.insert_resource(Autopilot { movement: Some(default_movement), attack_button: None, guard_button: None })
                     .init_resource::<AirborneTicks>()
                     .add_systems(FixedLast, count_airborne)
                     .add_systems(
@@ -126,12 +133,12 @@ fn toggle_overlay(keys: Res<ButtonInput<KeyCode>>, mut q: Query<&mut Visibility,
 fn update_overlay(
     dummies: Query<&Health, (With<Dummy>, Without<Player>)>,
     player: Query<
-        (&CharacterAction, &ActionIntent, &PlayerInput, &Health, &Stamina, &CharacterController, Has<Invulnerable>, Option<&HealingAle>),
+        (&CharacterAction, &ActionIntent, &PlayerInput, &Health, &Stamina, &CharacterController, Has<Invulnerable>, Option<&HealingAle>, &Guard),
         With<Player>,
     >,
     mut text: Query<(&mut Text, &Visibility), With<DebugOverlay>>,
 ) {
-    let Ok((action, intent, input, hp, st, ctrl, invuln, ale)) = player.single() else { return };
+    let Ok((action, intent, input, hp, st, ctrl, invuln, ale, guard)) = player.single() else { return };
     for (mut text, vis) in &mut text {
         if *vis == Visibility::Hidden {
             continue;
@@ -163,7 +170,7 @@ fn update_overlay(
             None => "-".into(),
         };
         text.0 = format!(
-            "[F3] DEBUG\n{action_line}\nbuffer: {buffer}\nHP {:.0}/{:.0}   ST {:.0}/{:.0}{}   Ale {}\n{}grounded {}  speed {:.1} m/s\nLMB held {:.2}s{}\ndummy HP {}",
+            "[F3] DEBUG\n{action_line}\nbuffer: {buffer}\nHP {:.0}/{:.0}   ST {:.0}/{:.0}{}   Ale {}\n{}grounded {}  speed {:.1} m/s\nLMB held {:.2}s{}\nguard {}\ndummy HP {}",
             hp.current,
             hp.max,
             st.current,
@@ -175,6 +182,12 @@ fn update_overlay(
             Vec2::new(ctrl.velocity.x, ctrl.velocity.z).length(),
             input.attack.held,
             action.current.map_or(String::new(), |a| if a.charge > 0.0 { format!("  charge {:.0}%", a.charge * 100.0) } else { String::new() }),
+            match guard.raised_for {
+                _ if guard.strength <= 0.0 => "- (no shield)".to_string(),
+                None => format!("down ({:.0}% block)", guard.strength * 100.0),
+                Some(t) if guard.in_parry_window() => format!("** PARRY WINDOW ** {t:.2}s"),
+                Some(t) => format!("up {t:.2}s"),
+            },
             dummies.iter().next().map_or("-".into(), |h| format!("{:.0}/{:.0}", h.current, h.max)),
         );
     }
@@ -262,10 +275,10 @@ fn debug_keys(
         }
     }
     if keys.just_pressed(KeyCode::KeyH) {
-        damage.write(DamageMessage { target: entity, amount: 15.0, from: None });
+        damage.write(DamageMessage { target: entity, amount: 15.0, from: None, attacker: None });
     }
     if keys.just_pressed(KeyCode::KeyK) {
-        damage.write(DamageMessage { target: entity, amount: f32::MAX, from: None });
+        damage.write(DamageMessage { target: entity, amount: f32::MAX, from: None, attacker: None });
     }
     let requests = [
         (KeyCode::Digit1, ActionRequest::Roll),
@@ -344,11 +357,11 @@ fn autopilot_script(
     }
     if at(1.2) {
         info!("autopilot: 10 damage during roll");
-        damage.write(DamageMessage { target: entity, amount: 10.0, from: None });
+        damage.write(DamageMessage { target: entity, amount: 10.0, from: None, attacker: None });
     }
     if at(2.5) {
         info!("autopilot: 10 damage while free");
-        damage.write(DamageMessage { target: entity, amount: 10.0, from: None });
+        damage.write(DamageMessage { target: entity, amount: 10.0, from: None, attacker: None });
     }
     for s in [2.9, 3.25, 3.6] {
         if at(s) {
@@ -361,7 +374,7 @@ fn autopilot_script(
     }
     if at(7.5) {
         info!("autopilot: lethal damage");
-        damage.write(DamageMessage { target: entity, amount: 500.0, from: None });
+        damage.write(DamageMessage { target: entity, amount: 500.0, from: None, attacker: None });
     }
     if at(13.5) {
         info!("autopilot: roll while standing still (expect Backstep)");
@@ -536,7 +549,7 @@ fn hearth_script(
     for (when, amount) in [(1.0, 50.0), (3.7, 10.0), (8.5, 40.0), (12.0, 500.0)] {
         if at(when) {
             info!("autopilot: {amount} damage");
-            damage.write(DamageMessage { target: entity, amount, from: None });
+            damage.write(DamageMessage { target: entity, amount, from: None, attacker: None });
         }
     }
     for when in [2.0, 3.5, 4.5, 6.0, 7.5] {
@@ -609,7 +622,7 @@ fn inventory_script(
     }
     if at(5.0) {
         info!("autopilot: 50 damage");
-        damage.write(DamageMessage { target: entity, amount: 50.0, from: None });
+        damage.write(DamageMessage { target: entity, amount: 50.0, from: None, attacker: None });
     }
     if at(6.0) {
         select(&mut menu, Filter::Weapons, 2);
@@ -621,6 +634,39 @@ fn inventory_script(
         }
         if at(7.0) {
             equip.write(EquipRequest { character: entity, index, equip: false });
+        }
+    }
+}
+
+// ── Guard autopilot (FLOWERBOX_AUTOPILOT=guard) ─────────────────────────
+
+/// Block held 1.0–3.0 s and 4.0–5.0 s.
+fn guard_held(t: f32) -> bool {
+    (1.0..3.0).contains(&t) || (4.0..5.0).contains(&t)
+}
+
+/// Shield, block and parry; the shield is equipped at 0.5 s. Expected log:
+/// 0.3 no shield yet: 10 → full, Hurt (HP 90) → 1.05 raising: "blocked" (4 through, HP 86) →
+/// 1.26 parry window: "parried", "parry!" → 1.8 "blocked" (HP 82) → 2.6 160 damage with ~90
+/// stamina: "guard broken" (64 through, stagger, HP 18) → 4.5 guard up again (4.0): 10 → "blocked"
+/// (HP 14) → 4.7 5 from behind → full, stagger (HP 9) → 5.5 guard down: 5 → full (HP 4).
+fn guard_script(
+    time: Res<Time>,
+    mut damage: MessageWriter<DamageMessage>,
+    mut equip: MessageWriter<EquipRequest>,
+    player: Query<(Entity, &Transform, &CharacterController, &Stamina), With<Player>>,
+) {
+    let Ok((entity, tf, ctrl, stamina)) = player.single() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    if crossed(t, dt, 0.5) {
+        equip.write(EquipRequest { character: entity, index: 2, equip: true });
+    }
+    let forward = Vec3::new(-ctrl.facing.sin(), 0.0, -ctrl.facing.cos());
+    for (at, amount, behind) in [(0.3, 10.0, false), (1.05, 10.0, false), (1.26, 10.0, false), (1.8, 10.0, false), (2.6, 160.0, false), (4.5, 10.0, false), (4.7, 5.0, true), (5.5, 5.0, false)] {
+        if crossed(t, dt, at) {
+            let from = tf.translation + forward * if behind { -1.5 } else { 1.5 };
+            info!("autopilot: {amount} damage from the {} (stamina {:.0})", if behind { "back" } else { "front" }, stamina.current);
+            damage.write(DamageMessage { target: entity, amount, from: Some(from), attacker: None });
         }
     }
 }

@@ -39,7 +39,7 @@
 | Jump | **Space** | |
 | Dodge roll / sprint | **Left Shift** | Tap to roll (i-frames). Hold to sprint (familiar element). Rolling while standing still (no WASD input) does a backstep. There's no separate backstep input. |
 | Attack | **Left Mouse** | **Tap** (released within 0.25 s) = light attack. **Hold** (0.25 s or longer) = heavy attack, released when charged or automatically at full charge. **Tap while airborne** = jump attack (the jump attack is the airborne light attack). A heavy attack can't be done in the air. |
-| Block (later) | Right Mouse | Planned familiar element, not in the core scope |
+| Block / parry | **Right Mouse** (hold) | Needs a shield in the left hand. Raising takes 0.3 s; the last third of the raise is the parry window. Blocks frontal hits only; costs stamina, breaks when stamina runs out. Slower walking, no sprint |
 | Drink Healing Ale | **R** | |
 | Interact / rest at Hearth | **E** | |
 | Lock-on target | **Q** or Middle Mouse | Familiar element (Phase 8) |
@@ -91,7 +91,7 @@ All tuning values (timings, costs, damage) live in one `tuning.rs` constants mod
 ### Inventory and equipment
 - **Items** are data-driven. An `ItemId` points to an `ItemDef { name, kind, icon, stats }` in a registry, which a RON file can feed later.
 - **Item kinds:** Weapon, Shield, Armor (Head/Chest/Hands/Legs), Ring, Consumable, Key.
-- **Equipment slots:** Right Hand, Left Hand, Head, Chest, Hands, Legs, Ring ×2. The Healing Ale gets a quick-item slot.
+- **Equipment slots:** Right Hand, Left Hand, Head, Chest, Hands, Legs, Ring ×2. The Healing Ale gets a quick-item slot. Which item goes where is decided by its kind in `Equipment::equip` (`items/inventory.rs`): Weapon → right hand, Shield → left hand, Armor(slot) → that slot, Ring → a free ring slot, Consumable → quick slot.
 - **UI** (bevy_ui, opened with Tab):
   - an item grid with a filter by kind
   - a details panel with stats
@@ -240,7 +240,10 @@ claude_ds/
 
 ### Phase 8 — Familiar extras (after the core works)
 - [ ] Lock-on (Q): the camera focuses the target and movement strafes around it
-- [ ] Block with a shield (RMB), which uses stamina
+- [x] Block with a shield (RMB), which uses stamina (+ guard break, frontal arc only, slowed movement)
+- [x] Parry window in the last third of raising the shield: negates the hit, sends `Parried` (user request, 2026-11-15)
+- [ ] Parry **stuns the attacker** (riposte opening): needs enemies with `CharacterAction`; react to `Parried { attacker }` (N19)
+- [ ] Dual wielding / weapons in the left hand (N19)
 - [ ] Roll weight classes based on equip load
 - [ ] Gamepad bindings
 - [ ] Simple enemy (a hollow-type melee AI) to test i-frames against real attacks
@@ -278,6 +281,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-14 | UI display font: PT Serif (ParaType Free Font License, `assets/fonts/PTSerif-LICENSE.txt`), for banners and YOU DIED. Body text uses Bevy's default font. |
 | 2026-11-15 | The Hearth is shown as a **sunflower**: drooping and wilted until first rested at, then it stands up over 2.2 s (`STAND_UP_TIME`), turns gold and lights the area. Death text is "COMPOSTED", the revive banner "SUN VIGORATED". All player-facing wording lives in `src/ui/strings.rs`; code keeps the names `Hearth`/`kindled`. |
 | 2026-11-15 | Phase 7: the world does **not** pause in the inventory (Souls-style); the player just gets no gameplay input (`GameplayBlocked`). Equipment points at inventory indices (items are never removed yet). Defence = multiplicative armour **absorption** (generic `DamageAbsorption` on characters). Empty right hand = **Fists** (a `WeaponDef` with no model). The Rusted Axe uses the LightSword moveset until it gets its own class. Shields only add weight and show a block value until blocking (Phase 8). |
+| 2026-11-15 | Guard (user request): hold RMB with a shield. The shield blocks from the moment you start raising it; the **last third of the 0.3 s raise is the parry window** (negates the hit). Every new raise (also after a roll/attack/stagger while still holding) has its own window. Blocked hits don't stagger; a guard break (stamina cost > stamina) does. Without a shield there is no guard (weapon blocking may come later). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -422,3 +426,11 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Pickups:** Rusted Shortsword (-7, -6), Studded Buckler (9, -7), Sunseed Ring (-9, 7.5). They don't respawn.
   - **Debug:** F6 equips the next weapon in the bag. `FLOWERBOX_AUTOPILOT=inventory` (see `inventory_script`): menu with the axe selected (1.6 s), gear on (3.3 s), toast (4.4 s), 50 damage → HP 53 (6% absorbed), shortsword equip/unequip → Fists. The combat autopilot now adds the shortsword to the bag and equips it through `EquipRequest`; hits unchanged.
   - **Not tested by script:** real Tab/I/Esc presses and mouse clicks (the autopilot drives the `InventoryMenu` resource directly).
+- **N19 (2026-11-15) — guard, block and parry (user request):**
+  - **Slots:** an item's kind decides its slot (`Equipment::equip`). The left hand takes **only shields**; there is no dual wielding yet. To add it: let `ItemKind::Weapon` go to the left hand too (e.g. equip into the left hand when chosen from a left-hand slot in the UI), give `Equipment` a left-hand weapon, attach its model to `HandL`, and add left-hand attack actions / a two-handed toggle in the movesets.
+  - **Code:** `character/guard.rs` (generic, works for future enemies). `Guard { strength, raised_for }` on every character (`character_bundle`). `strength` = the shield's block value via `EquipStats` (0 without a shield = can't guard). `ActionIntent::guard_held` comes from RMB (`Action::Block`) or the autopilot's `guard_button`. `update_guard` (FixedUpdate, after the action state machine) raises/lowers it; any action lowers it.
+  - **Damage order** (`stats::apply_damage`): i-frames → `Guard::outcome` (pure, unit tested) → armour absorption. Outcomes: `Unguarded` (down, no shield, or attacker outside `GUARD_ANGLE` of the facing), `Parried` (in the window: no damage, `Parried { defender, attacker }` message, hitstop + shake), `Blocked { through, stamina_cost }` (no stagger), `Broken { through }` (stamina → 0, guard lowered, stagger). `DamageMessage` gained `attacker: Option<Entity>` (combat fills it) so a parry knows whom to stun.
+  - **Tuning:** `GUARD_RAISE_TIME 0.3`, `PARRY_WINDOW_START 2/3`, `GUARD_ANGLE 1.4 rad`, `GUARD_STAMINA_PER_DAMAGE 0.6`, `GUARD_MOVE_FACTOR 0.55`, `GUARD_REGEN_FACTOR 0.35`. Shields: Wooden 60%, Buckler 40%.
+  - **Animation:** `humanoid::anim::guard_arm` blends the left arm to an upright forearm in front of the chest (shield face forward), eased with the raise (unit tested via FK).
+  - **To do — the stun:** when enemies exist, react to `Parried { attacker: Some(e) }` by forcing a long `Stunned` action on `e` (open to a riposte). Possibly give a parry its own short animation (shield bash) instead of reusing the raise.
+  - **Debug:** F3 shows the guard (down / up / PARRY WINDOW). `FLOWERBOX_AUTOPILOT=guard`: see `guard_script` for the expected log (block, parry, guard break, hit from behind, guard down).

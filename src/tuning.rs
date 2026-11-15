@@ -151,6 +151,20 @@ pub const DEATH_FADE_OUT: f32 = 0.9;
 /// Fade back in after respawning.
 pub const RESPAWN_FADE_IN: f32 = 0.9;
 
+// ── Guard and parry (see character/guard.rs) ──────────────────────────────
+/// Time to raise the shield. It blocks while rising; the last part is the parry window.
+pub const GUARD_RAISE_TIME: f32 = 0.3;
+/// The parry window starts at this fraction of the raise (2/3 → the last third).
+pub const PARRY_WINDOW_START: f32 = 2.0 / 3.0;
+/// Hits within this angle of the facing direction are guarded (radians, ≈ 80°).
+pub const GUARD_ANGLE: f32 = 1.4;
+/// Stamina a blocked hit costs, per point of the hit's damage.
+pub const GUARD_STAMINA_PER_DAMAGE: f32 = 0.6;
+/// Walking speed multiplier while guarding.
+pub const GUARD_MOVE_FACTOR: f32 = 0.55;
+/// Stamina regeneration multiplier while the guard is up.
+pub const GUARD_REGEN_FACTOR: f32 = 0.35;
+
 // ── Items ────────────────────────────────────────────────────────────────
 /// How close (m) the player must be to pick an item up.
 pub const PICKUP_RANGE: f32 = 1.4;

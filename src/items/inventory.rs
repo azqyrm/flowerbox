@@ -11,6 +11,7 @@ use bevy::prelude::*;
 
 use super::models::ModelBuilder;
 use super::{ArmorSlot, ItemId, ItemKind};
+use crate::character::guard::Guard;
 use crate::character::stats::{DamageAbsorption, Health};
 use crate::humanoid::{HumanoidRig, HumanoidSpec};
 use crate::tuning::*;
@@ -163,7 +164,7 @@ pub struct EquipStats {
     pub attack: f32,
     /// Fraction of damage absorbed by armour.
     pub absorption: f32,
-    /// Shield block fraction (Phase 8).
+    /// Shield block fraction (stopped while guarding).
     pub block: f32,
     pub weight: f32,
     pub max_load: f32,
@@ -220,11 +221,11 @@ fn handle_equip_requests(mut requests: MessageReader<EquipRequest>, mut q: Query
 #[allow(clippy::type_complexity)]
 fn apply_equip_stats(
     mut q: Query<
-        (&Inventory, &Equipment, &mut EquipStats, Option<&mut Health>, Option<&mut DamageAbsorption>),
+        (&Inventory, &Equipment, &mut EquipStats, Option<&mut Health>, Option<&mut DamageAbsorption>, Option<&mut Guard>),
         Or<(Changed<Equipment>, Changed<Inventory>)>,
     >,
 ) {
-    for (inventory, equipment, mut stats, health, absorption) in &mut q {
+    for (inventory, equipment, mut stats, health, absorption, guard) in &mut q {
         let new = EquipStats::compute(inventory, equipment);
         if let Some(mut health) = health {
             let delta = new.max_hp_bonus - stats.max_hp_bonus;
@@ -237,6 +238,9 @@ fn apply_equip_stats(
         }
         if let Some(mut a) = absorption {
             a.0 = new.absorption;
+        }
+        if let Some(mut g) = guard {
+            g.strength = new.block; // 0 without a shield: can't guard
         }
         stats.set_if_neq(new);
     }

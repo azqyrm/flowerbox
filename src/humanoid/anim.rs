@@ -13,6 +13,7 @@ use super::pose::{HumanoidPose, PoseMask, bone_model_transform};
 use super::{Bone, HumanoidRig, HumanoidSpec};
 use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
 use crate::character::controller::CharacterController;
+use crate::character::guard::Guard;
 use crate::tuning::*;
 use crate::weapon::{EquippedWeapon, Stance, SwingKey, WeaponClass};
 
@@ -526,6 +527,25 @@ pub struct HumanoidAnimator {
     /// Blend weight of the action layer and the last action pose (for fading out).
     action_weight: f32,
     last_action: Option<(HumanoidPose, PoseMask)>,
+    /// Blend weight of the raised-shield arm (follows `Guard::raise_progress`).
+    guard: f32,
+}
+
+/// Raised guard: the left upper arm forward and a little across the body, the forearm upright in
+/// front of the chest with its outer side (where shields sit, local -X) facing forward.
+pub fn guard_arm(p: &mut HumanoidPose, weight: f32) {
+    if weight <= 0.0 {
+        return;
+    }
+    let upper = rx(1.2) * rz(0.35);
+    // Forearm orientation in the chest frame: local -Y (along the forearm) points up, local -X
+    // (the shield face) points forward (-Z).
+    let forearm = Quat::from_mat3(&Mat3::from_cols(Vec3::Z, Vec3::NEG_Y, Vec3::X));
+    let fore_local = upper.inverse() * forearm;
+    let (u, f, h) = (p.get(Bone::UpperArmL), p.get(Bone::ForearmL), p.get(Bone::HandL));
+    p.set(Bone::UpperArmL, u.slerp(upper, weight))
+        .set(Bone::ForearmL, f.slerp(fore_local, weight))
+        .set(Bone::HandL, h.slerp(Quat::IDENTITY, weight));
 }
 
 /// Brief losses of ground shorter than this (stepping over rubble, a missed probe) don't
@@ -543,12 +563,13 @@ pub fn animate_humanoids(
         &CharacterController,
         &CharacterAction,
         Option<&EquippedWeapon>,
+        Option<&Guard>,
     )>,
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();
     let smooth = |rate: f32| 1.0 - (-rate * dt).exp();
-    for (spec, rig, mut anim, ctrl, action, equipped) in &mut characters {
+    for (spec, rig, mut anim, ctrl, action, equipped, guard) in &mut characters {
         anim.time += dt;
         // Airborne only after a short grace period, or right away when clearly jumping.
         if ctrl.grounded {
@@ -590,7 +611,7 @@ pub fn animate_humanoids(
 
         // Action layer: snaps in fast (so swings and hitboxes agree), fades out a bit slower.
         let current = action.current.as_ref().and_then(action_pose);
-        let pose = match current {
+        let mut pose = match current {
             Some((p, mask)) => {
                 anim.action_weight = (anim.action_weight + dt / 0.06).min(1.0);
                 anim.last_action = Some((p, mask));
@@ -604,6 +625,11 @@ pub fn animate_humanoids(
                 }
             }
         };
+
+        // Guard layer: the shield arm follows the raise (eased); lowering takes ~0.15 s.
+        let raise = guard.map_or(0.0, Guard::raise_progress);
+        anim.guard = if guard.is_some_and(Guard::is_up) { raise * raise * (3.0 - 2.0 * raise) } else { (anim.guard - dt / 0.15).max(0.0) };
+        guard_arm(&mut pose, anim.guard);
 
         if let Ok(mut tf) = transforms.get_mut(rig.model) {
             *tf = pose.model_transform(rig.root_height);
@@ -735,6 +761,19 @@ mod tests {
         let hand = bone_model_transform(&spec, &pose, Bone::HandR);
         let tip = hand.transform_point(Vec3::Y * 1.03);
         assert!(tip.z > hand.translation.z + 0.4 && tip.y < hand.translation.y, "hand {} tip {tip}", hand.translation);
+    }
+
+    #[test]
+    fn raised_guard_puts_the_shield_in_front_of_the_chest() {
+        let spec = HumanoidSpec::human();
+        let mut pose = locomotion_pose(&spec, &LocomotionInput::default());
+        guard_arm(&mut pose, 1.0);
+        let fore = bone_model_transform(&spec, &pose, Bone::ForearmL);
+        // Shield centre and face direction as built by `items::models::wooden_shield`.
+        let centre = fore.transform_point(Vec3::new(-0.075, -spec.forearm * 0.55, 0.0));
+        let face = fore.rotation * Vec3::NEG_X;
+        assert!(centre.z < -0.25 && (1.1..1.6).contains(&centre.y) && centre.x.abs() < 0.3, "{centre}");
+        assert!(face.z < -0.9, "faces forward: {face}");
     }
 
     #[test]
