@@ -311,6 +311,29 @@ Steps:
 - [x] Hit immunity (0.1 s, players)
 - [x] Two-instance tests (autopilots) + screenshots; ROADMAP notes (N22)
 
+### Phase 8.7 — Souls-style respawns, shared rest, synced dummy, corpses (user request, 2026-11-16)
+Request, cleaned up:
+1. Enemies don't spawn when someone walks near: they exist from the start and **all respawn when resting** at the sunflower (and when the world's owner dies), like in Souls games. (Also removes the reported invisible second Hollow: a guest who joined after the first one died had spawned its own.)
+2. **Shared rest:** online, the rest only "happens" when **every** player rests at the sunflower. Each resting player shows "<name> waiting for other players at rest site n/N". When all are resting: enemies respawn, then everyone's HP, stamina and Ale are restored.
+3. **Resting is a state:** kneel and stay. **E again or moving** stands you up.
+4. **Synced training dummy** (host-owned): everyone sees its wobble, falling over and **damage numbers** popping out of it; harder hits push it further.
+5. **Dead bodies don't block:** corpses (enemies, players) and the fallen dummy no longer have a solid capsule.
+
+Decisions:
+- Offline the rest completes at once (1/1). A world reset (rest or the owner's death) despawns every enemy (including corpses) and respawns all spawn points.
+- The rest's effect is split: *starting* to rest (kneel) revives the sunflower and sets your respawn point; the *completed* rest (everyone resting) respawns enemies and restores everyone. Standing up is its own short action (`StandUp`).
+- The dummy follows the same pattern as enemies: guests' hits are forwarded to the host; the host broadcasts every dummy hit (amount, direction, broken), so every machine animates it and shows the number. Late joiners get its HP.
+- Damage numbers: screen-space text over the hit point that pops up, drifts and fades (dummy only for now).
+- Dead/broken bodies get `ColliderDisabled` (their own movement still uses the shape, so they don't fall through the floor).
+
+Steps:
+- [ ] Enemies spawn at world start, all respawn on world reset (no area trigger)
+- [ ] Rest as a state (`Rest` stays active; `StandUp` on E or movement); effects split into started / completed
+- [ ] Shared rest online (host counts resting players, waiting notifications, completion event)
+- [ ] Synced dummy (forwarded hits, broadcast hits, HP for joiners), stronger push for bigger hits, damage numbers
+- [ ] Dead bodies and the fallen dummy don't block movement
+- [ ] Two-instance tests, notes
+
 ### Phase 9 — Polish
 - [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested).
 - [ ] Replace the primitives with a rigged glTF character (CC0). Map its skeleton onto `humanoid::Bone` so the shared poses and the FK hitbox keep working, or blend its clips in `humanoid::anim` (see N13).
