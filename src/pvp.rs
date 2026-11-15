@@ -16,6 +16,7 @@ use crate::character::{ActionIntent, CharacterSystems};
 use crate::hearth::DeathSequence;
 use crate::humanoid::{HumanoidRig, HumanoidSpec};
 use crate::items::inventory::Inventory;
+use crate::healing::HealingAle;
 use crate::items::{ItemEffect, ItemIcon, ItemId};
 use crate::player::Player;
 use crate::ui::icons::{NoticeIcon, spawn_icon};
@@ -85,9 +86,10 @@ fn start_item_use(
 
 fn apply_item_use(
     mut changed: MessageWriter<PvpChanged>,
-    mut q: Query<(&CharacterAction, &mut UsingItem, &mut Inventory, &mut Pvp)>,
+    mut notify: MessageWriter<Notify>,
+    mut q: Query<(&CharacterAction, &mut UsingItem, &mut Inventory, &mut Pvp, Option<&mut HealingAle>)>,
 ) {
-    for (action, mut using, mut inventory, mut pvp) in &mut q {
+    for (action, mut using, mut inventory, mut pvp, ale) in &mut q {
         let Some(cur) = action.current.filter(|a| a.kind == ActionKind::UseItem) else { continue };
         if cur.phase() != ActionPhase::Active || using.applied == Some(action.serial) {
             continue;
@@ -99,6 +101,15 @@ fn apply_item_use(
         let on = match using.item.def().effect {
             Some(ItemEffect::PvpOn) => true,
             Some(ItemEffect::PvpOff) => false,
+            Some(ItemEffect::AleUp) => {
+                if let Some(mut ale) = ale {
+                    ale.max += 1;
+                    ale.charges += 1;
+                    info!("Healing Ale: {} charges now", ale.max);
+                    notify.write(Notify::new(NoticeIcon::Item(ItemIcon::Tankard), strings::ale_up(ale.max)));
+                }
+                continue;
+            }
             None => continue,
         };
         info!("ate a {}: PvP {}", using.item.def().name, if on { "on" } else { "off" });

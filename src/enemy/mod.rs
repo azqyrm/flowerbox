@@ -42,10 +42,12 @@ impl Plugin for EnemyPlugin {
     }
 }
 
-/// An enemy and where it lives.
+/// An enemy and where it lives (floor point). With `patrol` it walks between home and that
+/// point while it hasn't noticed anyone.
 #[derive(Component, Debug)]
 pub struct Enemy {
     pub home: Vec3,
+    pub patrol: Option<Vec3>,
 }
 
 /// Lying dead for this many seconds.
@@ -74,12 +76,14 @@ pub struct HollowAi {
     stuck: f32,
     /// Seconds left of sidestepping around an obstacle.
     detour: f32,
+    /// Patrolling: heading for the patrol point (else home).
+    outbound: bool,
     rng: u32,
 }
 
 impl HollowAi {
     fn new(seed: u32) -> Self {
-        Self { state: AiState::Idle, timer: 0.0, combo_left: 0, strafe: 1.0, stuck: 0.0, detour: 0.0, rng: seed.max(1) }
+        Self { state: AiState::Idle, timer: 0.0, combo_left: 0, strafe: 1.0, stuck: 0.0, detour: 0.0, outbound: true, rng: seed.max(1) }
     }
 
     /// xorshift: deterministic, so autopilot runs repeat.
@@ -111,18 +115,24 @@ pub struct EnemiesSuppressed(pub bool);
 /// host) spawns; guests see the host's enemies.
 #[derive(Component, Debug)]
 pub struct SpawnPoint {
-    pub pos: Vec2,
+    /// Floor point the enemy stands on.
+    pub pos: Vec3,
+    pub patrol: Option<Vec3>,
     /// The enemy it spawned (alive or a corpse) since the last reset.
     pub spawned: Option<Entity>,
     seed: u32,
 }
 
+impl SpawnPoint {
+    /// `n` makes each spawn point's AI rolls different (but the same every run).
+    pub fn new(pos: Vec3, patrol: Option<Vec3>, n: u32) -> Self {
+        Self { pos, patrol, spawned: None, seed: 0x9E37_79B9 ^ (n * 7919 + 1) }
+    }
+}
+
 fn create_spawn_points(mut commands: Commands) {
     for (i, (x, z)) in HOLLOW_SPAWNS.into_iter().enumerate() {
-        commands.spawn((
-            Name::new("Spawn point: Hollow"),
-            SpawnPoint { pos: Vec2::new(x, z), spawned: None, seed: 0x9E37_79B9 ^ (i as u32 * 7919 + 1) },
-        ));
+        commands.spawn((Name::new("Spawn point: Hollow"), SpawnPoint::new(Vec3::new(x, 0.0, z), None, i as u32)));
     }
 }
 
@@ -149,15 +159,15 @@ fn trigger_spawn_points(
         if point.spawned.is_some() {
             continue;
         }
-        let home = Vec3::new(point.pos.x, 0.0, point.pos.y);
-        let to_centre = (-home).normalize_or(Vec3::NEG_Z);
+        let home = point.pos;
+        let to_centre = (-home).with_y(0.0).normalize_or(Vec3::NEG_Z);
         let facing = f32::atan2(-to_centre.x, -to_centre.z);
         let spec = HumanoidSpec::hollow();
         let tf = Transform::from_translation(home + Vec3::Y * (PLAYER_HALF_HEIGHT + 0.05)).with_rotation(Quat::from_rotation_y(facing));
         let enemy = commands
             .spawn((
                 Name::new("Hollow"),
-                Enemy { home },
+                Enemy { home, patrol: point.patrol },
                 HollowAi::new(point.seed),
                 Hurtbox,
                 Team::Hostile,
@@ -176,11 +186,13 @@ fn trigger_spawn_points(
 #[allow(clippy::type_complexity)]
 fn hollow_ai(
     time: Res<Time>,
+    spatial: SpatialQuery,
     players: Query<(&Transform, &CharacterAction, &Team), Without<HollowAi>>,
-    mut q: Query<(&Enemy, &mut HollowAi, &Transform, &CharacterController, &CharacterAction, &Health, &mut MoveIntent, &mut ActionIntent)>,
+    characters: Query<(), With<CharacterController>>,
+    mut q: Query<(Entity, &Enemy, &mut HollowAi, &Transform, &CharacterController, &CharacterAction, &Health, &mut MoveIntent, &mut ActionIntent)>,
 ) {
     let dt = time.delta_secs();
-    for (enemy, mut ai, tf, ctrl, action, health, mut movement, mut intent) in &mut q {
+    for (entity, enemy, mut ai, tf, ctrl, action, health, mut movement, mut intent) in &mut q {
         // Go for the nearest living player (the local one or an online guest's puppet).
         let nearest = players
             .iter()
@@ -199,6 +211,15 @@ fn hollow_ai(
         }
         let to_player = (ppos - tf.translation).with_y(0.0);
         let dist = to_player.length();
+        // Noticing needs a clear view (walls and closed doors hide you), and not a whole floor apart.
+        let sees = |range: f32| {
+            player_alive
+                && dist < range
+                && (ppos.y - tf.translation.y).abs() < 2.5
+                && crate::level::line_of_sight(&spatial, tf.translation + Vec3::Y * 0.6, ppos + Vec3::Y * 0.6, &|e| {
+                    e != entity && !characters.contains(e)
+                })
+        };
         let toward = to_player.normalize_or_zero();
         let to_home = (enemy.home - tf.translation).with_y(0.0);
         let busy = action.current.is_some();
@@ -217,9 +238,18 @@ fn hollow_ai(
 
         match ai.state {
             AiState::Idle => {
-                if player_alive && dist < HOLLOW_AGGRO_RANGE {
+                if sees(HOLLOW_AGGRO_RANGE) {
                     info!("a Hollow notices you");
                     ai.set(AiState::Chase);
+                } else if let Some(far) = enemy.patrol {
+                    // Pace back and forth.
+                    let goal = if ai.outbound { far } else { enemy.home };
+                    let to = (goal - tf.translation).with_y(0.0);
+                    if to.length() < 0.4 {
+                        ai.outbound = !ai.outbound;
+                    } else {
+                        movement.dir = to.normalize() * HOLLOW_PATROL_FACTOR;
+                    }
                 }
             }
             AiState::Chase => {
@@ -285,7 +315,7 @@ fn hollow_ai(
                 } else {
                     ai.set(AiState::Idle);
                 }
-                if player_alive && dist < HOLLOW_AGGRO_RANGE * 0.6 && to_home.length() < HOLLOW_LEASH * 0.7 {
+                if sees(HOLLOW_AGGRO_RANGE * 0.6) && to_home.length() < HOLLOW_LEASH * 0.7 {
                     ai.set(AiState::Chase);
                 }
             }

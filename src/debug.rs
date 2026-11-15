@@ -27,6 +27,10 @@
 //!   rest at the sunflower (shared rest completes), the guest walks away (stands up).
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
+//! - `FLOWERBOX_AUTOPILOT=level` → walks level 1 without enemies: opens both doors, takes the
+//!   stairs, revives sunflower 1, ends in the vault (see `LEVEL_ROUTE`); logs arrivals and stalls.
+//! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
+//! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -72,7 +76,18 @@ impl Plugin for DebugPlugin {
             app.insert_resource(AutoScreenshot { path, frame: 0, at, at_time, taken_frame: None })
                 .add_systems(Update, auto_screenshot);
         }
+        if std::env::var("FLOWERBOX_POS").is_ok() {
+            app.add_systems(PostStartup, place_player);
+        }
         match std::env::var("FLOWERBOX_AUTOPILOT").as_deref() {
+            Ok("still") => {
+                app.add_systems(Update, open_all_doors);
+            }
+            Ok("level") => {
+                app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
+                    .init_resource::<LevelRun>()
+                    .add_systems(Update, level_script);
+            }
             Ok("combat") => {
                 app.insert_resource(Autopilot { movement: Some(combat_movement), attack_button: Some(combat_attack_button), guard_button: None })
                     .add_systems(Update, (combat_script, log_dummy));
@@ -192,8 +207,12 @@ fn update_overlay(
         With<Player>,
     >,
     mut text: Query<(&mut Text, &Visibility), With<DebugOverlay>>,
+    real: Res<Time<Real>>,
+    mut fps: Local<f32>,
 ) {
     let Ok((action, intent, input, hp, st, ctrl, invuln, ale, guard)) = player.single() else { return };
+    let dt = real.delta_secs().max(1e-4);
+    *fps = if *fps == 0.0 { 1.0 / dt } else { *fps * 0.95 + 0.05 / dt };
     for (mut text, vis) in &mut text {
         if *vis == Visibility::Hidden {
             continue;
@@ -225,7 +244,8 @@ fn update_overlay(
             None => "-".into(),
         };
         text.0 = format!(
-            "[F3] DEBUG\n{action_line}\nbuffer: {buffer}\nHP {:.0}/{:.0}   ST {:.0}/{:.0}{}   Ale {}\n{}grounded {}  speed {:.1} m/s\nLMB held {:.2}s{}\nguard {}\ndummy HP {}",
+            "[F3] DEBUG   {:.0} FPS\n{action_line}\nbuffer: {buffer}\nHP {:.0}/{:.0}   ST {:.0}/{:.0}{}   Ale {}\n{}grounded {}  speed {:.1} m/s\nLMB held {:.2}s{}\nguard {}\ndummy HP {}",
+            *fps,
             hp.current,
             hp.max,
             st.current,
@@ -803,7 +823,12 @@ fn enemy_script(
     if crossed(t, dt, 1.0) {
         ptf.translation = Vec3::new(0.0, ptf.translation.y, 8.0);
     }
-    let Ok((he, mut enemy, mut htf, haction, hhp, ai, hintent, hmove)) = hollows.single_mut() else { return };
+    // The arena's tutorial Hollow (the level has more, far away behind a closed door).
+    let Some((he, mut enemy, mut htf, haction, hhp, ai, hintent, hmove)) =
+        hollows.iter_mut().find(|h| h.1.home.with_y(0.0).length() < ARENA_RADIUS)
+    else {
+        return;
+    };
     if (t * 2.0).floor() != ((t - dt) * 2.0).floor() {
         let dist = (htf.translation - ptf.translation).with_y(0.0).length();
         info!(
@@ -1086,5 +1111,156 @@ fn log_audio(
     *started += new.iter().count();
     if (time.elapsed_secs() / 2.0).floor() != ((time.elapsed_secs() - time.delta_secs()) / 2.0).floor() {
         info!("audio: {} started so far, {} playing", *started, sinks.iter().count());
+    }
+}
+
+// ── Level walk ───────────────────────────────────────────────────────────
+
+/// `FLOWERBOX_POS="x,z[,yaw]"`: start at that floor point.
+fn place_player(layout: Option<Res<crate::level::layout::Layout>>, mut player: Query<(&mut Transform, &mut CharacterController), With<Player>>) {
+    let Ok(s) = std::env::var("FLOWERBOX_POS") else { return };
+    let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    let Ok((mut tf, mut ctrl)) = player.single_mut() else { return };
+    if v.len() < 2 {
+        return;
+    }
+    let floor = layout.and_then(|l| l.floor_at(Vec2::new(v[0], v[1]))).unwrap_or(0.0);
+    tf.translation = Vec3::new(v[0], floor + PLAYER_HALF_HEIGHT + GROUND_SKIN, v[1]);
+    ctrl.facing = v.get(2).copied().unwrap_or(0.0);
+    tf.rotation = Quat::from_rotation_y(ctrl.facing);
+    info!("placed at {:.2}", tf.translation);
+}
+
+/// Movement the level script wants (world space, sprint, jump).
+static LEVEL_DIR: std::sync::Mutex<(Vec3, bool, bool)> = std::sync::Mutex::new((Vec3::ZERO, false, false));
+
+/// What to do on reaching a waypoint.
+#[derive(Clone, Copy, PartialEq)]
+enum At {
+    Go,
+    /// Press E, then wait this long.
+    Interact(f32),
+}
+
+/// Drawing pixels (level 1's design) → world (x, z).
+const fn px(x: f32, y: f32) -> (f32, f32) {
+    ((x - 409.5) / 14.0, -18.0 + (y - 1228.0) / 14.0)
+}
+
+const LEVEL_ROUTE: [((f32, f32), At); 33] = [
+    ((2.5, 3.0), At::Go), // around the training dummy
+    ((1.5, -12.0), At::Go),
+    ((0.0, -16.6), At::Interact(1.8)), // door 1, from the arena
+    (px(409.5, 1180.0), At::Go),
+    (px(400.0, 1070.0), At::Go),
+    (px(395.0, 1038.0), At::Go),
+    (px(445.0, 1038.0), At::Go), // stairs 1 (down east)
+    (px(512.0, 1038.0), At::Go),
+    (px(535.0, 1000.0), At::Go),
+    (px(535.0, 940.0), At::Go),
+    (px(530.0, 800.0), At::Go),
+    (px(522.0, 789.0), At::Interact(1.8)), // door 2, from the middle hall
+    (px(480.0, 789.0), At::Go),
+    (px(420.0, 795.0), At::Go),
+    (px(356.0, 795.0), At::Go),
+    (px(356.0, 720.0), At::Go),
+    (px(355.0, 650.0), At::Go), // the narrow neck into the T room
+    (px(355.0, 600.0), At::Go),
+    (px(355.0, 650.0), At::Go),
+    (px(356.0, 720.0), At::Go),
+    (px(230.0, 716.0), At::Go),
+    (px(180.0, 716.0), At::Go),
+    (px(180.0, 600.0), At::Go),
+    (px(73.0, 597.0), At::Go),
+    (px(86.0, 694.0), At::Interact(1.2)), // a Hop Cone
+    (px(73.0, 688.0), At::Interact(3.5)), // sunflower 1: rest, revive (walking on stands up)
+    (px(73.0, 597.0), At::Go),
+    (px(180.0, 600.0), At::Go),
+    (px(180.0, 716.0), At::Go),
+    (px(356.0, 716.0), At::Go),
+    (px(392.0, 697.0), At::Go),
+    (px(530.0, 697.0), At::Go), // stairs 2 (down east) into the vault
+    (px(610.0, 650.0), At::Go),
+];
+
+#[derive(Resource, Default)]
+struct LevelRun {
+    next: usize,
+    wait: f32,
+    /// Time without progress toward the waypoint, and the best distance so far.
+    stall: f32,
+    best: f32,
+    log: f32,
+    frames: u32,
+    done: bool,
+}
+
+#[allow(clippy::type_complexity)]
+fn level_script(
+    time: Res<Time>,
+    mut run: ResMut<LevelRun>,
+    mut exit: MessageWriter<AppExit>,
+    hearths: Query<&crate::hearth::Hearth>,
+    doors: Query<&crate::level::door::Door>,
+    mut player: Query<(&Transform, &CharacterController, &mut PlayerInput), With<Player>>,
+) {
+    let Ok((tf, ctrl, mut input)) = player.single_mut() else { return };
+    let dt = time.delta_secs();
+    *LEVEL_DIR.lock().unwrap() = (Vec3::ZERO, false, false);
+    if run.done {
+        return;
+    }
+    run.log += dt;
+    run.frames += 1;
+    if run.log >= 1.0 {
+        info!("level walk: at {:.2} grounded {} (waypoint {}) {:.0} FPS", tf.translation, ctrl.grounded, run.next, run.frames as f32 / run.log);
+        run.log = 0.0;
+        run.frames = 0;
+    }
+    if run.wait > 0.0 {
+        run.wait -= dt;
+        return;
+    }
+    let Some(&((x, z), at)) = LEVEL_ROUTE.get(run.next) else {
+        run.done = true;
+        let revived: Vec<u32> = hearths.iter().filter(|h| h.kindled).map(|h| h.id).collect();
+        let open: Vec<u32> = doors.iter().filter(|d| d.open).map(|d| d.id).collect();
+        info!("level walk: done at {:.2}; revived sunflowers {revived:?}; open doors {open:?}", tf.translation);
+        exit.write(AppExit::Success);
+        return;
+    };
+    let to = Vec3::new(x, 0.0, z) - tf.translation.with_y(0.0);
+    let dist = to.length();
+    if dist < 0.35 {
+        info!("level walk: reached waypoint {} at {:.2}", run.next, tf.translation);
+        run.next += 1;
+        run.stall = 0.0;
+        run.best = f32::MAX;
+        if let At::Interact(wait) = at {
+            input.interact = true;
+            run.wait = wait;
+        }
+        return;
+    }
+    if dist < run.best - 0.05 {
+        run.best = dist;
+        run.stall = 0.0;
+    } else {
+        run.stall += dt;
+        if run.stall > 3.0 {
+            warn!("level walk: STUCK before waypoint {} at {:.2} ({dist:.2} m away)", run.next, tf.translation);
+            run.stall = 0.0;
+            run.best = f32::MAX;
+            run.next += 1; // try the next one
+        }
+    }
+    *LEVEL_DIR.lock().unwrap() = (to / dist, false, false);
+}
+
+fn open_all_doors(mut doors: Query<&mut crate::level::door::Door>) {
+    for mut d in &mut doors {
+        if !d.open {
+            d.open_now();
+        }
     }
 }

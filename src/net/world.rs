@@ -5,8 +5,9 @@
 //!   lying around. Leaving restores the guest's own world.
 //! - **Items:** pressing E sends a request; the host decides (first come, first served), and
 //!   everybody hears [`WorldEvent::PickedUp`]: the taker gets the item, the item vanishes for all.
-//! - **Sunflower:** whoever revives it sees the big banner at once; the host records it and the
-//!   others get a notification while their sunflower stands up too.
+//! - **Sunflowers** (by id): whoever revives one sees the big banner at once; the host records it
+//!   and the others get a notification while that sunflower stands up for them too.
+//! - **Doors** (by id): like items — a guest asks, the host opens it and tells everyone.
 //! - **Notifications** for joins, leaves, deaths, pickups and revivals by others.
 
 use bevy::prelude::*;
@@ -22,7 +23,8 @@ use crate::hearth::{DeathSequence, Hearth, RestComplete, SharedRest, SunRevived}
 use crate::tuning::REST_STARTUP;
 use super::sync::Puppet;
 use crate::items::inventory::Inventory;
-use crate::items::pickup::{ItemPickedUp, PICKUPS, Pickup, PickupAssets, PickupAuthority, PickupRequest, PickupTaken, spawn_layout, spawn_pickup};
+use crate::items::pickup::{ItemPickedUp, Pickup, PickupAssets, PickupAuthority, PickupLayout, PickupRequest, PickupTaken, spawn_layout, spawn_pickup};
+use crate::level::door::{Door, DoorOpened, DoorRequest};
 use crate::player::Player;
 use crate::pvp::PvpChanged;
 use crate::ui::icons::NoticeIcon;
@@ -45,15 +47,30 @@ pub fn player_name(id: NetId) -> String {
 /// The guest's own world while it visits the host's.
 #[derive(Default)]
 struct Stash {
-    sun_revived: bool,
+    suns: Vec<u32>,
+    doors: Vec<u32>,
     taken: Vec<u32>,
+}
+
+/// Ids of the revived sunflowers.
+fn revived(hearths: &Query<&mut Hearth>) -> Vec<u32> {
+    let mut ids: Vec<u32> = hearths.iter().filter(|h| h.kindled).map(|h| h.id).collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// Ids of the open doors.
+fn opened(doors: &Query<&mut Door>) -> Vec<u32> {
+    let mut ids: Vec<u32> = doors.iter().filter(|d| d.open).map(|d| d.id).collect();
+    ids.sort_unstable();
+    ids
 }
 
 fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
     let n = match *event {
         WorldEvent::Joined { who } => Notify::new(NoticeIcon::Joined, strings::joined(&player_name(who))),
         WorldEvent::Left { who } => Notify::new(NoticeIcon::Left, strings::left(&player_name(who))),
-        WorldEvent::SunRevived { by } => Notify::new(NoticeIcon::Sunflower, strings::revived_sun(&player_name(by))),
+        WorldEvent::SunRevived { by, .. } => Notify::new(NoticeIcon::Sunflower, strings::revived_sun(&player_name(by))),
         WorldEvent::PickedUp { by, item, .. } => {
             Notify::new(NoticeIcon::Item(item.def().icon), strings::picked_up_by(&player_name(by), item.def().name))
         }
@@ -61,7 +78,7 @@ fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
         WorldEvent::Pvp { who, on, item } => Notify::new(NoticeIcon::Item(item.def().icon), strings::ate(&player_name(who), item.def().name, on)),
         WorldEvent::RestWaiting { who, resting, total } => Notify::new(NoticeIcon::Sunflower, strings::rest_waiting(&player_name(who), resting, total)),
         WorldEvent::RestComplete => Notify::new(NoticeIcon::Sunflower, strings::REST_COMPLETE),
-        WorldEvent::DummyHit { .. } => return,
+        WorldEvent::DummyHit { .. } | WorldEvent::DoorOpened { .. } => return,
     };
     info!("world event: {}", n.text);
     notify.write(n);
@@ -74,11 +91,12 @@ fn world_inbox(
     link: Res<NetLink>,
     session: Res<NetSession>,
     assets: Option<Res<PickupAssets>>,
+    layout: Res<PickupLayout>,
     mut stash: Local<Option<Stash>>,
     mut authority: ResMut<PickupAuthority>,
     mut notify: MessageWriter<Notify>,
     mut picked: MessageWriter<ItemPickedUp>,
-    mut hearths: Query<&mut Hearth>,
+    (mut hearths, mut doors): (Query<&mut Hearth>, Query<&mut Door>),
     pickups: Query<(Entity, &Pickup, &Transform)>,
     mut player: Query<&mut Inventory, With<Player>>,
     mut rest_done: MessageWriter<RestComplete>,
@@ -92,10 +110,7 @@ fn world_inbox(
             NetInbox::RoleChanged if session.role == Role::Client => {
                 // Visiting: put our own world away; the host's arrives in `World`.
                 let present: Vec<u32> = pickups.iter().map(|(_, p, _)| p.id).collect();
-                *stash = Some(Stash {
-                    sun_revived: hearths.iter().any(|h| h.kindled),
-                    taken: (0..PICKUPS.len() as u32).filter(|id| !present.contains(id)).collect(),
-                });
+                *stash = Some(Stash { suns: revived(&hearths), doors: opened(&doors), taken: layout.taken(&present) });
                 for (e, _, _) in &pickups {
                     commands.entity(e).despawn();
                 }
@@ -111,9 +126,13 @@ fn world_inbox(
                     for (e, _, _) in &pickups {
                         commands.entity(e).despawn();
                     }
-                    spawn_layout(&mut commands, &assets, &own.taken);
+                    spawn_layout(&mut commands, &assets, &layout, &own.taken);
                     for mut h in &mut hearths {
-                        h.kindled = own.sun_revived;
+                        h.kindled = own.suns.contains(&h.id);
+                    }
+                    for mut d in &mut doors {
+                        let open = own.doors.contains(&d.id);
+                        d.set_now(open);
                     }
                 }
                 authority.0 = true;
@@ -124,11 +143,9 @@ fn world_inbox(
             NetInbox::GuestJoined { peer, id } if session.is_host() => {
                 let world = Reliable::World {
                     dummy_hp: dummy.iter().next().map_or(0.0, |(_, h)| h.current),
-                    sun_revived: hearths.iter().any(|h| h.kindled),
-                    pickups: pickups
-                        .iter()
-                        .map(|(_, p, tf)| PickupState { id: p.id, item: p.item, pos: [tf.translation.x, tf.translation.z] })
-                        .collect(),
+                    suns: revived(&hearths),
+                    doors: opened(&doors),
+                    pickups: pickups.iter().map(|(_, p, tf)| PickupState { id: p.id, item: p.item, pos: tf.translation.to_array() }).collect(),
                 };
                 link.send(NetCmd::Reliable { to: Some(*peer), bytes: encode(&world) });
                 let event = WorldEvent::Joined { who: *id };
@@ -149,18 +166,21 @@ fn world_inbox(
                 broadcast(event);
                 notice(&mut notify, &event);
             }
+            NetInbox::Reliable(peer, Reliable::RequestDoor { id }) if session.is_host() => {
+                let Some(&by) = session.peers.get(peer) else { continue };
+                let Some(mut door) = doors.iter_mut().find(|d| d.id == *id && !d.open) else { continue };
+                door.open = true;
+                broadcast(WorldEvent::DoorOpened { by, id: *id });
+                info!("world event: {} opened door {id}", player_name(by));
+            }
             NetInbox::Reliable(peer, Reliable::Report(report)) if session.is_host() => {
                 let Some(&by) = session.peers.get(peer) else { continue };
                 // Trust only what a guest says about itself.
                 let event = match *report {
-                    WorldEvent::SunRevived { .. } => {
-                        if hearths.iter().any(|h| h.kindled) {
-                            continue;
-                        }
-                        for mut h in &mut hearths {
-                            h.kindled = true;
-                        }
-                        WorldEvent::SunRevived { by }
+                    WorldEvent::SunRevived { id, .. } => {
+                        let Some(mut h) = hearths.iter_mut().find(|h| h.id == id && !h.kindled) else { continue };
+                        h.kindled = true;
+                        WorldEvent::SunRevived { by, id }
                     }
                     WorldEvent::Died { .. } => WorldEvent::Died { who: by },
                     WorldEvent::Pvp { on, item, .. } => WorldEvent::Pvp { who: by, on, item },
@@ -170,15 +190,19 @@ fn world_inbox(
                 notice(&mut notify, &event);
             }
             // ── Guest: the host's world ──
-            NetInbox::Reliable(HOST_PEER, Reliable::World { sun_revived, pickups: list, dummy_hp }) if session.role == Role::Client => {
+            NetInbox::Reliable(HOST_PEER, Reliable::World { suns, doors: open, pickups: list, dummy_hp }) if session.role == Role::Client => {
                 for (_, mut h) in &mut dummy {
                     h.current = *dummy_hp;
                 }
                 for mut h in &mut hearths {
-                    h.kindled = *sun_revived;
+                    h.kindled = suns.contains(&h.id);
+                }
+                for mut d in &mut doors {
+                    let is_open = open.contains(&d.id);
+                    d.set_now(is_open);
                 }
                 for p in list {
-                    spawn_pickup(&mut commands, &assets, p.id, p.item, Vec2::from_array(p.pos));
+                    spawn_pickup(&mut commands, &assets, p.id, p.item, Vec3::from_array(p.pos));
                 }
             }
             NetInbox::Reliable(HOST_PEER, Reliable::Event(event)) if session.role == Role::Client => {
@@ -189,13 +213,19 @@ fn world_inbox(
                     {
                         continue
                     }
-                    WorldEvent::SunRevived { by } => {
-                        for mut h in &mut hearths {
+                    WorldEvent::SunRevived { by, id } => {
+                        for mut h in hearths.iter_mut().filter(|h| h.id == *id) {
                             h.kindled = true;
                         }
                         if mine(by) {
                             continue; // we already saw the banner
                         }
+                    }
+                    WorldEvent::DoorOpened { id, .. } => {
+                        for mut d in doors.iter_mut().filter(|d| d.id == *id) {
+                            d.open = true;
+                        }
+                        continue;
                     }
                     WorldEvent::RestComplete => {
                         rest_done.write(RestComplete);
@@ -236,6 +266,8 @@ fn local_events(
     mut requests: MessageReader<PickupRequest>,
     mut taken: MessageReader<PickupTaken>,
     mut revived: MessageReader<SunRevived>,
+    mut door_requests: MessageReader<DoorRequest>,
+    mut doors_opened: MessageReader<DoorOpened>,
     mut pvp: MessageReader<PvpChanged>,
     mut struck: MessageReader<DummyStruck>,
     dummy: Query<&Health, With<Dummy>>,
@@ -257,8 +289,12 @@ fn local_events(
             for t in taken.read() {
                 send(None, Reliable::Event(WorldEvent::PickedUp { by: me, pickup: t.pickup, item: t.item }));
             }
-            for _ in revived.read() {
-                send(None, Reliable::Event(WorldEvent::SunRevived { by: me }));
+            for r in revived.read() {
+                send(None, Reliable::Event(WorldEvent::SunRevived { by: me, id: r.id }));
+            }
+            door_requests.clear(); // granted locally (`grant_doors`)
+            for d in doors_opened.read() {
+                send(None, Reliable::Event(WorldEvent::DoorOpened { by: me, id: d.id }));
             }
             if !died.is_empty() {
                 send(None, Reliable::Event(WorldEvent::Died { who: me }));
@@ -272,8 +308,12 @@ fn local_events(
             for r in requests.read() {
                 send(Some(HOST_PEER), Reliable::RequestPickup { pickup: r.pickup });
             }
-            for _ in revived.read() {
-                send(Some(HOST_PEER), Reliable::Report(WorldEvent::SunRevived { by: me }));
+            for r in revived.read() {
+                send(Some(HOST_PEER), Reliable::Report(WorldEvent::SunRevived { by: me, id: r.id }));
+            }
+            doors_opened.clear();
+            for d in door_requests.read() {
+                send(Some(HOST_PEER), Reliable::RequestDoor { id: d.id });
             }
             if !died.is_empty() {
                 send(Some(HOST_PEER), Reliable::Report(WorldEvent::Died { who: me }));
@@ -286,6 +326,8 @@ fn local_events(
             requests.clear();
             taken.clear();
             revived.clear();
+            door_requests.clear();
+            doors_opened.clear();
         }
     }
 }

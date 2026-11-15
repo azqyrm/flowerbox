@@ -50,6 +50,10 @@ pub const MENU_HINTS: &str = "[Up/Down] Select   [Left/Right] Change   [Enter] C
 pub const SAVE_DELETED: &str = "Save deleted: the next start is a new game";
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
+pub const PROMPT_OPEN_DOOR: &str = "[E] Open";
+pub fn ale_up(max: u32) -> String {
+    format!("The ale brews stronger: {max} Healing Ale")
+}
 /// Toast after picking something up ("Picked up: Rusted Shortsword").
 pub const PICKED_UP: &str = "Picked up";
 /// Inventory screen title and key hints.

@@ -294,7 +294,7 @@ fn spawn_puppet(
                 Team::Hostile,
                 Hurtbox,
                 Targetable { height: 0.55 },
-                Enemy { home: pos.with_y(0.0) },
+                Enemy { home: pos, patrol: None },
             ));
             equip_weapon.write(EquipWeapon { character: e, def: &hollow_blade::HOLLOW_SWORD });
         }

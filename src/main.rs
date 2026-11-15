@@ -12,6 +12,7 @@ mod humanoid;
 mod input;
 mod interact;
 mod items;
+mod level;
 mod lockon;
 mod net;
 mod player;
@@ -51,6 +52,7 @@ fn main() {
             player::PlayerPlugin,
         ))
         .add_plugins((
+            level::LevelPlugin,
             enemy::EnemyPlugin,
             pvp::PvpPlugin,
             save::SavePlugin,

@@ -22,6 +22,7 @@ impl Plugin for PickupPlugin {
             .add_message::<PickupRequest>()
             .add_message::<PickupTaken>()
             .init_resource::<PickupAuthority>()
+            .init_resource::<PickupLayout>()
             .add_systems(Startup, (load_pickup_assets, spawn_pickups).chain())
             .add_systems(Update, (pickup_interaction.in_set(InteractSystems::Pickups), grant_pickups, animate_pickups));
     }
@@ -29,11 +30,31 @@ impl Plugin for PickupPlugin {
 
 /// Items lying in the arena at start (floor x, z), clear of rubble and pillars. Their index is
 /// their pickup id (the same on every machine).
-pub const PICKUPS: [(ItemId, (f32, f32)); 3] = [
+const ARENA_PICKUPS: [(ItemId, (f32, f32)); 3] = [
     (ItemId::RustedShortsword, (-7.0, -6.0)),
     (ItemId::StuddedBuckler, (9.0, -7.0)),
     (ItemId::SunseedRing, (-9.0, 7.5)),
 ];
+
+/// Every item lying in a fresh world: (pickup id, item, floor position). The arena's come first
+/// (ids 0..); levels add theirs (`crate::level`). Ids are the same on every machine.
+#[derive(Resource, Debug, Clone)]
+pub struct PickupLayout(pub Vec<(u32, ItemId, Vec3)>);
+
+impl Default for PickupLayout {
+    fn default() -> Self {
+        Self(ARENA_PICKUPS.iter().enumerate().map(|(i, (item, (x, z)))| (i as u32, *item, Vec3::new(*x, 0.0, *z))).collect())
+    }
+}
+
+impl PickupLayout {
+    /// Layout ids not in `present` (taken in this world).
+    pub fn taken(&self, present: &[u32]) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.0.iter().map(|(id, _, _)| *id).filter(|id| !present.contains(id)).collect();
+        ids.sort_unstable();
+        ids
+    }
+}
 
 /// An item waiting on the floor. `id` is stable across machines (layout index, or a host id for
 /// later drops).
@@ -96,10 +117,10 @@ fn load_pickup_assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, 
     commands.insert_resource(PickupAssets { mote: meshes.add(Sphere::new(0.06)), glow });
 }
 
-/// Spawns one item on the floor at `pos` (x, z).
-pub fn spawn_pickup(commands: &mut Commands, assets: &PickupAssets, id: u32, item: ItemId, pos: Vec2) {
+/// Spawns one item on the floor at `pos`.
+pub fn spawn_pickup(commands: &mut Commands, assets: &PickupAssets, id: u32, item: ItemId, pos: Vec3) {
     let root = commands
-        .spawn((Name::new(format!("Pickup: {}", item.def().name)), Pickup { id, item }, Transform::from_xyz(pos.x, 0.0, pos.y), Visibility::default()))
+        .spawn((Name::new(format!("Pickup: {}", item.def().name)), Pickup { id, item }, Transform::from_translation(pos), Visibility::default()))
         .id();
     commands
         .spawn((
@@ -112,17 +133,17 @@ pub fn spawn_pickup(commands: &mut Commands, assets: &PickupAssets, id: u32, ite
         .with_child(PointLight { color: Color::srgb(1.0, 0.85, 0.55), intensity: 30_000.0, range: 3.5, radius: 0.05, ..default() });
 }
 
-/// The arena's own items (`taken` = ids already picked up in this world).
-pub fn spawn_layout(commands: &mut Commands, assets: &PickupAssets, taken: &[u32]) {
-    for (i, (item, (x, z))) in PICKUPS.into_iter().enumerate() {
-        if !taken.contains(&(i as u32)) {
-            spawn_pickup(commands, assets, i as u32, item, Vec2::new(x, z));
+/// The world's own items (`taken` = ids already picked up in this world).
+pub fn spawn_layout(commands: &mut Commands, assets: &PickupAssets, layout: &PickupLayout, taken: &[u32]) {
+    for &(id, item, pos) in &layout.0 {
+        if !taken.contains(&id) {
+            spawn_pickup(commands, assets, id, item, pos);
         }
     }
 }
 
-fn spawn_pickups(mut commands: Commands, assets: Res<PickupAssets>) {
-    spawn_layout(&mut commands, &assets, &[]);
+fn spawn_pickups(mut commands: Commands, assets: Res<PickupAssets>, layout: Res<PickupLayout>) {
+    spawn_layout(&mut commands, &assets, &layout, &[]);
 }
 
 /// Bob and pulse.
@@ -147,7 +168,8 @@ fn pickup_interaction(
         return;
     }
     let dist = |p: &Transform| (p.translation - tf.translation).with_y(0.0).length();
-    let Some((pickup, _)) = pickups.iter().filter(|(_, p)| dist(p) < PICKUP_RANGE).min_by(|a, b| dist(a.1).total_cmp(&dist(b.1))) else {
+    let level = |p: &Transform| (p.translation.y - tf.translation.y).abs() < 2.0;
+    let Some((pickup, _)) = pickups.iter().filter(|(_, p)| dist(p) < PICKUP_RANGE && level(p)).min_by(|a, b| dist(a.1).total_cmp(&dist(b.1))) else {
         return;
     };
     prompt.0 = Some(strings::PROMPT_PICK_UP);

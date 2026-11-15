@@ -2,8 +2,8 @@
 //! save.ron` on Linux), written at most once a second after something worth keeping changed, and
 //! when quitting. Loaded at start: you continue at your rest site with your bag.
 //!
-//! Saved: the bag (items, stack counts, what's equipped), Healing Ale charges, whether the
-//! sunflower is revived, the respawn point and which arena items were taken. While visiting
+//! Saved: the bag (items, stack counts, what's equipped), Healing Ale charges, which sunflowers
+//! are revived and which doors open (by id), the respawn point and which world items were taken. While visiting
 //! someone else's world (online guest) only the character is saved — the world fields keep what
 //! they were in your own world.
 //!
@@ -20,7 +20,8 @@ use crate::healing::HealingAle;
 use crate::hearth::{Hearth, RespawnPoint};
 use crate::items::ItemId;
 use crate::items::inventory::{Equipment, Inventory};
-use crate::items::pickup::{PICKUPS, Pickup};
+use crate::items::pickup::{Pickup, PickupLayout};
+use crate::level::door::Door;
 use crate::net::NetSession;
 use crate::player::Player;
 use crate::tuning::*;
@@ -56,9 +57,19 @@ pub struct SaveData {
     pub equipped: [Option<usize>; 9],
     pub ale_charges: u32,
     pub ale_max: u32,
+    /// Older saves (one sunflower): whether it was revived. Newer ones use `suns`.
     pub sun_revived: bool,
     pub respawn: Option<([f32; 3], f32)>,
     pub taken: Vec<u32>,
+    /// Revived sunflowers and open doors (ids).
+    pub suns: Vec<u32>,
+    pub doors: Vec<u32>,
+}
+
+impl SaveData {
+    fn revived_suns(&self) -> Vec<u32> {
+        if self.suns.is_empty() && self.sun_revived { vec![0] } else { self.suns.clone() }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -69,7 +80,8 @@ struct SaveState {
     /// After "Delete save": stop writing until the next start.
     disabled: bool,
     /// The own world's state (not updated while visiting someone else's world).
-    sun_revived: bool,
+    suns: Vec<u32>,
+    doors: Vec<u32>,
     respawn: Option<([f32; 3], f32)>,
     taken: Vec<u32>,
 }
@@ -78,7 +90,7 @@ fn save_path() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("FLOWERBOX_DATA_DIR") {
         return Some(PathBuf::from(dir).join("save.ron"));
     }
-    if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() {
+    if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() || std::env::var("FLOWERBOX_SCREENSHOT").is_ok() {
         return None;
     }
     dirs::data_dir().map(|d| d.join("flowerbox").join("save.ron"))
@@ -111,6 +123,7 @@ fn load_save(
     mut state: ResMut<SaveState>,
     mut player: Query<(Entity, &mut Inventory, &mut Equipment, &mut HealingAle, &mut Transform), With<Player>>,
     mut hearths: Query<&mut Hearth>,
+    mut doors: Query<&mut Door>,
     pickups: Query<(Entity, &Pickup)>,
 ) {
     let Some(data) = read_save() else { return };
@@ -119,8 +132,14 @@ fn load_save(
     *equipment = Equipment::from_slots(data.equipped, &inventory);
     ale.max = data.ale_max.max(1);
     ale.charges = data.ale_charges.min(ale.max);
+    let suns = data.revived_suns();
     for mut h in &mut hearths {
-        h.kindled = data.sun_revived;
+        h.kindled = suns.contains(&h.id);
+    }
+    for mut d in &mut doors {
+        if data.doors.contains(&d.id) {
+            d.open_now();
+        }
     }
     if let Some((pos, facing)) = data.respawn {
         let position = Vec3::from_array(pos);
@@ -133,7 +152,8 @@ fn load_save(
             commands.entity(e).despawn();
         }
     }
-    state.sun_revived = data.sun_revived;
+    state.suns = suns;
+    state.doors = data.doors.clone();
     state.respawn = data.respawn;
     state.taken = data.taken.clone();
     info!("save loaded ({} items, {} Ale)", data.items.len(), data.ale_charges);
@@ -144,18 +164,24 @@ fn track_world(
     session: Res<NetSession>,
     mut state: ResMut<SaveState>,
     hearths: Query<&Hearth>,
+    doors: Query<&Door>,
+    layout: Res<PickupLayout>,
     player: Query<Option<&RespawnPoint>, With<Player>>,
     pickups: Query<&Pickup>,
 ) {
     if session.is_client() {
         return;
     }
-    let sun = hearths.iter().any(|h| h.kindled);
+    let mut suns: Vec<u32> = hearths.iter().filter(|h| h.kindled).map(|h| h.id).collect();
+    suns.sort_unstable();
+    let mut open: Vec<u32> = doors.iter().filter(|d| d.open).map(|d| d.id).collect();
+    open.sort_unstable();
     let respawn = player.single().ok().flatten().map(|r| (r.position.to_array(), r.facing));
     let present: Vec<u32> = pickups.iter().map(|p| p.id).collect();
-    let taken: Vec<u32> = (0..PICKUPS.len() as u32).filter(|id| !present.contains(id)).collect();
-    if sun != state.sun_revived || respawn != state.respawn || taken != state.taken {
-        state.sun_revived = sun;
+    let taken = layout.taken(&present);
+    if suns != state.suns || open != state.doors || respawn != state.respawn || taken != state.taken {
+        state.suns = suns;
+        state.doors = open;
         state.respawn = respawn;
         state.taken = taken;
         state.dirty = true;
@@ -182,9 +208,11 @@ fn snapshot(state: &SaveState, inventory: &Inventory, equipment: &Equipment, ale
         equipped: equipment.slots(),
         ale_charges: ale.charges,
         ale_max: ale.max,
-        sun_revived: state.sun_revived,
+        sun_revived: state.suns.contains(&0),
         respawn: state.respawn,
         taken: state.taken.clone(),
+        suns: state.suns.clone(),
+        doors: state.doors.clone(),
     }
 }
 
@@ -245,18 +273,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn old_saves_keep_their_sunflower() {
+        let old: SaveData = ron::from_str("(version: 1, sun_revived: true, taken: [0])").unwrap();
+        assert_eq!(old.revived_suns(), vec![0]);
+    }
+
+    #[test]
     fn save_round_trips() {
         let inventory = Inventory::from_items(&[ItemId::Longsword, ItemId::HealingAle, ItemId::Poppy, ItemId::Poppy]);
         let mut equipment = Equipment::default();
         equipment.equip(&inventory, 0);
         equipment.equip(&inventory, 1);
         let ale = HealingAle::new(3);
-        let state = SaveState { sun_revived: true, respawn: Some(([0.0, 0.0, 10.4], 0.0)), taken: vec![1], ..default() };
+        let state = SaveState { suns: vec![0, 1], doors: vec![2], respawn: Some(([0.0, 0.0, 10.4], 0.0)), taken: vec![1, 103], ..default() };
         let data = snapshot(&state, &inventory, &equipment, &ale);
         let text = ron::ser::to_string_pretty(&data, ron::ser::PrettyConfig::default()).unwrap();
         let back: SaveData = ron::from_str(&text).unwrap();
         assert_eq!(back, data);
         assert_eq!(back.counts, vec![(ItemId::Poppy, 2)]);
+        assert_eq!(back.revived_suns(), vec![0, 1]);
+        assert_eq!(back.doors, vec![2]);
         let restored = Inventory { items: back.items.clone(), counts: back.counts.iter().copied().collect() };
         assert_eq!(Equipment::from_slots(back.equipped, &restored).weapon(&restored).name, "Longsword");
     }

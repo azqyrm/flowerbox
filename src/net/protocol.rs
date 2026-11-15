@@ -13,7 +13,7 @@ use crate::items::ItemId;
 use crate::weapon::WeaponClass;
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -82,10 +82,12 @@ pub enum Reliable {
     Damage { target: NetId, amount: f32, from: [f32; 3] },
     /// Client → host: I parried `attacker` (stun it).
     Parried { attacker: NetId },
-    /// Host → new guest: the world as it is (sunflower, items on the floor).
-    World { sun_revived: bool, pickups: Vec<PickupState>, dummy_hp: f32 },
+    /// Host → new guest: the world as it is (revived sunflowers, open doors, items on the floor).
+    World { suns: Vec<u32>, doors: Vec<u32>, pickups: Vec<PickupState>, dummy_hp: f32 },
     /// Guest → host: I'd like to take this item.
     RequestPickup { pickup: u32 },
+    /// Guest → host: I'd like to open this door.
+    RequestDoor { id: u32 },
     /// Guest → host: something happened to me / I did something (the host checks and relays).
     Report(WorldEvent),
     /// Host → guests: something happened in the world.
@@ -99,7 +101,7 @@ pub enum Reliable {
 pub struct PickupState {
     pub id: u32,
     pub item: ItemId,
-    pub pos: [f32; 2],
+    pub pos: [f32; 3],
 }
 
 /// Things worth telling everyone (they also become notifications).
@@ -107,8 +109,10 @@ pub struct PickupState {
 pub enum WorldEvent {
     Joined { who: NetId },
     Left { who: NetId },
-    /// `by` revived the sunflower.
-    SunRevived { by: NetId },
+    /// `by` revived sunflower `id`.
+    SunRevived { by: NetId, id: u32 },
+    /// `by` opened door `id`.
+    DoorOpened { by: NetId, id: u32 },
     /// `by` took pickup `pickup` (`item`).
     PickedUp { by: NetId, pickup: u32, item: ItemId },
     Died { who: NetId },

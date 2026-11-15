@@ -42,11 +42,13 @@ pub enum ItemId {
     HealingAle,
     Poppy,
     Camomile,
+    HopCone,
+    ThornbriarRing,
 }
 
 impl ItemId {
     #[allow(dead_code)] // tests
-    pub const ALL: [ItemId; 10] = [
+    pub const ALL: [ItemId; 12] = [
         ItemId::Longsword,
         ItemId::RustedShortsword,
         ItemId::RustedAxe,
@@ -57,6 +59,8 @@ impl ItemId {
         ItemId::HealingAle,
         ItemId::Poppy,
         ItemId::Camomile,
+        ItemId::HopCone,
+        ItemId::ThornbriarRing,
     ];
 
     pub fn def(self) -> &'static ItemDef {
@@ -71,6 +75,8 @@ impl ItemId {
             ItemId::HealingAle => &HEALING_ALE,
             ItemId::Poppy => &POPPY,
             ItemId::Camomile => &CAMOMILE,
+            ItemId::HopCone => &HOP_CONE,
+            ItemId::ThornbriarRing => &THORNBRIAR_RING,
         }
     }
 }
@@ -124,7 +130,9 @@ pub enum ItemIcon {
     Buckler,
     Hood,
     Ring,
+    ThornRing,
     Tankard,
+    HopCone,
     Poppy,
     Camomile,
 }
@@ -163,6 +171,8 @@ pub enum ItemEffect {
     PvpOn,
     /// Opt out again.
     PvpOff,
+    /// One more Healing Ale charge for good (and one poured at once).
+    AleUp,
 }
 
 impl ItemDef {
@@ -286,6 +296,27 @@ static CAMOMILE: ItemDef = ItemDef {
         ItemKind::Consumable,
         ItemIcon::Camomile,
         "A little white camomile flower. Chewing it calms the Poppy's anger: other players can't hurt you any more.",
+    )
+};
+
+static HOP_CONE: ItemDef = ItemDef {
+    effect: Some(ItemEffect::AleUp),
+    ..ItemDef::base(
+        "Hop Cone",
+        ItemKind::Consumable,
+        ItemIcon::HopCone,
+        "A papery green hop cone, still fragrant. Crumble it into your tankard and the ale brews stronger: one more Healing Ale for good.",
+    )
+};
+
+static THORNBRIAR_RING: ItemDef = ItemDef {
+    weight: 0.5,
+    absorption: 0.1,
+    ..ItemDef::base(
+        "Thornbriar Ring",
+        ItemKind::Ring,
+        ItemIcon::ThornRing,
+        "A ring of dried briar, its thorns turned outward. Blows seem to snag on it before they reach you.",
     )
 };
 

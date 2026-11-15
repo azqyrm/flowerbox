@@ -4,6 +4,7 @@
 //! again, the target dying (losing `Targetable`) or getting farther than `LOCK_BREAK_RANGE`
 //! releases the lock. Pressing it with nothing to lock onto recentres the camera behind the player.
 
+use avian3d::prelude::*;
 use bevy::prelude::*;
 use leafwing_input_manager::prelude::ActionState;
 
@@ -58,7 +59,9 @@ fn toggle_lock_on(
     blocked: Res<GameplayBlocked>,
     mut player: Query<(&ActionState<Action>, &Transform, &CharacterController, &mut LockOn), With<Player>>,
     mut cams: Query<&mut ThirdPersonCamera>,
-    targets: Query<(Entity, &Transform), (With<Targetable>, Without<Player>)>,
+    targets: Query<(Entity, &Transform, &Targetable), Without<Player>>,
+    spatial: SpatialQuery,
+    characters: Query<(), With<CharacterController>>,
 ) {
     let Ok((actions, tf, ctrl, mut lock)) = player.single_mut() else { return };
     if blocked.0 || !actions.just_pressed(&Action::LockOn) {
@@ -70,7 +73,13 @@ fn toggle_lock_on(
     }
     let Ok(mut cam) = cams.single_mut() else { return };
     let view = Vec3::new(-cam.yaw.sin(), 0.0, -cam.yaw.cos());
-    lock.target = pick_target(tf.translation, view, targets.iter().map(|(e, t)| (e, t.translation)));
+    // Only what the player can see: no locking onto enemies behind walls or closed doors.
+    let eye = tf.translation + Vec3::Y * 0.6;
+    let visible = targets.iter().filter(|(target, t, aim)| {
+        let skip = |e: Entity| e != *target && !characters.contains(e);
+        crate::level::line_of_sight(&spatial, eye, t.translation + Vec3::Y * aim.height, &skip)
+    });
+    lock.target = pick_target(tf.translation, view, visible.map(|(e, t, _)| (e, t.translation)));
     match lock.target {
         Some(t) => info!("locked on {t}"),
         // Nothing to lock onto: swing the camera behind the player.

@@ -1,0 +1,70 @@
+// Level 1: "The Sunken Halls". Coordinates are pixels of the design drawing `lvl1.png`
+// (x east, y south; 14 px = 1 m). Pixel (409.5, 1228) is world (0, -18): the arena's north wall.
+// Format: see src/level/layout.rs. Rects are (x0, y0, x1, y1).
+(
+    name: "The Sunken Halls",
+    px_per_m: 14.0,
+    origin_px: (409.5, 1228.0),
+    origin_world: (0.0, -18.0),
+    rooms: [
+        (name: "Corridor", floor: 0.0, rects: [(370, 1055, 449, 1228), (341, 995, 451, 1055)]),
+        (name: "Middle Hall", floor: -1.5, rects: [(502, 765, 718, 967), (502, 967, 567, 1053), (451, 992, 567, 1053)]),
+        (name: "Upper Halls", floor: -1.5, rects: [
+            (308, 765, 502, 826), (308, 673, 405, 765), (329, 633, 380, 673), (263, 561, 462, 633),
+            (152, 686, 308, 746), (152, 626, 211, 746), (45, 567, 211, 626), (45, 567, 101, 732),
+        ]),
+        (name: "Vault", floor: -3.5, rects: [(521, 564, 701, 720)]),
+    ],
+    // The U-shaped block in the middle hall.
+    blocks: [(571, 826, 594, 890), (594, 868, 634, 890), (634, 826, 652, 890)],
+    stairs: [
+        (rect: (451, 1023, 502, 1053), down: East, top: 0.0, bottom: -1.5),
+        (rect: (405, 676, 521, 718), down: East, top: -1.5, bottom: -3.5),
+    ],
+    doors: [
+        (id: 1, at: (409.5, 1228), width: 2.6, hinge: East, opens: North),
+        (id: 2, at: (502, 789), width: 2.4, hinge: South, opens: West),
+    ],
+    torches: [
+        (at: (372, 1150), wall: West),
+        (at: (447, 1090), wall: East),
+        (at: (396, 997), wall: North),
+        (at: (610, 767), wall: North),
+        (at: (716, 920), wall: East),
+        (at: (504, 900), wall: West),
+        (at: (565, 1020), wall: East),
+        (at: (400, 824), wall: South),
+        (at: (403, 745), wall: East),
+        (at: (300, 563), wall: North),
+        (at: (430, 563), wall: North),
+        (at: (230, 744), wall: South),
+        (at: (130, 569), wall: North),
+        (at: (47, 680), wall: West),
+        (at: (560, 566), wall: North),
+        (at: (660, 566), wall: North),
+        (at: (699, 660), wall: East),
+        (at: (611, 718), wall: South),
+    ],
+    enemies: [
+        (at: (353, 1041)),
+        (at: (360, 1012)),
+        (at: (580, 791)),
+        (at: (671, 826), patrol: Some((671, 862))),
+        (at: (332, 806)),
+        (at: (354, 782)),
+        (at: (171, 710)),
+        (at: (320, 579)),
+        (at: (393, 580)),
+        (at: (619, 644)),
+    ],
+    treasures: [
+        (id: 100, item: Poppy, at: (351, 1024)),
+        (id: 101, item: HopCone, at: (617, 854)),
+        (id: 102, item: Camomile, at: (357, 713)),
+        (id: 103, item: ThornbriarRing, at: (284, 619)),
+        (id: 104, item: HopCone, at: (449, 616)),
+        (id: 105, item: HopCone, at: (86, 692)),
+    ],
+    // Moved a little north of the drawing's dot so the flower bed clears the south wall.
+    sunflowers: [(id: 1, at: (72, 712), facing: North)],
+)

@@ -13,10 +13,31 @@ pub const PILLAR_RADIUS: f32 = 0.7;
 /// Distance of pillars from the arena center.
 pub const PILLAR_RING: f32 = 14.0;
 
+// ── Levels (see level/) ─────────────────────────────────────────────────
+/// Grid the level's rooms are rasterised onto (m); walls stand on its lines.
+pub const LEVEL_CELL: f32 = 0.25;
+pub const LEVEL_WALL_THICKNESS: f32 = 0.5;
+/// Level walls reach from below the deepest floor to the arena wall's height.
+pub const LEVEL_BOTTOM: f32 = -5.0;
+pub const LEVEL_WALL_TOP: f32 = WALL_HEIGHT;
+/// One ceiling height for every room (deeper rooms are taller).
+pub const LEVEL_CEILING: f32 = 5.0;
+/// Height of a stair step's rise (m); the step count follows from the drop.
+pub const STAIR_RISE: f32 = 0.18;
+pub const LEVEL_TORCH_INTENSITY: f32 = 300_000.0;
+pub const LEVEL_TORCH_RANGE: f32 = 13.0;
+pub const DOOR_HEIGHT: f32 = 3.2;
+/// How close (m, horizontally, from the door's middle) the player must be to open it.
+pub const DOOR_RANGE: f32 = 1.9;
+pub const DOOR_OPEN_TIME: f32 = 1.4;
+
 // ── Lighting ─────────────────────────────────────────────────────────────
 pub const TORCH_INTENSITY: f32 = 600_000.0; // lumens
 pub const TORCH_RANGE: f32 = 20.0;
 pub const TORCH_HEIGHT: f32 = 2.8;
+/// How many torches (the nearest to the camera) cast shadows.
+/// (RX 6800 XT, level 1: 3 → 60 FPS (vsync) everywhere, 4 → dips to 43, 6 → 32–57.)
+pub const TORCH_SHADOW_LIMIT: usize = 3;
 pub const TORCH_COLOR: (f32, f32, f32) = (1.0, 0.55, 0.22);
 pub const MOON_INTENSITY: f32 = 30_000_000.0; // lumens
 pub const MOON_COLOR: (f32, f32, f32) = (0.62, 0.72, 1.0);
@@ -190,8 +211,11 @@ pub const CAM_STICK_SPEED: f32 = 3.0;
 pub const HOLLOW_SPAWNS: [(f32, f32); 1] = [(-4.0, -10.0)];
 pub const HOLLOW_HP: f32 = 70.0;
 pub const HOLLOW_STAMINA: f32 = 90.0;
-/// Notices the player within this distance; gives up beyond `HOLLOW_LEASH` from home.
+/// Notices the player within this distance (if it can see them); gives up beyond `HOLLOW_LEASH`
+/// from home.
 pub const HOLLOW_AGGRO_RANGE: f32 = 9.0;
+/// Walking speed (fraction of the player's) while patrolling.
+pub const HOLLOW_PATROL_FACTOR: f32 = 0.3;
 pub const HOLLOW_LEASH: f32 = 16.0;
 /// Starts an attack within this distance.
 pub const HOLLOW_ATTACK_RANGE: f32 = 2.0;

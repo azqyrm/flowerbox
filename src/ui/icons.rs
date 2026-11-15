@@ -93,15 +93,66 @@ pub fn spawn_icon(commands: &mut Commands, parent: Entity, icon: ItemIcon, scale
             );
             block(commands, hood, Node { position_type: PositionType::Absolute, top: s(14.0), width: s(20.0), height: s(22.0), border_radius: BorderRadius::new(s(10.0), s(10.0), s(4.0), s(4.0)), ..default() }, Color::srgb(0.08, 0.06, 0.05));
         }
-        ItemIcon::Ring => {
+        ItemIcon::Ring | ItemIcon::ThornRing => {
+            let (band, gem) = if icon == ItemIcon::Ring {
+                (BRASS, Color::srgb(0.35, 0.25, 0.12))
+            } else {
+                (Color::srgb(0.38, 0.27, 0.16), Color::srgb(0.2, 0.32, 0.14))
+            };
             let ring = commands
                 .spawn((
                     Node { width: s(30.0), height: s(30.0), border: UiRect::all(s(5.0)), border_radius: BorderRadius::MAX, justify_content: JustifyContent::Center, ..default() },
-                    BorderColor::all(BRASS),
+                    BorderColor::all(band),
                     ChildOf(root),
                 ))
                 .id();
-            block(commands, ring, Node { position_type: PositionType::Absolute, top: s(-11.0), width: s(10.0), height: s(10.0), border_radius: BorderRadius::MAX, ..default() }, Color::srgb(0.35, 0.25, 0.12));
+            block(commands, ring, Node { position_type: PositionType::Absolute, top: s(-11.0), width: s(10.0), height: s(10.0), border_radius: BorderRadius::MAX, ..default() }, gem);
+            if icon == ItemIcon::ThornRing {
+                // Thorns sticking out around the band.
+                for i in 0..8 {
+                    let a = i as f32 / 8.0 * std::f32::consts::TAU + 0.4;
+                    commands.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: s(28.0 + a.cos() * 17.0 - 2.0),
+                            top: s(28.0 + a.sin() * 17.0 - 2.0),
+                            width: s(4.0),
+                            height: s(4.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.55, 0.42, 0.25)),
+                        UiTransform { rotation: Rot2::radians(a + 0.785), ..UiTransform::IDENTITY },
+                        ChildOf(root),
+                    ));
+                }
+            }
+        }
+        ItemIcon::HopCone => {
+            // Overlapping green scales, widest in the middle, a stalk on top.
+            block(commands, root, Node { position_type: PositionType::Absolute, left: s(27.0), top: s(6.0), width: s(3.0), height: s(8.0), ..default() }, Color::srgb(0.3, 0.25, 0.12));
+            let rows: [(f32, f32, usize); 5] = [(12.0, 14.0, 2), (19.0, 20.0, 3), (26.0, 22.0, 3), (33.0, 18.0, 3), (40.0, 12.0, 2)];
+            for (r, &(top, width, n)) in rows.iter().enumerate() {
+                for k in 0..n {
+                    let w = width / n as f32 + 4.0;
+                    let left = 28.5 - width * 0.5 + k as f32 * (width / n as f32) - 2.0;
+                    let shade = 0.5 + 0.08 * ((r + k) % 2) as f32;
+                    commands.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: s(left),
+                            top: s(top),
+                            width: s(w),
+                            height: s(10.0),
+                            border: UiRect::all(s(1.0)),
+                            border_radius: BorderRadius::new(s(2.0), s(2.0), s(6.0), s(6.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.42 * shade + 0.1, shade + 0.12, 0.2 * shade)),
+                        BorderColor::all(Color::srgb(0.18, 0.3, 0.1)),
+                        ChildOf(root),
+                    ));
+                }
+            }
         }
         ItemIcon::Poppy | ItemIcon::Camomile => {
             let (petal, centre) = if icon == ItemIcon::Poppy {

@@ -254,11 +254,11 @@ fn start_loops(
     }
 }
 
-/// The revived sunflower hums louder.
-fn hum_volume(hearths: Query<&Hearth>, mut sinks: Query<&mut SpatialAudioSink, With<HumLoop>>) {
-    let revived = hearths.iter().any(|h| h.kindled);
-    for mut sink in &mut sinks {
-        sink.set_volume(Volume::Linear(if revived { 0.55 } else { 0.15 }));
+/// A revived sunflower hums louder.
+fn hum_volume(hearths: Query<&Hearth>, mut sinks: Query<(&mut SpatialAudioSink, &ChildOf), With<HumLoop>>) {
+    for (mut sink, parent) in &mut sinks {
+        let Ok(hearth) = hearths.get(parent.parent()) else { continue };
+        sink.set_volume(Volume::Linear(if hearth.kindled { 0.55 } else { 0.15 }));
     }
 }
 
