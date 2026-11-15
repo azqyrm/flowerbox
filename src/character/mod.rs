@@ -30,6 +30,7 @@ impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<DamageMessage>()
             .add_message::<guard::Parried>()
+            .add_message::<guard::Blocked>()
             .add_message::<DamageTaken>()
             .configure_sets(
                 FixedUpdate,

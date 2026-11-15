@@ -18,6 +18,7 @@ mod player;
 mod pvp;
 mod save;
 mod settings;
+mod sound;
 mod tuning;
 mod ui;
 mod weapon;
@@ -53,6 +54,7 @@ fn main() {
             enemy::EnemyPlugin,
             pvp::PvpPlugin,
             save::SavePlugin,
+            sound::SoundPlugin,
             healing::HealingPlugin,
             hearth::HearthPlugin,
             ui::UiPlugin,

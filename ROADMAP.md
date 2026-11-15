@@ -47,7 +47,7 @@
 | Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
 | Online co-op | **O** | Online panel: **H** host (code copied to the clipboard), **J** join with the code in the clipboard, **C** copy code, **L** leave. Command line: `--host`, `--join <code>` |
 | Use an item | Inventory: **Enter** / double-click on a consumable | Healing Ale = drink, Poppy = PvP on, Camomile = PvP off (short eating action) |
-| Pause menu | **Esc** | |
+| Menu | **Esc** (gamepad: Select) | Resume / Settings (sensitivity, invert Y, stick speed, volume, notification corner) / Controls (rebind) / Delete save / Quit. The world keeps running | |
 
 All tuning values (timings, costs, damage) live in one `tuning.rs` constants module, or in a RON file later, so it's easy to adjust game feel.
 
@@ -126,6 +126,9 @@ claude_ds/
 └─ src/
    ├─ main.rs           # App setup, plugin registration
    ├─ tuning.rs         # all gameplay constants
+   ├─ settings.rs       # Settings (camera, volume, notification corner, key bindings) ↔ settings.ron
+   ├─ save.rs           # autosave / load (bag, Ale, sunflower, respawn point, taken items) ↔ save.ron
+   ├─ sound.rs          # synthesised sounds (one-shots + loops), spatial playback triggers
    ├─ states.rs         # AppState (Loading, InGame, Inventory, Paused, Dead)
    ├─ input.rs          # leafwing actions, tap/hold detection, input buffer
    ├─ camera.rs         # third-person orbit camera, collision pull-in, lock-on (later)
@@ -173,6 +176,8 @@ claude_ds/
       ├─ inventory_ui.rs # Tab/I screen: equipment, filters + grid, details, status preview
       ├─ markers.rs     # lock-on dot and enemy health bars (world → screen)
       ├─ notifications.rs # notification feed (Notify, NotificationSettings)
+      ├─ damage_numbers.rs # numbers popping out of the dummy
+      ├─ pause_menu.rs  # Esc menu: settings, controls (rebinding), delete save, quit
       └─ strings.rs     # all player-facing wording (COMPOSTED, SUN VIGORATED, prompts)
 ```
 
@@ -340,7 +345,7 @@ Order (2026-11-16): first everything that needs no outside assets, then the art 
 - [x] Settings: mouse sensitivity, invert Y, stick speed, volume, notification corner; saved to the OS config folder (`settings.ron`)
 - [x] Key rebinding (keyboard + mouse), saved with the settings
 - [x] Save and load (autosave): inventory + equipment + consumables, Ale, revived sunflower, respawn point, taken items; `--new-game` / "Delete save" in the menu. A guest saves only its own character
-- [ ] Sound, generated in code (no asset licensing): footsteps, swings, hits, block, parry, drink gulp, sunflower hum, torch crackle; spatial, volume from settings
+- [x] Sound, generated in code (no asset licensing): footsteps, swings, hits, block, parry, drink gulp, sunflower hum, torch crackle; spatial, volume from settings
 - [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested) — needs assets
 - [ ] Replace the primitives with a rigged glTF character (CC0). Map its skeleton onto `humanoid::Bone` so the shared poses and the FK hitbox keep working, or blend its clips in `humanoid::anim` (see N13) — needs assets
 
@@ -575,3 +580,9 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Hit feedback fix:** `DamageTaken` carries `attacker`; hitstop/shake only for our own hits or hits on us (before, the host felt a guest's hits).
   - **Corpses:** `character::corpses_dont_block` gives dead characters (enemies, players, puppets) `ColliderDisabled` and removes it on revival; the broken dummy too, until it stands up. Verified: the enemy autopilot walks the player straight over the Hollow's body ("passed the corpse").
   - **Protocol v4.** Autopilot `netrest` (two instances): guest hits the dummy (host logs "a guest hit the dummy for 20/20/32", both see numbers), host rests ("Host waiting … 1/2"), guest rests → both "rest complete", guest walks off → `StandUp`. Hearth autopilot: E at 11 s stands up.
+- **N24 (2026-11-16) — Phase 9, part 1 (menu, settings, rebinding, save, sound):**
+  - **Menu** (`ui/pause_menu.rs`): Esc / Select opens it only if no other menu had the input in the previous frame (Esc closing the inventory doesn't open it). Rebuilt on change like the inventory. `PauseMenu::show(page)` for scripts (`FLOWERBOX_AUTOPILOT=menu`, `FLOWERBOX_MENU_PAGE=main|settings|controls`). The default font lacks "…", "—", "→", "·": use ASCII.
+  - **Settings** (`settings.rs`): `Settings` resource (`#[serde(default)]`, so older files load), saved to `dirs::config_dir()/flowerbox/settings.ron` on every change. Bindings: one input per `Bind` (movement keys only), conflicts swap. `input::input_map(&bindings)` builds the leafwing map (plus fixed extras: I, middle mouse, mouse look, gamepad); `rebind_player` applies changes at once. Camera reads sensitivity / invert Y / stick speed; `GlobalVolume` and `NotificationSettings::corner` follow. Bevy features `serialize` (KeyCode/MouseButton serde) and `wav`.
+  - **Save** (`save.rs`): `SaveData` (version 1) in `dirs::data_dir()/flowerbox/save.ron`, written atomically (temp + rename) at most once a second when the bag/equipment/Ale or the own world (sunflower, respawn point, taken layout items) changed, and on quit. Loaded in `PostStartup`: bag + counts, equipment (`Equipment::from_slots`), Ale, sunflower, taken items, and the player placed at the respawn point. A guest doesn't update the world fields. `--new-game`, menu "Delete save" (stops autosave for the session).
+  - **Test isolation:** with `FLOWERBOX_AUTOPILOT` set, settings and saves are neither read nor written unless `FLOWERBOX_CONFIG_DIR` / `FLOWERBOX_DATA_DIR` point somewhere. Verified: inventory autopilot → save file with the Shortsword, equipment and taken id 0; the next run loads it.
+  - **Sound** (`sound.rs`): synthesised at start (deterministic noise, one-pole filters) into 16-bit WAV `AudioSource`s: 4 footsteps, swing, heavy swing, roll whoosh, hit, straw hit (dummy), block clang (`guard::Blocked` message, new), parry ring, gulp (Ale and eating), sunflower hum (seamless 4 s loop, louder once revived), 3 torch crackle loops. All spatial (`SpatialListener` on the camera). Triggers: footsteps from `CharacterController::moved` (any character, also puppets), swings/rolls/drinks from actions reaching their moment, hits from weapon `DamageMessage`s (not the dummy), dummy hits from `DummyStruck` (so guests hear them too). Unit tests check loudness, clipping, the loop seam and that rodio decodes the WAV. **Not listened to** (no speakers here); the enemy autopilot logs "audio: N started so far".

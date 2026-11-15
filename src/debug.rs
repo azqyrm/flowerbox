@@ -99,7 +99,7 @@ impl Plugin for DebugPlugin {
                     guard_button: Some(|_| AUTO_GUARD.load(std::sync::atomic::Ordering::Relaxed)),
                 })
                 .init_resource::<EnemyScript>()
-                .add_systems(Update, (enemy_script, log_ale));
+                .add_systems(Update, (enemy_script, log_ale, log_audio));
             }
             Ok("netrest") => {
                 app.insert_resource(Autopilot {
@@ -1072,5 +1072,19 @@ fn menu_script(time: Res<Time>, mut menu: ResMut<crate::ui::pause_menu::PauseMen
             _ => Page::Main,
         };
         menu.show(page);
+    }
+}
+
+/// Sounds started so far (and playing now), every 2 s: shows the sound triggers work even where
+/// nobody can listen.
+fn log_audio(
+    time: Res<Time>,
+    mut started: Local<usize>,
+    new: Query<(), Added<AudioPlayer>>,
+    sinks: Query<(), With<bevy::audio::SpatialAudioSink>>,
+) {
+    *started += new.iter().count();
+    if (time.elapsed_secs() / 2.0).floor() != ((time.elapsed_secs() - time.delta_secs()) / 2.0).floor() {
+        info!("audio: {} started so far, {} playing", *started, sinks.iter().count());
     }
 }
