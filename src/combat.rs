@@ -14,7 +14,7 @@ use bevy::prelude::*;
 
 use crate::character::guard::Parried;
 use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
-use crate::character::CharacterSystems;
+use crate::character::{CharacterSystems, Remote};
 use crate::character::stats::{DamageMessage, DamageTaken, Health};
 use crate::humanoid::anim::action_pose;
 use crate::humanoid::pose::bone_character_transform;
@@ -59,7 +59,7 @@ pub struct SwingHits {
 /// Remaining real-time hitstop (game time runs at `HITSTOP_TIME_SCALE` meanwhile).
 #[derive(Resource, Default)]
 pub struct Hitstop {
-    remaining: f32,
+    pub remaining: f32,
 }
 
 /// Camera shake "trauma" 0..1; the camera reads and decays it.
@@ -85,7 +85,7 @@ pub fn blade_world(
 fn sword_hits(
     time: Res<Time>,
     spatial: SpatialQuery,
-    hurtboxes: Query<(Option<&Team>, Option<&CharacterAction>), With<Hurtbox>>,
+    hurtboxes: Query<(Option<&Team>, Option<&CharacterAction>, Has<Remote>, Has<Player>), With<Hurtbox>>,
     mut damage: MessageWriter<DamageMessage>,
     mut attackers: Query<(
         Entity,
@@ -96,11 +96,13 @@ fn sword_hits(
         &EquippedWeapon,
         Option<&Team>,
         Option<&mut SwingHits>,
+        Has<Player>,
+        Has<Remote>,
     )>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    for (entity, tf, action, spec, rig, equipped, team, hits) in &mut attackers {
+    for (entity, tf, action, spec, rig, equipped, team, hits, local_player, remote) in &mut attackers {
         let weapon = equipped.def;
         let Some(mut hits) = hits else {
             commands.entity(entity).insert(SwingHits::default());
@@ -125,8 +127,15 @@ fn sword_hits(
             let Some((a, b)) = blade_world(tf, spec, rig, weapon, &sample) else { continue };
             let blade = Collider::capsule_endpoints(BLADE_HIT_RADIUS, a, b);
             for target in spatial.shape_intersections(&blade, Vec3::ZERO, Quat::IDENTITY, &filter) {
-                let Ok((target_team, target_action)) = hurtboxes.get(target) else { continue };
+                let Ok((target_team, target_action, target_remote, target_is_us)) = hurtboxes.get(target) else { continue };
                 if hits.hit.contains(&target) || (team.is_some() && team == target_team) {
+                    continue;
+                }
+                // Online: a remote body is only hit by *our* player (the damage is forwarded to its
+                // owner), and a remote body's swing only hits *our* player (its own machine handles
+                // the rest). So every hit is detected exactly once, by the machine of the victim or
+                // of the local attacker.
+                if (target_remote && !local_player) || (remote && !target_is_us) {
                     continue;
                 }
                 hits.hit.push(target);

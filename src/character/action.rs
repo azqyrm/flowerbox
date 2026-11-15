@@ -31,7 +31,7 @@ pub enum ActionRequest {
     Rest,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ActionKind {
     Roll,
     Backstep,

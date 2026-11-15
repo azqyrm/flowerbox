@@ -13,6 +13,7 @@ mod input;
 mod interact;
 mod items;
 mod lockon;
+mod net;
 mod player;
 mod tuning;
 mod ui;
@@ -50,6 +51,7 @@ fn main() {
             hearth::HearthPlugin,
             ui::UiPlugin,
             debug::DebugPlugin,
+            net::NetPlugin,
         ))
         .run();
 }

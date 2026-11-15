@@ -45,6 +45,7 @@
 | Lock-on target | **Q** or Middle Mouse | Locks the target nearest the view centre (≤15 m, ±63°); the camera follows it, you face it and strafe, attacks aim at it. Again = release. Nothing to lock = camera recentres behind you |
 | Gamepad | Souls-like | Left stick move, right stick camera, **R1** attack (tap/hold), **L1** block, **B/Circle** roll/sprint, **A/Cross** jump, **X/Square** drink, **Y/Triangle** interact, **R3** lock-on, **Start** inventory (inside: D-pad, L1/R1 filter, A equip, X unequip, B close) |
 | Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
+| Online co-op | **O** | Online panel: **H** host (code copied to the clipboard), **J** join with the code in the clipboard, **C** copy code, **L** leave. Command line: `--host`, `--join <code>` |
 | Pause menu | **Esc** | |
 
 All tuning values (timings, costs, damage) live in one `tuning.rs` constants module, or in a RON file later, so it's easy to adjust game feel.
@@ -147,6 +148,12 @@ claude_ds/
    ├─ debug.rs          # F3 overlay, debug keys, screenshots, autopilot scripts
    ├─ interact.rs       # InteractPrompt + InteractSystems order (pickups before the Hearth)
    ├─ lockon.rs         # LockOn, Targetable, pick_target, MoveIntent::face while locked
+   ├─ net/              # online co-op over iroh (N21)
+   │  ├─ mod.rs         # NetPlugin, NetSession (roles), join codes, host/join/leave, event pump
+   │  ├─ transport.rs   # network thread: iroh endpoint on tokio, channels to Bevy
+   │  ├─ protocol.rs    # BodyState, Datagram (state/snapshot), Reliable (hello/welcome/damage/parry)
+   │  ├─ sync.rs        # send states, puppets (Remote), forwarding hits/parries
+   │  └─ ui.rs          # online panel (O) + status corner
    ├─ enemy/
    │  └─ mod.rs         # the Hollow: spawn, AI state machine (writes MoveIntent/ActionIntent), death, reset
    ├─ items/
@@ -257,6 +264,17 @@ claude_ds/
 - [ ] Switching lock-on targets (mouse flick / right stick) once there are several enemies
 - [ ] Poise: enemies (and the player) currently flinch on every hit
 
+### Phase 8.5 — Online co-op (user request, 2026-11-15)
+- [x] Research: transports that need no game server (iroh, Steam, WebRTC/matchbox, plain QUIC) → iroh (N21)
+- [x] Peer-to-peer connection with a join code (host / join), direct with relay fallback
+- [x] Players see each other (puppets: movement, actions, guard, equipment, coloured tunics)
+- [x] Host-owned enemies replicated to guests; guests' hits and parries sent to the host; enemy hits on a guest decided on the guest's machine
+- [x] Online panel (`O`), status corner, `--host` / `--join <code>`, join code via clipboard
+- [ ] Shared world events: guests resting / dying, item pickups, dummy state (each machine still has its own)
+- [ ] Interpolation buffer + lag compensation (puppets currently ease toward the last state)
+- [ ] Windows build for friends (cross-compile or build on Windows); ship `assets/` next to the binary
+- [ ] Optional: Steam transport (lobbies, invites) via `bevy_replicon_renet` + `renet_steam` or `aeronet_steam`
+
 ### Phase 9 — Polish
 - [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested).
 - [ ] Replace the primitives with a rigged glTF character (CC0). Map its skeleton onto `humanoid::Bone` so the shared poses and the FK hitbox keep working, or blend its clips in `humanoid::anim` (see N13).
@@ -292,6 +310,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-15 | Phase 7: the world does **not** pause in the inventory (Souls-style); the player just gets no gameplay input (`GameplayBlocked`). Equipment points at inventory indices (items are never removed yet). Defence = multiplicative armour **absorption** (generic `DamageAbsorption` on characters). Empty right hand = **Fists** (a `WeaponDef` with no model). The Rusted Axe uses the LightSword moveset until it gets its own class. Shields only add weight and show a block value until blocking (Phase 8). |
 | 2026-11-15 | Guard (user request): hold RMB with a shield. The shield blocks from the moment you start raising it; the **last third of the 0.3 s raise is the parry window** (negates the hit). Every new raise (also after a roll/attack/stagger while still holding) has its own window. Blocked hits don't stagger; a guard break (stamina cost > stamina) does. Without a shield there is no guard (weapon blocking may come later). |
 | 2026-11-15 | Phase 8: enemies are generic characters driven by an AI that writes `MoveIntent`/`ActionIntent` (same pipeline as the player). Enemy attack readability comes from their own **weapon class** (`HollowBlade`, 0.55 s wind-ups) rather than AI pauses. Teams (`combat::Team`) stop friendly fire; the dummy has no team. Enemies respawn on `WorldReset`. The older autopilots run without enemies (`FLOWERBOX_AUTOPILOT` ≠ `enemy`). Roll weight = load ratio classes; the fast roll keeps the full i-frames. |
+| 2026-11-15 | Online: **iroh** (QUIC, direct connections with hole punching, n0's free public relays as fallback, connect by an address code) instead of Steam (needs Steam on both sides + $100 app fee to ship), matchbox/WebRTC (needs a signalling server) or plain sockets (port forwarding). Own small protocol over iroh instead of `bevy_replicon` (+ `bevy_replicon_iroh`, a tiny one-person crate): the state is small and the game already has a clean "intent → character" split. Host-authoritative world, each player authoritative over its own character; hits are decided on the victim's or the local attacker's machine. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -455,3 +474,23 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Combat:** the player now has a `Hurtbox` and `Team::Player`, the Hollow `Team::Hostile`; `sword_hits` skips same-team targets. `guard::stun_parried` (FixedUpdate, right after damage) forces `Stunned` on the parried attacker; a hit on a `Stunned` target deals `RIPOSTE_MULT` (logged as "RIPOSTE").
   - **Autopilot `enemy`:** the Hollow is moved 4 m in front of the player (and walks around the rubble at (0.7, 6.8)), lands its 2-swing combo (HP 72), lock-on at 3 s, then the script raises the shield timed to the swing (`raise shield`) → "parried" → "attacker stunned" → "RIPOSTE … for 50" → "hit … for 20" → "a Hollow falls" → "lock-on lost" → 5 s later "enemies reset" → it repeats. Logs the Hollow's AI state every 0.5 s.
   - **Known gaps:** no strafe leg animation; no poise (every hit flinches, so a fast player can stun-lock a Hollow); one enemy type; no target switching.
+- **N21 (2026-11-15) — online co-op (user request: "peer to peer, ideally without hosting a server"):**
+  - **Research (crates.io, Nov 2026):**
+    | Option | Server needed? | Notes |
+    |---|---|---|
+    | **iroh 1.4** (n0) | No. Direct UDP hole punching; n0's free public relays as fallback and for address lookup | Connect by an endpoint address (code). Public relays are free but rate-limited, meant for development/small use; for a release you can run your own `iroh-relay` on a domain/VPS (that's where a domain would help) |
+    | Steam (`steamworks` 0.13 + `renet_steam` 4 / `aeronet_steam` 0.22; `bevy_steamworks` is still on Bevy 0.19) | No (Valve's relay network) | Both players need Steam running; dev with test App ID 480 is free, shipping needs a Steam Direct fee ($100) and the SDK lib next to the binary. Gives lobbies, friend invites, overlay |
+    | matchbox / WebRTC (`bevy_matchbox` 0.15, Bevy 0.19) | A small signalling server (could run on your domain) + STUN/TURN | Good with GGRS rollback, which needs a deterministic simulation (avian + our systems aren't) |
+    | Plain QUIC/UDP (`bevy_quinnet`, `renet`) | No, but the host must open/forward a port | Simplest, but friends behind routers can't connect without port forwarding |
+    | Replication libs: `bevy_replicon` 0.45, `lightyear` 0.31 (both Bevy 0.20) | — | Transport-agnostic replication; `bevy_replicon_iroh` 0.20 exists (very new). Worth adopting when the networked state grows |
+  - **Chosen:** iroh, `presets::N0`, ALPN `flowerbox/1`. The join code is `FBX1-` + base64url(postcard(`EndpointAddr`)) (endpoint id + home relay + local IPs, ~135 chars). Local IPs make LAN play work without internet; the relay makes it work across routers. Tested: two instances on one machine, also with `FLOWERBOX_NET_RELAY_ONLY=1` (the code's IPs stripped, so the connection starts through the n0 relay).
+  - **Threading:** `net/transport.rs` runs a tokio runtime on its own thread; Bevy talks to it through channels (`NetLink::send` / `poll`). Per connection: QUIC datagrams for state; one bidirectional stream (opened by the guest, length-prefixed postcard frames) for reliable messages.
+  - **Sessions:** `NetSession.role` Offline → StartingHost → Hosting, or Offline → Joining → Client (after `Reliable::Welcome`). The host admits up to `MAX_PLAYERS` (4) with ids `PLAYER_ID_BASE + slot` (host = 1) and refuses other protocol versions (`PROTOCOL_VERSION`). On disconnect the guest goes back offline; its own enemies come back.
+  - **State:** every machine sends its player's `BodyState` (position, facing, movement, grounded, action kind/elapsed/dir/charge/class, guard time, HP, right/left hand + head items) at 30 Hz. The host sends a snapshot of all bodies (its player, the guests' last states, its real enemies: id `ENEMY_ID_BASE + entity index`).
+  - **Puppets** (`net/sync.rs`): spawned per remote body with `Remote` + the normal components (`CharacterController`, `CharacterAction`, `Guard`, `Health`, rig, animator, kinematic collider; players: tiny `Inventory`/`Equipment` so weapon/shield/hood models follow; Hollows: `Enemy`, `Hurtbox`, `Team::Hostile`, `Targetable`). They ease toward the state (extrapolated ≤0.2 s), keep their action ticking locally and resync when it drifts > 0.12 s. Guests' tunics are coloured by slot.
+  - **Hit rules** (`combat::sword_hits`): a `Remote` target is only hit by *our* player (`apply_damage` skips `Remote`; `forward_hits` sends `Reliable::Damage` to the host); a `Remote` attacker only hits *our* player. So each hit is decided exactly once: your hits on enemies on your machine, enemy hits on you on your machine (blocking/parrying are local; a parry sends `Reliable::Parried`, the host stuns the real enemy).
+  - **Host side:** guests' damage → `DamageMessage` on the real enemy (attacker = the guest's puppet); enemies chase the nearest living `Team::Player` (local or puppet). Guests don't spawn enemies (`EnemiesSuppressed`).
+  - **Found while testing:** spawning characters and sending `EquipWeapon` in the same `Update` could drop the request (the entity didn't exist yet) → `WeaponSystems::Equip` set; spawners run `.before` it. Duplicate puppets when two snapshots arrived in one frame → dedupe by id.
+  - **Autopilots:** `net` (walk, attack, walk back) and `netfight` (guest walks to the Hollow and keeps swinging). Two-instance recipe: host with `FLOWERBOX_NET_CODE_FILE=code.txt … --host`, then guest `… --join "$(cat code.txt)"`.
+  - **Not shared yet:** guest deaths/rests (local only; the host's world doesn't reset for them), pickups, the dummy, banners. No interpolation buffer or lag compensation. Untested across two real networks/NATs (only same machine, direct and relay-started).
+  - **Giving the game to a friend:** `cargo build --release`, then send `target/release/flowerbox` together with the `assets/` folder (same directory). A Windows friend needs a Windows build (build on Windows, or cross-compile with `x86_64-pc-windows-gnu`).

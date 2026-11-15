@@ -101,7 +101,7 @@ pub fn apply_damage(
         Has<Invulnerable>,
         Option<&DamageAbsorption>,
         Option<(&mut Guard, &mut Stamina, &CharacterController, &Transform)>,
-    )>,
+    ), Without<super::Remote>>,
 ) {
     for msg in messages.read() {
         let Ok((mut health, action, invulnerable, absorption, guard)) = q.get_mut(msg.target) else { continue };

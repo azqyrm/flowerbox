@@ -17,27 +17,27 @@ use bevy::prelude::*;
 use crate::character::action::{ActionKind, ActionRequest, CharacterAction};
 use crate::character::controller::CharacterController;
 use crate::character::stats::{Health, Stamina};
-use crate::character::{ActionIntent, CharacterSystems, MoveIntent, character_bundle};
+use crate::character::{ActionIntent, CharacterSystems, MoveIntent, Remote, character_bundle};
 use crate::combat::{Hurtbox, Team};
 use crate::hearth::WorldReset;
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::lockon::Targetable;
-use crate::player::Player;
 use crate::tuning::*;
-use crate::weapon::{EquipWeapon, hollow_blade};
+use crate::weapon::{EquipWeapon, WeaponSystems, hollow_blade};
 
 pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         // The older autopilot scripts (combat, hearth, …) were written for an empty arena.
-        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| a != "enemy") {
+        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| a != "enemy" && a != "net" && a != "netfight") {
             return;
         }
-        app.add_systems(Startup, spawn_enemies)
+        app.init_resource::<EnemiesSuppressed>()
+            .add_systems(Update, spawn_enemies.before(WeaponSystems::Equip))
             .add_systems(FixedUpdate, hollow_ai.before(CharacterSystems::Actions))
-            .add_systems(Update, (enemy_death, enemy_reset));
+            .add_systems(Update, (enemy_death, revive_corpses, enemy_reset));
     }
 }
 
@@ -100,12 +100,24 @@ impl HollowAi {
     }
 }
 
+/// True while this machine is a guest in someone else's world: the host's enemies are the real
+/// ones (they arrive as puppets), so none are spawned here (`crate::net`).
+#[derive(Resource, Default)]
+pub struct EnemiesSuppressed(pub bool);
+
+/// Spawns the arena's enemies whenever there are none of our own (at start, and after leaving
+/// someone else's world).
 fn spawn_enemies(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut equip: MessageWriter<EquipWeapon>,
+    suppressed: Res<EnemiesSuppressed>,
+    existing: Query<(), (With<Enemy>, Without<Remote>)>,
 ) {
+    if suppressed.0 || !existing.is_empty() {
+        return;
+    }
     for (i, (x, z)) in HOLLOW_SPAWNS.into_iter().enumerate() {
         let home = Vec3::new(x, 0.0, z);
         let to_centre = (-home).normalize_or(Vec3::NEG_Z);
@@ -134,16 +146,19 @@ fn spawn_enemies(
 #[allow(clippy::type_complexity)]
 fn hollow_ai(
     time: Res<Time>,
-    player: Query<(&Transform, &CharacterAction), With<Player>>,
-    mut q: Query<
-        (&Enemy, &mut HollowAi, &Transform, &CharacterController, &CharacterAction, &Health, &mut MoveIntent, &mut ActionIntent),
-        Without<Player>,
-    >,
+    players: Query<(&Transform, &CharacterAction, &Team), Without<HollowAi>>,
+    mut q: Query<(&Enemy, &mut HollowAi, &Transform, &CharacterController, &CharacterAction, &Health, &mut MoveIntent, &mut ActionIntent)>,
 ) {
     let dt = time.delta_secs();
-    let Ok((ptf, paction)) = player.single() else { return };
-    let player_alive = !matches!(paction.current, Some(a) if a.kind == ActionKind::Dead);
     for (enemy, mut ai, tf, ctrl, action, health, mut movement, mut intent) in &mut q {
+        // Go for the nearest living player (the local one or an online guest's puppet).
+        let nearest = players
+            .iter()
+            .filter(|(_, a, team)| **team == Team::Player && !matches!(a.current, Some(a) if a.kind == ActionKind::Dead))
+            .map(|(t, _, _)| t.translation)
+            .min_by(|a, b| a.distance_squared(tf.translation).total_cmp(&b.distance_squared(tf.translation)));
+        let player_alive = nearest.is_some();
+        let ppos = nearest.unwrap_or(tf.translation + Vec3::Z * 1000.0);
         intent.tick(dt);
         movement.dir = Vec3::ZERO;
         movement.sprint = false;
@@ -152,7 +167,7 @@ fn hollow_ai(
             intent.attack_held = false;
             continue;
         }
-        let to_player = (ptf.translation - tf.translation).with_y(0.0);
+        let to_player = (ppos - tf.translation).with_y(0.0);
         let dist = to_player.length();
         let toward = to_player.normalize_or_zero();
         let to_home = (enemy.home - tf.translation).with_y(0.0);
@@ -288,6 +303,20 @@ fn enemy_death(
                 }
             }
             None => {}
+        }
+    }
+}
+
+/// A corpse whose body is alive again (a remote enemy the host revived): back in the fight.
+#[allow(clippy::type_complexity)]
+fn revive_corpses(mut commands: Commands, mut q: Query<(Entity, &CharacterAction, &mut Visibility), (With<Enemy>, With<Corpse>)>) {
+    for (entity, action, mut vis) in &mut q {
+        if !matches!(action.current, Some(a) if a.kind == ActionKind::Dead) {
+            *vis = Visibility::Inherited;
+            commands
+                .entity(entity)
+                .remove::<(Corpse, ColliderDisabled)>()
+                .insert((Hurtbox, Targetable { height: 0.55 }));
         }
     }
 }

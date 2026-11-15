@@ -19,6 +19,8 @@
 //!   `guard_script`).
 //! - `FLOWERBOX_AUTOPILOT=enemy` → a Hollow fight: hits taken, lock-on, a timed parry, riposte,
 //!   kill, world reset (see `enemy_script`). The only autopilot with enemies in the arena.
+//! - `FLOWERBOX_AUTOPILOT=net` → for two instances (`--host` / `--join <code>`): walk, attack, walk
+//!   back (see `net_movement`), with the Hollow in the arena.
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 
@@ -88,6 +90,12 @@ impl Plugin for DebugPlugin {
                 })
                 .init_resource::<EnemyScript>()
                 .add_systems(Update, (enemy_script, log_ale));
+            }
+            Ok("netfight") => {
+                app.insert_resource(Autopilot { movement: Some(netfight_movement), attack_button: Some(netfight_attack_button), guard_button: None });
+            }
+            Ok("net") => {
+                app.insert_resource(Autopilot { movement: Some(net_movement), attack_button: Some(net_attack_button), guard_button: None });
             }
             Ok("wall") => {
                 app.insert_resource(Autopilot { movement: Some(wall_movement), attack_button: None, guard_button: None })
@@ -803,4 +811,43 @@ fn enemy_script(
         info!("autopilot: world reset");
         reset.write(WorldReset);
     }
+}
+
+// ── Net autopilot (FLOWERBOX_AUTOPILOT=net, two instances) ─────────────
+
+/// 4–6 s walk toward the arena centre, 6–8 s light attacks, 8–10 s walk back, 12–13 s sideways.
+fn net_movement(t: f32, _dt: f32) -> (Vec3, bool, bool) {
+    let dir = if (4.0..6.0).contains(&t) {
+        Vec3::NEG_Z
+    } else if (8.0..10.0).contains(&t) {
+        Vec3::Z
+    } else if (12.0..13.0).contains(&t) {
+        Vec3::X
+    } else {
+        Vec3::ZERO
+    };
+    (dir, false, false)
+}
+
+fn net_attack_button(t: f32, dt: f32) -> (bool, bool, bool) {
+    let taps = [6.2, 6.8, 7.4];
+    let pressed = taps.iter().any(|&s| (s..s + 0.08).contains(&t));
+    let just_pressed = taps.iter().any(|&s| crossed(t, dt, s));
+    let just_released = taps.iter().any(|&s| crossed(t, dt, s + 0.08));
+    (pressed, just_pressed, just_released)
+}
+
+/// Guest variant: walk toward the Hollow's corner (4–7.5 s) and keep swinging from 8 s on.
+fn netfight_movement(t: f32, _dt: f32) -> (Vec3, bool, bool) {
+    let dir = if (4.0..7.5).contains(&t) { Vec3::new(-0.35, 0.0, -1.0).normalize() } else { Vec3::ZERO };
+    (dir, false, false)
+}
+
+fn netfight_attack_button(t: f32, _dt: f32) -> (bool, bool, bool) {
+    if t < 8.0 {
+        return (false, false, false);
+    }
+    let phase = (t - 8.0) % 0.9;
+    let down = phase < 0.08;
+    (down, down && phase < 0.02, !down && phase < 0.1)
 }
