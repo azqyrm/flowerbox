@@ -156,8 +156,9 @@ pub const RESPAWN_FADE_IN: f32 = 0.9;
 pub const GUARD_RAISE_TIME: f32 = 0.3;
 /// The parry window starts at this fraction of the raise (2/3 → the last third).
 pub const PARRY_WINDOW_START: f32 = 2.0 / 3.0;
-/// Hits within this angle of the facing direction are guarded (radians, ≈ 80°).
-pub const GUARD_ANGLE: f32 = 1.4;
+/// Hits from within this angle either side of the facing direction are guarded (radians, ≈ 57°,
+/// a 115° arc in front). Hits from the sides and behind, or with no known direction, aren't.
+pub const GUARD_ANGLE: f32 = 1.0;
 /// Stamina a blocked hit costs, per point of the hit's damage.
 pub const GUARD_STAMINA_PER_DAMAGE: f32 = 0.6;
 /// Walking speed multiplier while guarding.

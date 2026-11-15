@@ -2,7 +2,7 @@
 //!
 //! - **F3**: toggle the debug overlay (action state, timers, buffer, stats), the cyan i-frame
 //!   ring at the player's feet and the red blade hitbox during active frames.
-//! - Debug builds only: **H** = take 15 damage; **1–4** = request Roll (backstep when standing still),
+//! - Debug builds only: **H** / **J** = take 15 damage from the front / from behind; **1–4** = request Roll (backstep when standing still),
 //!   Light (jump attack when airborne, running attack when sprinting), Heavy, Drink;
 //!   **K** = die (tests YOU DIED and the Hearth respawn);
 //!   **F6** = equip the next weapon in the bag.
@@ -46,7 +46,7 @@ impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_overlay).add_systems(
             Update,
-            (toggle_overlay, update_overlay, log_action_changes, spawn_iframe_ring, show_iframe_ring, draw_blade_hitbox),
+            (toggle_overlay, update_overlay, log_action_changes, spawn_iframe_ring, show_iframe_ring, draw_blade_hitbox, draw_guard_arc),
         );
         if cfg!(debug_assertions) {
             app.add_systems(Update, debug_keys);
@@ -256,15 +256,39 @@ fn draw_blade_hitbox(
     }
 }
 
+/// With the overlay on: the guarded arc on the floor while the guard is up (gold in the parry
+/// window, blue otherwise).
+fn draw_guard_arc(mut gizmos: Gizmos, overlay: Query<&Visibility, With<DebugOverlay>>, q: Query<(&Transform, &CharacterController, &Guard)>) {
+    if !overlay_on(&overlay) {
+        return;
+    }
+    for (tf, ctrl, guard) in &q {
+        if !guard.is_up() {
+            continue;
+        }
+        let color = if guard.in_parry_window() { Color::srgb(1.0, 0.8, 0.2) } else { Color::srgb(0.3, 0.6, 1.0) };
+        let centre = tf.translation.with_y(0.05);
+        let at = |a: f32| centre + Vec3::new(-(ctrl.facing + a).sin(), 0.0, -(ctrl.facing + a).cos()) * 1.6;
+        let steps = 16;
+        for i in 0..steps {
+            let a0 = -GUARD_ANGLE + 2.0 * GUARD_ANGLE * i as f32 / steps as f32;
+            let a1 = -GUARD_ANGLE + 2.0 * GUARD_ANGLE * (i + 1) as f32 / steps as f32;
+            gizmos.line(at(a0), at(a1), color);
+        }
+        gizmos.line(centre, at(-GUARD_ANGLE), color);
+        gizmos.line(centre, at(GUARD_ANGLE), color);
+    }
+}
+
 // ── Debug keys (debug builds only) ───────────────────────────────────────
 
 fn debug_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut damage: MessageWriter<DamageMessage>,
     mut equip: MessageWriter<EquipRequest>,
-    mut player: Query<(Entity, &mut ActionIntent, &Inventory, &Equipment), With<Player>>,
+    mut player: Query<(Entity, &mut ActionIntent, &Inventory, &Equipment, &Transform, &CharacterController), With<Player>>,
 ) {
-    let Ok((entity, mut intent, inventory, equipment)) = player.single_mut() else { return };
+    let Ok((entity, mut intent, inventory, equipment, tf, ctrl)) = player.single_mut() else { return };
     if keys.just_pressed(KeyCode::F6) {
         // Next weapon in the bag after the one in hand.
         let current = equipment.get(EquipSlot::RightHand);
@@ -274,8 +298,13 @@ fn debug_keys(
             equip.write(EquipRequest { character: entity, index: next, equip: true });
         }
     }
-    if keys.just_pressed(KeyCode::KeyH) {
-        damage.write(DamageMessage { target: entity, amount: 15.0, from: None, attacker: None });
+    // H = a 15-damage hit from the front, J = from behind (to test the guard).
+    let forward = Vec3::new(-ctrl.facing.sin(), 0.0, -ctrl.facing.cos());
+    for (key, side) in [(KeyCode::KeyH, 1.0), (KeyCode::KeyJ, -1.0)] {
+        if keys.just_pressed(key) {
+            let from = tf.translation + forward * side * 1.5;
+            damage.write(DamageMessage { target: entity, amount: 15.0, from: Some(from), attacker: None });
+        }
     }
     if keys.just_pressed(KeyCode::KeyK) {
         damage.write(DamageMessage { target: entity, amount: f32::MAX, from: None, attacker: None });
