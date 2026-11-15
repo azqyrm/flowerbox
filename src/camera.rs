@@ -17,6 +17,7 @@ use crate::character::controller::CharacterController;
 use crate::combat::{CameraShake, Hurtbox};
 use crate::input::{Action, GameplayBlocked, cursor_grabbed};
 use crate::lockon::{LockOn, Targetable};
+use crate::settings::Settings;
 use crate::player::Player;
 use crate::tuning::*;
 
@@ -73,6 +74,7 @@ fn follow_camera(
     spatial: SpatialQuery,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     blocked: Res<GameplayBlocked>,
+    settings: Res<Settings>,
     player: Single<(Entity, &Transform, &ActionState<Action>, Option<&LockOn>), (With<Player>, Without<ThirdPersonCamera>)>,
     targets: Query<(&Transform, &Targetable), (Without<Player>, Without<ThirdPersonCamera>)>,
     mut cams: Query<(&mut ThirdPersonCamera, &mut Transform)>,
@@ -100,13 +102,17 @@ fn follow_camera(
         } else if !blocked.0 {
             if cursor_grabbed(&cursor) {
                 let look = actions.axis_pair(&Action::Look);
-                cam.yaw -= look.x * CAM_SENSITIVITY;
-                cam.pitch = (cam.pitch + look.y * CAM_SENSITIVITY).clamp(CAM_PITCH_MIN, CAM_PITCH_MAX);
+                let sens = CAM_SENSITIVITY * settings.mouse_sensitivity;
+                let invert = if settings.invert_y { -1.0 } else { 1.0 };
+                cam.yaw -= look.x * sens;
+                cam.pitch = (cam.pitch + look.y * sens * invert).clamp(CAM_PITCH_MIN, CAM_PITCH_MAX);
             }
             // Gamepad right stick (rate-based, so scaled by time).
             let stick = actions.clamped_axis_pair(&Action::LookStick);
-            cam.yaw -= stick.x * CAM_STICK_SPEED * dt;
-            cam.pitch = (cam.pitch - stick.y * CAM_STICK_SPEED * 0.6 * dt).clamp(CAM_PITCH_MIN, CAM_PITCH_MAX);
+            let speed = CAM_STICK_SPEED * settings.stick_speed;
+            let invert = if settings.invert_y { -1.0 } else { 1.0 };
+            cam.yaw -= stick.x * speed * dt;
+            cam.pitch = (cam.pitch - stick.y * speed * 0.6 * dt * invert).clamp(CAM_PITCH_MIN, CAM_PITCH_MAX);
         }
 
         // Focus slightly above the capsule center (≈ shoulder height).

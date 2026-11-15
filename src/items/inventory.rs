@@ -132,6 +132,16 @@ pub struct Equipment {
 }
 
 impl Equipment {
+    /// Raw slot → bag index table (for saving).
+    pub fn slots(&self) -> [Option<usize>; 9] {
+        self.slots
+    }
+
+    /// From a saved table; indices beyond the bag are dropped.
+    pub fn from_slots(slots: [Option<usize>; 9], inventory: &Inventory) -> Self {
+        Self { slots: slots.map(|s| s.filter(|&i| i < inventory.items.len())) }
+    }
+
     pub fn get(&self, slot: EquipSlot) -> Option<usize> {
         self.slots[slot.index()]
     }

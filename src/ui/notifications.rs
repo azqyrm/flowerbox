@@ -22,8 +22,7 @@ impl Plugin for NotificationsPlugin {
 }
 
 /// A screen corner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // all corners are valid settings
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Corner {
     TopLeft,
     TopRight,

@@ -130,7 +130,7 @@ pub fn decode_code(code: &str) -> Option<EndpointAddr> {
 pub fn host(link: &NetLink, session: &mut NetSession) {
     if session.role == Role::Offline {
         session.role = Role::StartingHost;
-        session.status = "Opening the connection…".into();
+        session.status = "Opening the connection...".into();
         link.send(NetCmd::Host);
     }
 }
@@ -149,7 +149,7 @@ pub fn join(link: &NetLink, session: &mut NetSession, code: &str) {
                 addr = EndpointAddr::from_parts(addr.id, relays);
             }
             session.role = Role::Joining;
-            session.status = "Connecting…".into();
+            session.status = "Connecting...".into();
             link.send(NetCmd::Join(addr));
         }
         None => session.status = "That's not a FlowerBox code (they start with FBX1-).".into(),
@@ -208,7 +208,7 @@ fn pump_events(
             NetEvent::Connected => {
                 info!("connected to the host");
                 link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Hello { version: PROTOCOL_VERSION }) });
-                session.status = "Connected, waiting for the host…".into();
+                session.status = "Connected, waiting for the host...".into();
             }
             NetEvent::PeerJoined(peer) => info!("peer {peer} connected"),
             NetEvent::PeerLeft(peer) => {

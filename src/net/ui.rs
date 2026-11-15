@@ -201,9 +201,9 @@ fn panel_keys(
 fn role_label(session: &NetSession) -> String {
     match session.role {
         Role::Offline => "Offline.".into(),
-        Role::StartingHost => "Starting to host…".into(),
+        Role::StartingHost => "Starting to host...".into(),
         Role::Hosting => format!("Hosting, {} guest(s) connected.", session.peers.len()),
-        Role::Joining => "Joining…".into(),
+        Role::Joining => "Joining...".into(),
         Role::Client => format!("In the host's world as player {}.", session.my_id),
     }
 }

@@ -44,6 +44,10 @@ pub fn rest_waiting(who: &str, resting: u32, total: u32) -> String {
     format!("{who} waiting for other players at rest site {resting}/{total}")
 }
 pub const REST_COMPLETE: &str = "Everyone rests at the sunflower: the world stirs";
+/// The menu (Esc).
+pub const MENU_TITLE: &str = "Menu";
+pub const MENU_HINTS: &str = "[Up/Down] Select   [Left/Right] Change   [Enter] Choose   [Esc] Back";
+pub const SAVE_DELETED: &str = "Save deleted: the next start is a new game";
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
 /// Toast after picking something up ("Picked up: Rusted Shortsword").

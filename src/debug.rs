@@ -120,6 +120,9 @@ impl Plugin for DebugPlugin {
                 app.insert_resource(Autopilot { movement: Some(netfight_movement), attack_button: Some(netfight_attack_button), guard_button: None })
                     .add_systems(Update, netfight_script);
             }
+            Ok("menu") => {
+                app.add_systems(Update, menu_script);
+            }
             Ok("notify") => {
                 app.add_systems(Update, notify_script);
             }
@@ -1055,5 +1058,19 @@ fn netrest_script(
     }
     if at(9.6) {
         AUTO_WALK.store(false, Relaxed);
+    }
+}
+
+// ── Menu screenshots (FLOWERBOX_AUTOPILOT=menu, FLOWERBOX_MENU_PAGE=main|settings|controls) ──
+
+fn menu_script(time: Res<Time>, mut menu: ResMut<crate::ui::pause_menu::PauseMenu>) {
+    use crate::ui::pause_menu::Page;
+    if crossed(time.elapsed_secs(), time.delta_secs(), 0.5) {
+        let page = match std::env::var("FLOWERBOX_MENU_PAGE").as_deref() {
+            Ok("settings") => Page::Settings,
+            Ok("controls") => Page::Controls,
+            _ => Page::Main,
+        };
+        menu.show(page);
     }
 }

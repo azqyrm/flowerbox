@@ -12,7 +12,8 @@ use crate::character::stats::HitImmunity;
 use crate::healing::HealingAle;
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
-use crate::input::{PlayerInput, default_input_map};
+use crate::input::{PlayerInput, input_map};
+use crate::settings::Settings;
 use crate::tuning::*;
 use crate::character::stats::DamageAbsorption;
 use crate::items::ItemId;
@@ -35,6 +36,7 @@ const STARTING_ITEMS: [ItemId; 7] =
     [ItemId::Longsword, ItemId::HealingAle, ItemId::WoodenShield, ItemId::RustedAxe, ItemId::LeatherHood, ItemId::Poppy, ItemId::Camomile];
 
 fn spawn_player(
+    settings: Res<Settings>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -47,7 +49,7 @@ fn spawn_player(
             Player,
             PlayerInput::default(),
             HealingAle::new(ALE_CHARGES),
-            default_input_map(),
+            input_map(&settings.bindings),
             character_bundle(Transform::from_xyz(sx, sy, sz), PLAYER_MAX_HP, PLAYER_MAX_STAMINA),
         ))
         .id();

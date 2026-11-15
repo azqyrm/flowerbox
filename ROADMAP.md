@@ -274,7 +274,7 @@ claude_ds/
 - [x] Players see each other (puppets: movement, actions, guard, equipment, coloured tunics)
 - [x] Host-owned enemies replicated to guests; guests' hits and parries sent to the host; enemy hits on a guest decided on the guest's machine
 - [x] Online panel (`O`), status corner, `--host` / `--join <code>`, join code via clipboard
-- [ ] Shared world events: guests resting / dying, item pickups, dummy state (each machine still has its own)
+- [x] Shared world events: guests resting / dying, item pickups, dummy state (done in Phases 8.6 / 8.7)
 - [ ] Interpolation buffer + lag compensation (puppets currently ease toward the last state)
 - [ ] Windows build for friends (cross-compile or build on Windows); ship `assets/` next to the binary
 - [ ] Optional: Steam transport (lobbies, invites) via `bevy_replicon_renet` + `renet_steam` or `aeronet_steam`
@@ -335,11 +335,14 @@ Steps:
 - [x] Two-instance tests, notes
 
 ### Phase 9 — Polish
-- [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested).
-- [ ] Replace the primitives with a rigged glTF character (CC0). Map its skeleton onto `humanoid::Bone` so the shared poses and the FK hitbox keep working, or blend its clips in `humanoid::anim` (see N13).
-- [ ] Sound: footsteps, swings, hits, the drink gulp, Hearth ambience and torches crackling
-- [ ] Settings: mouse sensitivity, key rebinding, invert Y
-- [ ] Save and load (inventory, Hearth, Ale upgrades)
+Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
+- [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
+- [x] Settings: mouse sensitivity, invert Y, stick speed, volume, notification corner; saved to the OS config folder (`settings.ron`)
+- [x] Key rebinding (keyboard + mouse), saved with the settings
+- [x] Save and load (autosave): inventory + equipment + consumables, Ale, revived sunflower, respawn point, taken items; `--new-game` / "Delete save" in the menu. A guest saves only its own character
+- [ ] Sound, generated in code (no asset licensing): footsteps, swings, hits, block, parry, drink gulp, sunflower hum, torch crackle; spatial, volume from settings
+- [ ] Weapon models from glTF via `ModelSource::Gltf` (already wired, untested) — needs assets
+- [ ] Replace the primitives with a rigged glTF character (CC0). Map its skeleton onto `humanoid::Bone` so the shared poses and the FK hitbox keep working, or blend its clips in `humanoid::anim` (see N13) — needs assets
 
 ---
 
