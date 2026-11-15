@@ -372,6 +372,30 @@ Request: replace the north-east enemy (the vault's) with a **warg**: more aggres
 - [ ] Poise: hits still interrupt the warg's pounce (a co-op partner can save you by hitting it) — decide whether the wind-up should have hyper armour
 - [ ] Refactor the Hollow AI onto the shared helpers the beast AI uses (target pick, sight, sidestepping are duplicated)
 
+### Phase 8.10 — The forgery sector, enemy drops, one-way and locked doors (user request, 2026-11-16; new plan in `assets/levels/lvl1.png`)
+Request, cleaned up:
+1. **Build the new northern sector** from the updated plan. The vault's warg drops a **key**. A **locked door** in the vault's north wall leads to a room with three Hollows. From there a corridor runs north, then west along the top: a NW nook with a Hollow, a peaked hall with a Hollow, a V-shaped dip with a Hollow. It then runs down the west side, past an alcove with a treasure, into the **forgery**: a second warg, three Hollows, the rare item and two treasures. A door at the bottom leads back into the T-room of the upper halls. There is also a new door between stairs 2 and the vault.
+2. **Enemy drops:** enemies can drop items when killed (chance; unique drops only once).
+3. **Doors collide when open** (reported: you can walk through an opened door).
+4. **One-way doors:** a door only opens from the side it swings away from. From the other side you can still interact, but you get a short notification that it only opens from the other side; online, everyone sees which player tried it ("PlayerX tried a door: …"). The door looping back into the T-room therefore only opens from the forgery.
+5. **The rare item** is a *Well-Forged Sword*: a longsword with slightly better stats.
+6. **The forgery look:** an anvil, a forge with a fire pit, and iron bars in the ceiling where sunlight shines in and the forge's steam escapes.
+
+Decisions:
+- The plan has no stairs in the new sector, but the vault (−3.5 m) and the T-room (−1.5 m) differ by 2 m. **Stairs in the narrow corridor north of the three-Hollow room** climb to −1.5 m (northward). The forgery and the loop are at −1.5 m.
+- Diagonal walls in the plan (NW nook, peaked hall, V dip) are approximated with stepped rectangles (the builder is axis-aligned).
+- Doors: `opens` gives the swing direction; you can open a door only from the opposite side. Locked doors name their key item, which isn't used up. Keys are unique drops.
+- Treasures in the new sector (unspecified in the plan): a Hop Cone in the alcove; a Poppy and a Camomile in the forgery.
+
+Steps:
+- [ ] Doors: collide when open; one-way rule + wrong-side notification (local + online "PlayerX…"); locked doors (key) + "Locked" notice
+- [ ] Doors on stair ends (the stairs 2 → vault door)
+- [ ] Enemy drops: level data (`drops`), unique drops remembered (save), host-owned online (`WorldEvent::Dropped`), Forge Key item + icon
+- [ ] Well-Forged Sword (weapon + item + icon)
+- [ ] New rooms, stairs, doors, enemies (second warg), treasures, torches in `lvl1.ron`
+- [ ] Forgery props: anvil, forge + fire pit (flicker light), ceiling grate with bars, sunlight shaft, rising steam
+- [ ] Autopilot through the new sector, screenshots, two-instance check, notes
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
