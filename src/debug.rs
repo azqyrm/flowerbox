@@ -5,7 +5,7 @@
 //! - Debug builds only: **H** / **J** = take 15 damage from the front / from behind; **1–4** = request Roll (backstep when standing still),
 //!   Light (jump attack when airborne, running attack when sprinting), Heavy, Drink;
 //!   **K** = die (tests YOU DIED and the Hearth respawn);
-//!   **F6** = equip the next weapon in the bag.
+//!   **F6** = equip the next weapon in the bag; **F7** = sample notifications.
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
 //!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120), or `FLOWERBOX_SHOT_TIME=secs`
 //!   captures at a game time instead. `FLOWERBOX_OVERLAY=1` shows the overlay at start.
@@ -36,6 +36,9 @@ use crate::character::guard::Guard;
 use crate::combat::{Dummy, blade_world};
 use crate::healing::HealingAle;
 use crate::items::ItemId;
+use crate::input::GameplayBlocked;
+use crate::ui::icons::NoticeIcon;
+use crate::ui::notifications::Notify;
 use crate::enemy::{Enemy, HollowAi};
 use crate::character::MoveIntent;
 use crate::hearth::WorldReset;
@@ -93,6 +96,9 @@ impl Plugin for DebugPlugin {
             }
             Ok("netfight") => {
                 app.insert_resource(Autopilot { movement: Some(netfight_movement), attack_button: Some(netfight_attack_button), guard_button: None });
+            }
+            Ok("notify") => {
+                app.add_systems(Update, notify_script);
             }
             Ok("net") => {
                 app.insert_resource(Autopilot { movement: Some(net_movement), attack_button: Some(net_attack_button), guard_button: None });
@@ -310,9 +316,17 @@ fn debug_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut damage: MessageWriter<DamageMessage>,
     mut equip: MessageWriter<EquipRequest>,
+    mut notify: MessageWriter<Notify>,
+    blocked: Res<GameplayBlocked>,
     mut player: Query<(Entity, &mut ActionIntent, &Inventory, &Equipment, &Transform, &CharacterController), With<Player>>,
 ) {
+    if blocked.0 {
+        return; // a menu has the keyboard
+    }
     let Ok((entity, mut intent, inventory, equipment, tf, ctrl)) = player.single_mut() else { return };
+    if keys.just_pressed(KeyCode::F7) {
+        sample_notifications(&mut notify);
+    }
     if keys.just_pressed(KeyCode::F6) {
         // Next weapon in the bag after the one in hand.
         let current = equipment.get(EquipSlot::RightHand);
@@ -850,4 +864,35 @@ fn netfight_attack_button(t: f32, _dt: f32) -> (bool, bool, bool) {
     let phase = (t - 8.0) % 0.9;
     let down = phase < 0.08;
     (down, down && phase < 0.02, !down && phase < 0.1)
+}
+
+// ── Notifications (F7 / FLOWERBOX_AUTOPILOT=notify) ─────────────────────
+
+fn sample_notifications(notify: &mut MessageWriter<Notify>) {
+    use crate::items::ItemIcon;
+    for n in [
+        Notify::new(NoticeIcon::Joined, "Guest 1 joined"),
+        Notify::new(NoticeIcon::Item(ItemIcon::RoundShield), "Guest 1 picked up Studded Buckler"),
+        Notify::new(NoticeIcon::Sunflower, "Guest 1 vigorated the Sun"),
+        Notify::new(NoticeIcon::Item(ItemIcon::Poppy), "Guest 1 ate a Poppy: PvP on"),
+    ] {
+        notify.write(n);
+    }
+}
+
+/// Four notifications in quick succession (0.5–1.1 s), for the stack screenshot (~1.5 s).
+fn notify_script(time: Res<Time>, mut notify: MessageWriter<Notify>) {
+    use crate::items::ItemIcon;
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let list = [
+        (0.5, Notify::new(NoticeIcon::Joined, "Guest 1 joined")),
+        (0.7, Notify::new(NoticeIcon::Item(ItemIcon::Buckler), "Guest 1 picked up Studded Buckler")),
+        (0.9, Notify::new(NoticeIcon::Sunflower, "Guest 1 vigorated the Sun")),
+        (1.1, Notify::new(NoticeIcon::Item(ItemIcon::Poppy), "Guest 1 ate a Poppy: PvP on")),
+    ];
+    for (at, n) in list {
+        if crossed(t, dt, at) {
+            notify.write(n);
+        }
+    }
 }

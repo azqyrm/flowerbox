@@ -119,6 +119,8 @@ pub enum ItemIcon {
     Hood,
     Ring,
     Tankard,
+    Poppy,
+    Camomile,
 }
 
 /// Primitive model attached to a bone while the item is equipped (shields, armour).

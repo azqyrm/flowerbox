@@ -8,13 +8,14 @@ pub mod hud;
 pub mod icons;
 pub mod inventory_ui;
 pub mod markers;
+pub mod notifications;
 pub mod strings;
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<Banner>().add_plugins((hud::HudPlugin, inventory_ui::InventoryUiPlugin, markers::MarkersPlugin));
+        app.add_message::<Banner>().add_plugins((hud::HudPlugin, inventory_ui::InventoryUiPlugin, markers::MarkersPlugin, notifications::NotificationsPlugin));
     }
 }
 
