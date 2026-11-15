@@ -8,3 +8,11 @@ pub const HEARTH_REKINDLED: &str = "SUN VIGORATED";
 pub const PROMPT_REKINDLE: &str = "[E] Tend the Sunflower";
 /// Interaction prompt at a Hearth that already stands.
 pub const PROMPT_REST: &str = "[E] Rest by the Sunflower";
+/// Interaction prompt next to an item on the floor.
+pub const PROMPT_PICK_UP: &str = "[E] Pick up";
+/// Toast after picking something up ("Picked up: Rusted Shortsword").
+pub const PICKED_UP: &str = "Picked up";
+/// Inventory screen title and key hints.
+pub const INVENTORY_TITLE: &str = "Inventory";
+pub const INVENTORY_HINTS: &str =
+    "[Enter] Equip / Unequip    [Backspace] Unequip    [Q] [E] Filter    [Arrows / WASD] Move    [Tab] Close";

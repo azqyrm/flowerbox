@@ -5,7 +5,7 @@
 //! - Debug builds only: **H** = take 15 damage; **1–4** = request Roll (backstep when standing still),
 //!   Light (jump attack when airborne, running attack when sprinting), Heavy, Drink;
 //!   **K** = die (tests YOU DIED and the Hearth respawn);
-//!   **F6** = swap the weapon (Longsword ↔ Rusted Shortsword) until the inventory exists.
+//!   **F6** = equip the next weapon in the bag.
 //! - `FLOWERBOX_SCREENSHOT=/path/shot.png` → saves a screenshot after a warm-up, then exits.
 //!   `FLOWERBOX_SHOT_FRAME=n` changes the capture frame (default 120), or `FLOWERBOX_SHOT_TIME=secs`
 //!   captures at a game time instead. `FLOWERBOX_OVERLAY=1` shows the overlay at start.
@@ -13,6 +13,8 @@
 //!   timeline (see `autopilot_script`); position and action changes are logged.
 //! - `FLOWERBOX_AUTOPILOT=combat` → fights the training dummy through the real attack-button
 //!   logic (see `COMBAT_PRESSES` / `combat_movement`).
+//! - `FLOWERBOX_AUTOPILOT=inventory` → inventory screen, equipping, a pickup, armour absorption
+//!   (see `inventory_script`).
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 
@@ -23,10 +25,13 @@ use bevy::time::common_conditions::on_timer;
 use crate::character::action::{ActionKind, ActionPhase, ActionRequest, CharacterAction};
 use crate::character::controller::CharacterController;
 use crate::character::stats::{DamageMessage, Health, Invulnerable, Stamina};
-use crate::character::{ActionIntent, MoveIntent};
+use crate::character::ActionIntent;
 use crate::combat::{Dummy, blade_world};
 use crate::healing::HealingAle;
-use crate::weapon::{EquipWeapon, EquippedWeapon, light_sword};
+use crate::items::ItemId;
+use crate::ui::inventory_ui::{Filter, InventoryMenu};
+use crate::items::inventory::{EquipRequest, EquipSlot, Equipment, Inventory};
+use crate::weapon::EquippedWeapon;
 use crate::humanoid::{HumanoidRig, HumanoidSpec};
 use crate::input::{Autopilot, PlayerInput};
 use crate::player::Player;
@@ -57,6 +62,10 @@ impl Plugin for DebugPlugin {
             Ok("hearth") => {
                 app.insert_resource(Autopilot { movement: Some(hearth_movement), attack_button: None })
                     .add_systems(Update, (hearth_script, log_ale));
+            }
+            Ok("inventory") => {
+                app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None })
+                    .add_systems(Update, (inventory_script, log_ale));
             }
             Ok("wall") => {
                 app.insert_resource(Autopilot { movement: Some(wall_movement), attack_button: None })
@@ -239,16 +248,18 @@ fn draw_blade_hitbox(
 fn debug_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut damage: MessageWriter<DamageMessage>,
-    mut equip: MessageWriter<EquipWeapon>,
-    mut player: Query<(Entity, &mut ActionIntent, Option<&EquippedWeapon>), With<Player>>,
+    mut equip: MessageWriter<EquipRequest>,
+    mut player: Query<(Entity, &mut ActionIntent, &Inventory, &Equipment), With<Player>>,
 ) {
-    let Ok((entity, mut intent, equipped)) = player.single_mut() else { return };
+    let Ok((entity, mut intent, inventory, equipment)) = player.single_mut() else { return };
     if keys.just_pressed(KeyCode::F6) {
-        let next = match equipped.map(|e| e.def.name) {
-            Some(name) if name == light_sword::LONGSWORD.name => &light_sword::SHORTSWORD,
-            _ => &light_sword::LONGSWORD,
-        };
-        equip.write(EquipWeapon { character: entity, def: next });
+        // Next weapon in the bag after the one in hand.
+        let current = equipment.get(EquipSlot::RightHand);
+        let weapons: Vec<usize> = (0..inventory.items.len()).filter(|&i| inventory.items[i].def().weapon.is_some()).collect();
+        let pos = weapons.iter().position(|&i| Some(i) == current);
+        if let Some(&next) = weapons.get(pos.map_or(0, |p| (p + 1) % weapons.len())) {
+            equip.write(EquipRequest { character: entity, index: next, equip: true });
+        }
     }
     if keys.just_pressed(KeyCode::KeyH) {
         damage.write(DamageMessage { target: entity, amount: 15.0, from: None });
@@ -446,14 +457,15 @@ fn combat_movement(t: f32, dt: f32) -> (Vec3, bool, bool) {
 /// Teleports the player to its start marks (dummy at the origin, player on +Z facing -Z).
 fn combat_script(
     time: Res<Time>,
-    mut equip: MessageWriter<EquipWeapon>,
-    mut player: Query<(Entity, &mut Transform, &mut CharacterController, &mut MoveIntent), With<Player>>,
+    mut equip: MessageWriter<EquipRequest>,
+    mut player: Query<(Entity, &mut Transform, &mut CharacterController, &mut Inventory), With<Player>>,
 ) {
-    let Ok((entity, mut tf, mut ctrl, _)) = player.single_mut() else { return };
+    let Ok((entity, mut tf, mut ctrl, mut inventory)) = player.single_mut() else { return };
     let (t, dt) = (time.elapsed_secs(), time.delta_secs());
     let (x, z) = DUMMY_POSITION;
     if crossed(time.elapsed_secs(), time.delta_secs(), 16.0) {
-        equip.write(EquipWeapon { character: entity, def: &light_sword::SHORTSWORD });
+        let index = inventory.add(ItemId::RustedShortsword);
+        equip.write(EquipRequest { character: entity, index, equip: true });
     }
     for (at, distance) in [(0.2, 1.5), (12.5, 4.4), (14.4, 4.0), (16.0, 1.3)] {
         if crossed(t, dt, at) {
@@ -548,5 +560,67 @@ fn log_ale(player: Query<(&HealingAle, &Health), (With<Player>, Or<(Changed<Heal
 fn log_dummy(dummies: Query<&Health, (With<Dummy>, Changed<Health>)>) {
     for h in &dummies {
         info!("dummy HP {:.0}/{:.0}", h.current, h.max);
+    }
+}
+
+// ── Inventory autopilot (FLOWERBOX_AUTOPILOT=inventory) ─────────────────
+
+/// Inventory and equipment flow. Expected log / screenshots:
+/// 1.0 open the menu, Rusted Axe selected (preview: Attack 20 → 24) → 2.0 equip axe, shield, hood
+/// → 2.6 shield selected (preview of unequipping it) → 3.2 close → 3.4 stand at the Rusted
+/// Shortsword → 4.0 E: "picked up Rusted Shortsword" (toast) → 5.0 50 damage, 6% absorbed
+/// (HP 53) → 6.0 open, Weapons filter → 6.5 equip the shortsword → 7.0 unequip it (fists) →
+/// 7.5 close.
+fn inventory_script(
+    time: Res<Time>,
+    mut menu: ResMut<InventoryMenu>,
+    mut damage: MessageWriter<DamageMessage>,
+    mut equip: MessageWriter<EquipRequest>,
+    mut player: Query<(Entity, &mut Transform, &mut CharacterController, &mut PlayerInput, &Inventory), With<Player>>,
+) {
+    let Ok((entity, mut tf, mut ctrl, mut input, inventory)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let at = |s: f32| crossed(t, dt, s);
+    let select = |menu: &mut InventoryMenu, filter: Filter, cursor: usize| {
+        (menu.open, menu.filter, menu.cursor, menu.dirty) = (true, filter, cursor, true);
+    };
+    if at(1.0) {
+        select(&mut menu, Filter::All, 3);
+    }
+    if at(2.0) {
+        for index in [3, 2, 4] {
+            equip.write(EquipRequest { character: entity, index, equip: true });
+        }
+    }
+    if at(2.6) {
+        select(&mut menu, Filter::All, 2);
+    }
+    if at(3.2) || at(7.5) {
+        menu.open = false;
+    }
+    if at(3.4) {
+        tf.translation = Vec3::new(-7.0, PLAYER_HALF_HEIGHT + 0.02, -5.0);
+        ctrl.velocity = Vec3::ZERO;
+        ctrl.facing = 0.0;
+    }
+    if at(4.0) {
+        info!("autopilot: press E");
+        input.interact = true;
+    }
+    if at(5.0) {
+        info!("autopilot: 50 damage");
+        damage.write(DamageMessage { target: entity, amount: 50.0, from: None });
+    }
+    if at(6.0) {
+        select(&mut menu, Filter::Weapons, 2);
+    }
+    let shortsword = inventory.items.iter().position(|i| *i == ItemId::RustedShortsword);
+    if let Some(index) = shortsword {
+        if at(6.5) {
+            equip.write(EquipRequest { character: entity, index, equip: true });
+        }
+        if at(7.0) {
+            equip.write(EquipRequest { character: entity, index, equip: false });
+        }
     }
 }

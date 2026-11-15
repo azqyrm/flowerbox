@@ -59,6 +59,10 @@ impl Stamina {
     }
 }
 
+/// Fraction of incoming damage this character shrugs off (armour). Optional.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct DamageAbsorption(pub f32);
+
 /// Present while the entity ignores damage (roll i-frames, etc.).
 #[derive(Component, Debug)]
 pub struct Invulnerable;
@@ -82,23 +86,28 @@ pub struct DamageTaken {
 }
 
 /// Applies damage to anything with `Health`. Players additionally flinch (Hurt) or die.
+#[allow(clippy::type_complexity)]
 pub fn apply_damage(
     mut messages: MessageReader<DamageMessage>,
     mut taken: MessageWriter<DamageTaken>,
-    mut q: Query<(&mut Health, Option<&mut CharacterAction>, Has<Invulnerable>)>,
+    mut q: Query<(&mut Health, Option<&mut CharacterAction>, Has<Invulnerable>, Option<&DamageAbsorption>)>,
 ) {
     for msg in messages.read() {
-        let Ok((mut health, action, invulnerable)) = q.get_mut(msg.target) else { continue };
+        let Ok((mut health, action, invulnerable, absorption)) = q.get_mut(msg.target) else { continue };
         if invulnerable || health.is_dead() {
             info!("damage {} ignored (invulnerable={invulnerable})", msg.amount);
             continue;
         }
-        health.current = (health.current - msg.amount).max(0.0);
+        let amount = match absorption {
+            Some(a) if a.0 > 0.0 => (msg.amount * (1.0 - a.0)).round(),
+            _ => msg.amount,
+        };
+        health.current = (health.current - amount).max(0.0);
         let killed = health.is_dead();
         if let Some(mut action) = action {
             action.force(if killed { ActionKind::Dead } else { ActionKind::Hurt }, Vec3::ZERO);
         }
-        taken.write(DamageTaken { target: msg.target, amount: msg.amount, from: msg.from, killed });
+        taken.write(DamageTaken { target: msg.target, amount, from: msg.from, killed });
     }
 }
 
