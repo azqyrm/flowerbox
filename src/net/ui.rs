@@ -3,11 +3,10 @@
 //! A small status line in the top-right corner shows the session while online.
 
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, PrimaryWindow};
 
 use super::transport::NetLink;
 use super::{NetInbox, NetSession, Role, SystemClipboard};
-use crate::input::{GameplayBlocked, set_grab, toggle_cursor};
+use crate::input::{InputSystems, MenuInput};
 use crate::ui::hud::{FRAME, GOLD_TEXT};
 use crate::ui::{DISPLAY_FONT, strings};
 
@@ -18,7 +17,7 @@ impl Plugin for NetUiPlugin {
         app.init_resource::<OnlinePanel>()
             .init_resource::<PanelPress>()
             .add_systems(Startup, spawn_panel)
-            .add_systems(Update, (toggle_panel.after(toggle_cursor), panel_keys, refresh_panel, status_corner).chain());
+            .add_systems(Update, (toggle_panel.in_set(InputSystems::Menus), panel_keys, refresh_panel, status_corner).chain());
     }
 }
 
@@ -144,12 +143,12 @@ fn toggle_panel(
     keys: Res<ButtonInput<KeyCode>>,
     mut panel: ResMut<OnlinePanel>,
     mut press: ResMut<PanelPress>,
-    mut blocked: ResMut<GameplayBlocked>,
-    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut menus: ResMut<MenuInput>,
     mut root: Query<&mut Visibility, With<PanelRoot>>,
 ) {
+    menus.online = panel.open;
     let close = panel.open && (keys.just_pressed(KeyCode::Escape) || press.0 == Some(PanelButton::Close));
-    let open = !panel.open && !blocked.0 && keys.just_pressed(KeyCode::KeyO);
+    let open = !panel.open && !menus.inventory && !menus.pause && keys.just_pressed(KeyCode::KeyO);
     let toggle = (panel.open && keys.just_pressed(KeyCode::KeyO)) || close || open;
     if !toggle {
         return;
@@ -158,8 +157,7 @@ fn toggle_panel(
         press.0 = None;
     }
     panel.open = !panel.open;
-    blocked.0 = panel.open;
-    set_grab(&mut cursor, !panel.open);
+    menus.online = panel.open;
     for mut v in &mut root {
         *v = if panel.open { Visibility::Inherited } else { Visibility::Hidden };
     }

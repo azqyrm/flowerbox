@@ -19,8 +19,18 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(InputManagerPlugin::<Action>::default())
             .init_resource::<GameplayBlocked>()
+            .init_resource::<MenuInput>()
+            .configure_sets(Update, (InputSystems::Cursor, InputSystems::Menus, InputSystems::Apply, InputSystems::Gather).chain())
             .add_systems(Startup, grab_cursor)
-            .add_systems(Update, (toggle_cursor, gather_player_input, rebind_player));
+            .add_systems(
+                Update,
+                (
+                    toggle_cursor.in_set(InputSystems::Cursor),
+                    apply_menu_block.in_set(InputSystems::Apply),
+                    gather_player_input.in_set(InputSystems::Gather),
+                    rebind_player,
+                ),
+            );
     }
 }
 
@@ -108,10 +118,46 @@ fn rebind_player(settings: Res<Settings>, mut maps: Query<&mut InputMap<Action>,
     }
 }
 
-/// True while a menu (the inventory) has the input: the character gets no movement or actions,
-/// the camera doesn't turn and clicks don't grab the cursor. The world keeps running.
+/// True while a menu has the input: the character gets no movement or actions, the camera doesn't
+/// turn, clicks don't grab the cursor (the mouse works in the menu). The world keeps running.
+/// Derived from [`MenuInput`] each frame — menus never write it themselves.
 #[derive(Resource, Default, Debug)]
 pub struct GameplayBlocked(pub bool);
+
+/// Which menus are open. Each menu sets only its own flag (in [`InputSystems::Menus`]);
+/// [`apply_menu_block`] then derives [`GameplayBlocked`] and frees or grabs the cursor. (Before,
+/// every menu wrote `GameplayBlocked` directly and the closed inventory kept un-blocking the open
+/// pause menu every frame: movement leaked through and the cursor kept being re-grabbed.)
+#[derive(Resource, Default, Debug)]
+pub struct MenuInput {
+    pub inventory: bool,
+    pub pause: bool,
+    pub online: bool,
+}
+
+impl MenuInput {
+    pub fn any(&self) -> bool {
+        self.inventory || self.pause || self.online
+    }
+}
+
+/// Order of the input systems each frame: Esc/click cursor toggle (sees last frame's block),
+/// menus open/close, the block is applied, then gameplay input is gathered.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum InputSystems {
+    Cursor,
+    Menus,
+    Apply,
+    Gather,
+}
+
+fn apply_menu_block(menus: Res<MenuInput>, mut blocked: ResMut<GameplayBlocked>, mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
+    let want = menus.any();
+    if blocked.0 != want {
+        blocked.0 = want;
+        set_grab(&mut cursor, !want);
+    }
+}
 
 /// Player-only input state (button timings). Gameplay reads the generic
 /// [`MoveIntent`] / [`ActionIntent`] that `gather_player_input` fills from it.
@@ -192,7 +238,8 @@ fn gather_player_input(
 
     for (actions, mut input, mut movement, mut intent) in &mut players {
         intent.tick(dt);
-        if blocked.0 {
+        // The frame a menu closes counts as blocked too: the click on "Resume" mustn't swing.
+        if blocked.0 || blocked.is_changed() {
             // A menu is open: stand still, drop held buttons (no sprint, no charging heavy).
             movement.dir = Vec3::ZERO;
             movement.sprint = false;

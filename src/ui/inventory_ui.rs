@@ -12,7 +12,6 @@
 //! keeps the code simple).
 
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, PrimaryWindow};
 use leafwing_input_manager::prelude::ActionState;
 
 use super::hud::{FRAME, GOLD_TEXT};
@@ -21,7 +20,7 @@ use super::{DISPLAY_FONT, strings};
 use crate::character::stats::Health;
 use crate::healing::HealingAle;
 use crate::hearth::DeathSequence;
-use crate::input::{Action, GameplayBlocked, set_grab, toggle_cursor};
+use crate::input::{Action, InputSystems, MenuInput};
 use crate::items::inventory::{EquipRequest, EquipSlot, EquipStats, Equipment, Inventory};
 use crate::items::{ItemId, ItemKind};
 use crate::player::Player;
@@ -33,7 +32,7 @@ impl Plugin for InventoryUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InventoryMenu>()
             .add_systems(Startup, spawn_menu_root)
-            .add_systems(Update, (toggle_menu.after(toggle_cursor), menu_keys, rebuild_menu).chain());
+            .add_systems(Update, (toggle_menu.in_set(InputSystems::Menus), menu_keys, rebuild_menu).chain());
     }
 }
 
@@ -145,20 +144,20 @@ fn toggle_menu(
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
     mut menu: ResMut<InventoryMenu>,
-    mut blocked: ResMut<GameplayBlocked>,
-    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut menus: ResMut<MenuInput>,
     player: Query<(&ActionState<Action>, Has<DeathSequence>), With<Player>>,
     mut root: Query<&mut Visibility, With<MenuRoot>>,
 ) {
     let Ok((actions, dying)) = player.single() else { return };
     let back = keys.just_pressed(KeyCode::Escape) || pads.iter().any(|g| g.just_pressed(GamepadButton::East));
-    let toggle = actions.just_pressed(&Action::Inventory) || (menu.open && back);
+    // Not over another menu (the pause menu or the online panel).
+    let others = menus.pause || menus.online;
+    let toggle = (actions.just_pressed(&Action::Inventory) && (menu.open || !others)) || (menu.open && back);
     let want = !dying && (menu.open != toggle);
-    if want != menu.open || blocked.0 != want {
+    menus.inventory = want;
+    if want != menu.open {
         menu.open = want;
         menu.dirty = true;
-        blocked.0 = want;
-        set_grab(&mut cursor, !want);
         for mut v in &mut root {
             *v = if want { Visibility::Inherited } else { Visibility::Hidden };
         }

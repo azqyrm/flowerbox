@@ -98,7 +98,8 @@ impl Plugin for DebugPlugin {
             }
             Ok("inventory") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: None })
-                    .add_systems(Update, (inventory_script, log_ale));
+                    .add_systems(Update, (inventory_script, log_ale))
+                    .add_systems(PostUpdate, check_menu_block);
             }
             Ok("guard") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: Some(guard_held) })
@@ -136,7 +137,7 @@ impl Plugin for DebugPlugin {
                     .add_systems(Update, netfight_script);
             }
             Ok("menu") => {
-                app.add_systems(Update, menu_script);
+                app.add_systems(Update, menu_script).add_systems(PostUpdate, check_menu_block);
             }
             Ok("notify") => {
                 app.add_systems(Update, notify_script);
@@ -1262,5 +1263,26 @@ fn open_all_doors(mut doors: Query<&mut crate::level::door::Door>) {
         if !d.open {
             d.open_now();
         }
+    }
+}
+
+/// While a menu is open, gameplay input must stay blocked and the cursor free (every frame).
+fn check_menu_block(
+    pause: Res<crate::ui::pause_menu::PauseMenu>,
+    inventory: Res<InventoryMenu>,
+    blocked: Res<GameplayBlocked>,
+    cursor: Single<&bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
+    mut frames: Local<(u32, u32)>,
+) {
+    if !(pause.open || inventory.open) {
+        return;
+    }
+    frames.0 += 1;
+    if !blocked.0 || crate::input::cursor_grabbed(&cursor) {
+        frames.1 += 1;
+        warn!("menu open but input not blocked (blocked {}, cursor grabbed {})", blocked.0, crate::input::cursor_grabbed(&cursor));
+    }
+    if frames.0 % 120 == 0 {
+        info!("menu check: {} frames open, {} leaked", frames.0, frames.1);
     }
 }

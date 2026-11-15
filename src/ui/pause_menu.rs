@@ -8,12 +8,11 @@
 //! Esc (B) back / close. Mouse: hover selects, click activates, `<` `>` change values.
 
 use bevy::prelude::*;
-use bevy::window::{CursorOptions, PrimaryWindow};
 
 use super::hud::{FRAME, GOLD_TEXT};
 use super::notifications::Corner;
 use super::{DISPLAY_FONT, strings};
-use crate::input::{GameplayBlocked, set_grab, toggle_cursor};
+use crate::input::{InputSystems, MenuInput};
 use crate::save::DeleteSave;
 use crate::settings::{Bind, Input, Settings};
 
@@ -23,7 +22,7 @@ impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PauseMenu>()
             .add_systems(Startup, spawn_root)
-            .add_systems(Update, (toggle_menu.after(toggle_cursor), capture_binding, menu_input, rebuild).chain());
+            .add_systems(Update, (toggle_menu, capture_binding, menu_input, rebuild).chain().in_set(InputSystems::Menus));
     }
 }
 
@@ -151,22 +150,19 @@ fn toggle_menu(
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
     mut menu: ResMut<PauseMenu>,
-    mut blocked: ResMut<GameplayBlocked>,
+    mut menus: ResMut<MenuInput>,
     mut was_blocked: Local<bool>,
-    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
     mut root: Query<&mut Visibility, With<MenuRoot>>,
 ) {
     let pad = |b: GamepadButton| pads.iter().any(|g| g.just_pressed(b));
     let esc = keys.just_pressed(KeyCode::Escape) || pad(GamepadButton::East);
     let select = pad(GamepadButton::Select);
-    let mut set_open = |menu: &mut PauseMenu, blocked: &mut GameplayBlocked, open: bool| {
+    let mut set_open = |menu: &mut PauseMenu, open: bool| {
         menu.open = open;
         menu.page = Page::Main;
         menu.cursor = 0;
         menu.capturing = None;
         menu.dirty = true;
-        blocked.0 = open;
-        set_grab(&mut cursor, !open);
         for mut v in &mut root {
             *v = if open { Visibility::Inherited } else { Visibility::Hidden };
         }
@@ -175,25 +171,22 @@ fn toggle_menu(
         if menu.capturing.is_some() {
             // Esc cancels the capture (handled in `capture_binding`).
         } else if select || (esc && menu.page == Page::Main) {
-            set_open(&mut menu, &mut blocked, false);
+            set_open(&mut menu, false);
         } else if esc {
             menu.page = Page::Main;
             menu.cursor = 0;
             menu.dirty = true;
         }
-    } else if (keys.just_pressed(KeyCode::Escape) || select) && !*was_blocked && !blocked.0 {
+    } else if (keys.just_pressed(KeyCode::Escape) || select) && !*was_blocked && !menus.any() {
         // Only when no other menu had the input (Esc closing the inventory doesn't open this).
-        set_open(&mut menu, &mut blocked, true);
+        set_open(&mut menu, true);
     }
-    // Opened from elsewhere (`show`): take the input and the cursor too.
-    if menu.open && !blocked.0 {
-        blocked.0 = true;
-        set_grab(&mut cursor, false);
-    }
+    // Also covers opening from elsewhere (`show`) and closing via "Resume".
+    menus.pause = menu.open;
     for mut v in &mut root {
         v.set_if_neq(if menu.open { Visibility::Inherited } else { Visibility::Hidden });
     }
-    *was_blocked = blocked.0;
+    *was_blocked = menus.any();
 }
 
 /// Waiting for a new binding: the next key or mouse button (after one quiet frame) is it.
@@ -237,8 +230,7 @@ fn menu_input(
     pads: Query<&Gamepad>,
     mut menu: ResMut<PauseMenu>,
     mut settings: ResMut<Settings>,
-    mut blocked: ResMut<GameplayBlocked>,
-    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut menus: ResMut<MenuInput>,
     mut root: Query<&mut Visibility, With<MenuRoot>>,
     mut exit: MessageWriter<AppExit>,
     mut delete: MessageWriter<DeleteSave>,
@@ -279,8 +271,7 @@ fn menu_input(
     match row {
         Row::Resume => {
             menu.open = false;
-            blocked.0 = false;
-            set_grab(&mut cursor, true);
+            menus.pause = false;
             for mut v in &mut root {
                 *v = Visibility::Hidden;
             }
