@@ -23,6 +23,8 @@
 //!   back (see `net_movement`), with the Hollow in the arena.
 //! - `FLOWERBOX_AUTOPILOT=pvp` → for two instances: both eat a Poppy, the guest attacks the host
 //!   (damage), eats a Camomile, attacks again (no damage); the host dies (PvP off, Poppy back).
+//! - `FLOWERBOX_AUTOPILOT=netrest` → for two instances: the guest hits the dummy (both see it), both
+//!   rest at the sunflower (shared rest completes), the guest walks away (stands up).
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
 //! - `FLOWERBOX_AUTOPILOT=wall` → sprint/jog into the ring wall and slide along it (N16).
 
@@ -89,12 +91,26 @@ impl Plugin for DebugPlugin {
             }
             Ok("enemy") => {
                 app.insert_resource(Autopilot {
-                    movement: Some(|_, _| (Vec3::ZERO, false, false)),
+                    movement: Some(|_, _| {
+                        let walk = AUTO_WALK.load(std::sync::atomic::Ordering::Relaxed);
+                        (if walk { Vec3::NEG_Z } else { Vec3::ZERO }, false, false)
+                    }),
                     attack_button: None,
                     guard_button: Some(|_| AUTO_GUARD.load(std::sync::atomic::Ordering::Relaxed)),
                 })
                 .init_resource::<EnemyScript>()
                 .add_systems(Update, (enemy_script, log_ale));
+            }
+            Ok("netrest") => {
+                app.insert_resource(Autopilot {
+                    movement: Some(|_, _| {
+                        let walk = AUTO_WALK.load(std::sync::atomic::Ordering::Relaxed);
+                        (if walk { Vec3::NEG_Z } else { Vec3::ZERO }, false, false)
+                    }),
+                    attack_button: None,
+                    guard_button: None,
+                })
+                .add_systems(Update, (netrest_script, log_ale));
             }
             Ok("pvp") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: None })
@@ -610,7 +626,7 @@ fn hearth_movement(t: f32, _dt: f32) -> (Vec3, bool, bool) {
 /// 1.0 dmg 50 (HP 50) → 2.0 drink (HP 90, 2 left) → 3.5 drink interrupted by a hit at 3.7
 /// (HP 80, still 2 left) → 4.5 drink (HP 100, 1 left) → 6.0 drink (0 left) → 7.5 drink:
 /// "the tankard is empty" → 8.5 dmg 40 (HP 60) → walk to the Hearth → 9.8 E: Rest →
-/// "hearth kindled", HP 100, 3 Ale → 12.0 lethal → YOU DIED → respawn at the Hearth
+/// "hearth kindled", HP 100, 3 Ale → 11.0 E: stand up → 12.0 lethal → YOU DIED → respawn at the Hearth
 /// (~16.5 s) with full HP and Ale.
 fn hearth_script(
     time: Res<Time>,
@@ -632,7 +648,7 @@ fn hearth_script(
             intent.buffer(ActionRequest::DrinkAle);
         }
     }
-    if at(9.8) {
+    if at(9.8) || at(11.0) {
         info!("autopilot: press E");
         input.interact = true;
     }
@@ -749,6 +765,8 @@ fn guard_script(
 
 /// The enemy script's block button (the autopilot's `guard_button` is a plain fn).
 static AUTO_GUARD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The enemy script's "walk forward" (-Z) switch, for the walk-over-the-corpse check.
+static AUTO_WALK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Resource, Default)]
 struct EnemyScript {
@@ -831,6 +849,20 @@ fn enemy_script(
     AUTO_GUARD.store(t < state.guard_until, Relaxed);
     if hhp.is_dead() && state.died_at.is_none() {
         state.died_at = Some(t);
+    }
+    // Corpses don't block: stand 1.5 m behind the body and walk through it.
+    if let Some(d) = state.died_at {
+        if crossed(t, dt, d + 1.0) {
+            ptf.translation = Vec3::new(htf.translation.x, ptf.translation.y, htf.translation.z + 1.5);
+            lock.target = None;
+            info!("autopilot: walk over the corpse (from z {:.2}, corpse at z {:.2})", ptf.translation.z, htf.translation.z);
+            AUTO_WALK.store(true, Relaxed);
+        }
+        if crossed(t, dt, d + 2.2) {
+            AUTO_WALK.store(false, Relaxed);
+            let passed = ptf.translation.z < htf.translation.z - 0.5;
+            info!("autopilot: walked to z {:.2}: {}", ptf.translation.z, if passed { "passed the corpse" } else { "BLOCKED by the corpse" });
+        }
     }
     if let Some(d) = state.died_at
         && t > d + 5.0
@@ -967,5 +999,61 @@ fn pvp_script(
     if [5.0, 5.9, 6.8, 10.0, 10.9].iter().any(|&s| at(s)) {
         info!("autopilot: attack");
         intent.buffer(ActionRequest::LightAttack);
+    }
+}
+
+// ── Shared rest + dummy autopilot (FLOWERBOX_AUTOPILOT=netrest, two instances) ──
+
+/// Host: 3.5 s stand at the sunflower, 4.0 s E (rests: "Host waiting … 1/2"). Guest: 2.0 s stand in
+/// front of the dummy; light attacks at 2.6 / 3.4 s and a heavy at 4.2 s (the host sees the
+/// wobble and the numbers); 6.0 s at the sunflower, 6.5 s E → the rest completes for both
+/// (enemies respawn, everyone restored); 9.0–9.6 s walks off (stands up).
+fn netrest_script(
+    time: Res<Time>,
+    session: Res<crate::net::NetSession>,
+    mut player: Query<(&mut Transform, &mut CharacterController, &mut PlayerInput, &mut ActionIntent), With<Player>>,
+) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let Ok((mut tf, mut ctrl, mut input, mut intent)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let at = |s: f32| crossed(t, dt, s);
+    let mut place = |x: f32, z: f32, facing: f32| {
+        tf.translation = Vec3::new(x, tf.translation.y, z);
+        ctrl.velocity = Vec3::ZERO;
+        ctrl.facing = facing;
+    };
+    let press_e = |input: &mut PlayerInput| {
+        info!("autopilot: press E");
+        input.interact = true;
+    };
+    if session.is_host() {
+        if at(3.5) {
+            place(-0.8, 10.3, std::f32::consts::PI);
+        }
+        if at(4.0) {
+            press_e(&mut input);
+        }
+        return;
+    }
+    if at(2.0) {
+        place(0.0, 1.5, 0.0);
+    }
+    if at(2.6) || at(3.4) {
+        intent.buffer(ActionRequest::LightAttack);
+    }
+    if at(4.2) {
+        intent.buffer(ActionRequest::HeavyAttack);
+    }
+    if at(6.0) {
+        place(0.8, 10.3, std::f32::consts::PI);
+    }
+    if at(6.5) {
+        press_e(&mut input);
+    }
+    if at(9.0) {
+        AUTO_WALK.store(true, Relaxed);
+    }
+    if at(9.6) {
+        AUTO_WALK.store(false, Relaxed);
     }
 }

@@ -34,7 +34,8 @@ impl Plugin for CombatPlugin {
             .init_resource::<CameraShake>()
             .add_systems(Startup, spawn_dummy)
             .add_systems(FixedUpdate, sword_hits.in_set(CharacterSystems::Combat))
-            .add_systems(Update, (hit_feedback, parry_feedback, run_hitstop, dummy_react, dummy_reset, dummy_animate).chain());
+            .add_message::<DummyStruck>()
+            .add_systems(Update, (hit_feedback, parry_feedback, run_hitstop, dummy_struck, dummy_react, dummy_reset, dummy_animate).chain());
     }
 }
 
@@ -171,17 +172,20 @@ fn parry_feedback(mut parries: MessageReader<Parried>, mut hitstop: ResMut<Hitst
 fn hit_feedback(
     mut taken: MessageReader<DamageTaken>,
     hurtboxes: Query<(), With<Hurtbox>>,
-    player: Query<&CharacterAction, With<Player>>,
+    player: Query<(Entity, &CharacterAction), With<Player>>,
     mut hitstop: ResMut<Hitstop>,
     mut shake: ResMut<CameraShake>,
 ) {
+    let me = player.single().ok().map(|(e, _)| e);
     for hit in taken.read() {
-        if !hurtboxes.contains(hit.target) {
+        // Only our own hits and hits on us (not, online, a guest's hit applied on the host).
+        let ours = me.is_some() && (hit.attacker == me || Some(hit.target) == me);
+        if !hurtboxes.contains(hit.target) || !ours {
             continue;
         }
         let heavy = player
             .iter()
-            .any(|a| matches!(a.current.map(|c| c.kind), Some(ActionKind::HeavyAttack | ActionKind::JumpAttack | ActionKind::RunningAttack)));
+            .any(|(_, a)| matches!(a.current.map(|c| c.kind), Some(ActionKind::HeavyAttack | ActionKind::JumpAttack | ActionKind::RunningAttack)));
         let (stop, trauma) = if heavy { (HITSTOP_HEAVY, SHAKE_HEAVY) } else { (HITSTOP_LIGHT, SHAKE_LIGHT) };
         hitstop.remaining = hitstop.remaining.max(stop);
         shake.trauma = (shake.trauma + trauma).min(1.0);
@@ -265,30 +269,51 @@ fn spawn_dummy(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mat
         });
 }
 
-fn dummy_react(mut taken: MessageReader<DamageTaken>, mut dummies: Query<(&mut Dummy, &Transform)>) {
+/// The training dummy was struck: what every machine needs to animate it and show the number.
+/// Offline / host: from the applied damage; online guests: from the host's broadcast.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct DummyStruck {
+    pub amount: f32,
+    pub from: Option<Vec3>,
+    pub killed: bool,
+}
+
+fn dummy_struck(mut taken: MessageReader<DamageTaken>, dummies: Query<(), With<Dummy>>, mut struck: MessageWriter<DummyStruck>) {
     for hit in taken.read() {
-        let Ok((mut dummy, tf)) = dummies.get_mut(hit.target) else { continue };
+        if dummies.contains(hit.target) {
+            struck.write(DummyStruck { amount: hit.amount, from: hit.from, killed: hit.killed });
+        }
+    }
+}
+
+fn dummy_react(mut commands: Commands, mut struck: MessageReader<DummyStruck>, mut dummies: Query<(Entity, &mut Dummy, &Transform)>) {
+    for hit in struck.read() {
+        let Ok((entity, mut dummy, tf)) = dummies.single_mut() else { continue };
         dummy.flash = 1.0;
         // Tilt away from the attacker.
         let away = hit.from.map_or(Vec3::Z, |f| (tf.translation - f).with_y(0.0).normalize_or(Vec3::Z));
         // Tilt about X moves the top toward +Z, tilt about Z moves it toward -X.
         let tilt_away = Vec2::new(away.z, -away.x);
-        let strength = 2.0 + hit.amount * 0.08;
+        // Bigger hits knock it much further (a heavy swings it nearly flat).
+        let strength = (1.2 + hit.amount * DUMMY_PUSH_PER_DAMAGE).min(DUMMY_PUSH_MAX);
         dummy.tilt_vel += tilt_away * strength;
         if hit.killed {
             dummy.broken = Some(DUMMY_RESET_TIME);
             dummy.fallen_tilt = tilt_away * 1.45;
+            // Lying on the floor: walk over it (and it can't be hit) until it stands up again.
+            commands.entity(entity).insert(ColliderDisabled);
             info!("training dummy broken, resets in {DUMMY_RESET_TIME}s");
         }
     }
 }
 
 /// Resting or respawning stands the dummy back up at full health.
-fn dummy_reset(mut resets: MessageReader<WorldReset>, mut dummies: Query<(&mut Dummy, &mut Health)>) {
+fn dummy_reset(mut commands: Commands, mut resets: MessageReader<WorldReset>, mut dummies: Query<(Entity, &mut Dummy, &mut Health)>) {
     if resets.read().count() == 0 {
         return;
     }
-    for (mut dummy, mut health) in &mut dummies {
+    for (entity, mut dummy, mut health) in &mut dummies {
+        commands.entity(entity).remove::<ColliderDisabled>();
         dummy.broken = None;
         dummy.fallen_tilt = Vec2::ZERO;
         *health = Health::new(health.max);
@@ -297,18 +322,20 @@ fn dummy_reset(mut resets: MessageReader<WorldReset>, mut dummies: Query<(&mut D
 
 fn dummy_animate(
     time: Res<Time>,
-    mut dummies: Query<(&mut Dummy, &mut Health, &Children)>,
+    mut commands: Commands,
+    mut dummies: Query<(Entity, &mut Dummy, &mut Health, &Children)>,
     mut models: Query<(&DummyModel, &mut Transform)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let dt = time.delta_secs();
-    for (mut dummy, mut health, children) in &mut dummies {
+    for (entity, mut dummy, mut health, children) in &mut dummies {
         // Broken: fall over, then stand back up with full health.
         let target = if let Some(t) = dummy.broken.as_mut() {
             *t -= dt;
             if *t <= 0.0 {
                 dummy.broken = None;
                 *health = Health::new(health.max);
+                commands.entity(entity).remove::<ColliderDisabled>();
                 info!("training dummy reset");
             }
             dummy.fallen_tilt

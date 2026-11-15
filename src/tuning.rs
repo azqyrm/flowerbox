@@ -102,7 +102,6 @@ pub const HURT_DURATION: f32 = 0.45;
 
 /// Resting at a Hearth: kneel down, rest (restores everything at its start), stand up.
 pub const REST_STARTUP: f32 = 0.7;
-pub const REST_ACTIVE: f32 = 0.6;
 pub const REST_RECOVERY: f32 = 0.8;
 
 // ── Combat ───────────────────────────────────────────────────────────────
@@ -127,6 +126,9 @@ pub const DUMMY_HP: f32 = 120.0;
 pub const DUMMY_POSITION: (f32, f32) = (0.0, 0.0);
 /// Seconds the broken dummy lies on the floor before it resets.
 pub const DUMMY_RESET_TIME: f32 = 3.0;
+/// How hard a hit swings the dummy: tilt velocity per point of damage, and the cap.
+pub const DUMMY_PUSH_PER_DAMAGE: f32 = 0.17;
+pub const DUMMY_PUSH_MAX: f32 = 11.0;
 
 // ── Healing Ale ──────────────────────────────────────────────────────────
 pub const ALE_CHARGES: u32 = 3;
@@ -186,8 +188,6 @@ pub const CAM_STICK_SPEED: f32 = 3.0;
 // ── Enemies (the Hollow, see enemy/mod.rs) ───────────────────────────────
 /// Where Hollows stand (floor x, z): across the arena from the player's start, past the dummy.
 pub const HOLLOW_SPAWNS: [(f32, f32); 1] = [(-4.0, -10.0)];
-/// A Hollow spawns when any player comes this close to its spawn point.
-pub const HOLLOW_SPAWN_RADIUS: f32 = 12.0;
 pub const HOLLOW_HP: f32 = 70.0;
 pub const HOLLOW_STAMINA: f32 = 90.0;
 /// Notices the player within this distance; gives up beyond `HOLLOW_LEASH` from home.

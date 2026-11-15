@@ -14,7 +14,13 @@ use bevy::prelude::*;
 use super::protocol::*;
 use super::transport::{HOST_PEER, NetCmd, NetLink};
 use super::{NetInbox, NetSession, Role};
-use crate::hearth::{DeathSequence, Hearth, SunRevived};
+use crate::character::action::{ActionKind, ActionPhase, CharacterAction};
+use crate::character::Remote;
+use crate::character::stats::Health;
+use crate::combat::{Dummy, DummyStruck};
+use crate::hearth::{DeathSequence, Hearth, RestComplete, SharedRest, SunRevived};
+use crate::tuning::REST_STARTUP;
+use super::sync::Puppet;
 use crate::items::inventory::Inventory;
 use crate::items::pickup::{ItemPickedUp, PICKUPS, Pickup, PickupAssets, PickupAuthority, PickupRequest, PickupTaken, spawn_layout, spawn_pickup};
 use crate::player::Player;
@@ -27,7 +33,7 @@ pub struct WorldSyncPlugin;
 
 impl Plugin for WorldSyncPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (world_inbox, local_events).chain());
+        app.add_systems(Update, (world_inbox, local_events, shared_rest_flag, host_rest_circle).chain());
     }
 }
 
@@ -53,6 +59,9 @@ fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
         }
         WorldEvent::Died { who } => Notify::new(NoticeIcon::Died, strings::composted(&player_name(who))),
         WorldEvent::Pvp { who, on, item } => Notify::new(NoticeIcon::Item(item.def().icon), strings::ate(&player_name(who), item.def().name, on)),
+        WorldEvent::RestWaiting { who, resting, total } => Notify::new(NoticeIcon::Sunflower, strings::rest_waiting(&player_name(who), resting, total)),
+        WorldEvent::RestComplete => Notify::new(NoticeIcon::Sunflower, strings::REST_COMPLETE),
+        WorldEvent::DummyHit { .. } => return,
     };
     info!("world event: {}", n.text);
     notify.write(n);
@@ -72,6 +81,9 @@ fn world_inbox(
     mut hearths: Query<&mut Hearth>,
     pickups: Query<(Entity, &Pickup, &Transform)>,
     mut player: Query<&mut Inventory, With<Player>>,
+    mut rest_done: MessageWriter<RestComplete>,
+    mut struck: MessageWriter<DummyStruck>,
+    mut dummy: Query<(Entity, &mut Health), With<Dummy>>,
 ) {
     let Some(assets) = assets else { return };
     let broadcast = |event: WorldEvent| link.send(NetCmd::Reliable { to: None, bytes: encode(&Reliable::Event(event)) });
@@ -88,6 +100,10 @@ fn world_inbox(
                     commands.entity(e).despawn();
                 }
                 authority.0 = false;
+                // The host's dummy is the real one: ours only mirrors it.
+                for (e, _) in &dummy {
+                    commands.entity(e).insert(Remote);
+                }
             }
             NetInbox::RoleChanged if session.role == Role::Offline => {
                 // Back home: our own world as we left it.
@@ -101,9 +117,13 @@ fn world_inbox(
                     }
                 }
                 authority.0 = true;
+                for (e, _) in &dummy {
+                    commands.entity(e).remove::<Remote>();
+                }
             }
             NetInbox::GuestJoined { peer, id } if session.is_host() => {
                 let world = Reliable::World {
+                    dummy_hp: dummy.iter().next().map_or(0.0, |(_, h)| h.current),
                     sun_revived: hearths.iter().any(|h| h.kindled),
                     pickups: pickups
                         .iter()
@@ -150,7 +170,10 @@ fn world_inbox(
                 notice(&mut notify, &event);
             }
             // ── Guest: the host's world ──
-            NetInbox::Reliable(HOST_PEER, Reliable::World { sun_revived, pickups: list }) if session.role == Role::Client => {
+            NetInbox::Reliable(HOST_PEER, Reliable::World { sun_revived, pickups: list, dummy_hp }) if session.role == Role::Client => {
+                for (_, mut h) in &mut dummy {
+                    h.current = *dummy_hp;
+                }
                 for mut h in &mut hearths {
                     h.kindled = *sun_revived;
                 }
@@ -173,6 +196,16 @@ fn world_inbox(
                         if mine(by) {
                             continue; // we already saw the banner
                         }
+                    }
+                    WorldEvent::RestComplete => {
+                        rest_done.write(RestComplete);
+                    }
+                    WorldEvent::DummyHit { amount, from, killed, hp } => {
+                        for (_, mut h) in &mut dummy {
+                            h.current = *hp;
+                        }
+                        struck.write(DummyStruck { amount: *amount, from: from.map(Vec3::from_array), killed: *killed });
+                        continue;
                     }
                     WorldEvent::PickedUp { by, pickup, item } => {
                         if let Some((e, _, _)) = pickups.iter().find(|(_, p, _)| p.id == *pickup) {
@@ -204,8 +237,15 @@ fn local_events(
     mut taken: MessageReader<PickupTaken>,
     mut revived: MessageReader<SunRevived>,
     mut pvp: MessageReader<PvpChanged>,
+    mut struck: MessageReader<DummyStruck>,
+    dummy: Query<&Health, With<Dummy>>,
     died: Query<(), (With<Player>, Added<DeathSequence>)>,
 ) {
+    // Host: every dummy hit (ours or a guest's) goes to everyone.
+    let dummy_hits: Vec<WorldEvent> = struck
+        .read()
+        .map(|h| WorldEvent::DummyHit { amount: h.amount, from: h.from.map(|f| f.to_array()), killed: h.killed, hp: dummy.iter().next().map_or(0.0, |d| d.current) })
+        .collect();
     // Eating a Poppy / Camomile is news; losing PvP by dying is covered by the death notice.
     let pvp_events: Vec<WorldEvent> =
         pvp.read().filter_map(|c| c.item.map(|item| WorldEvent::Pvp { who: session.my_id, on: c.on, item })).collect();
@@ -223,7 +263,7 @@ fn local_events(
             if !died.is_empty() {
                 send(None, Reliable::Event(WorldEvent::Died { who: me }));
             }
-            for e in pvp_events {
+            for e in pvp_events.into_iter().chain(dummy_hits) {
                 send(None, Reliable::Event(e));
             }
         }
@@ -248,4 +288,65 @@ fn local_events(
             revived.clear();
         }
     }
+}
+
+/// Online, resting is shared: the host decides when the rest completes.
+fn shared_rest_flag(session: Res<NetSession>, mut shared: ResMut<SharedRest>) {
+    shared.set_if_neq(SharedRest(session.online()));
+}
+
+/// Host: who is resting at the sunflower (us + guests' puppets). Each new rester is announced
+/// ("Host waiting for other players at rest site 1/2"); when all rest, the rest completes for
+/// everyone (enemies respawn, everyone restored). It can complete again once someone got up.
+#[allow(clippy::too_many_arguments)]
+fn host_rest_circle(
+    session: Res<NetSession>,
+    link: Res<NetLink>,
+    mut was_resting: Local<Vec<NetId>>,
+    mut completed: Local<bool>,
+    mut notify: MessageWriter<Notify>,
+    mut done: MessageWriter<RestComplete>,
+    me: Query<&CharacterAction, With<Player>>,
+    puppets: Query<&Puppet>,
+) {
+    if !session.is_host() {
+        was_resting.clear();
+        *completed = false;
+        return;
+    }
+    let mut resting: Vec<NetId> = vec![];
+    if me.single().is_ok_and(|a| matches!(a.current, Some(c) if c.kind == ActionKind::Rest && c.phase() == ActionPhase::Active)) {
+        resting.push(session.my_id);
+    }
+    for p in &puppets {
+        let down = p.state.action.is_some_and(|a| a.kind == ActionKind::Rest && a.elapsed >= REST_STARTUP);
+        if down && session.peers.values().any(|id| *id == p.id) {
+            resting.push(p.id);
+        }
+    }
+    let total = 1 + session.peers.len() as u32;
+    let count = resting.len() as u32;
+    let broadcast = |event: WorldEvent| link.send(NetCmd::Reliable { to: None, bytes: encode(&Reliable::Event(event)) });
+    let newcomers: Vec<NetId> = resting.iter().copied().filter(|id| !was_resting.contains(id)).collect();
+    // A rest completes once per gathering: only someone newly sitting down starts a new one (not,
+    // say, the last other player leaving the session while the rest are still kneeling).
+    if !newcomers.is_empty() {
+        *completed = false;
+    }
+    if total > 1 && count < total {
+        for who in &newcomers {
+            let event = WorldEvent::RestWaiting { who: *who, resting: count, total };
+            broadcast(event);
+            notice(&mut notify, &event);
+        }
+    }
+    if count == total && count > 0 && !*completed {
+        *completed = true;
+        done.write(RestComplete);
+        if total > 1 {
+            broadcast(WorldEvent::RestComplete);
+            notice(&mut notify, &WorldEvent::RestComplete);
+        }
+    }
+    *was_resting = resting;
 }

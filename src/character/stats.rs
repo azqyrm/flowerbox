@@ -90,6 +90,8 @@ pub struct DamageTaken {
     pub amount: f32,
     pub from: Option<Vec3>,
     pub killed: bool,
+    /// Who dealt it, if known (`DamageMessage::attacker`).
+    pub attacker: Option<Entity>,
 }
 
 /// Applies damage to anything with `Health`: i-frames, then the guard (parry / block / guard
@@ -158,7 +160,7 @@ pub fn apply_damage(
         {
             action.force(if killed { ActionKind::Dead } else { ActionKind::Hurt }, Vec3::ZERO);
         }
-        taken.write(DamageTaken { target: msg.target, amount, from: msg.from, killed });
+        taken.write(DamageTaken { target: msg.target, amount, from: msg.from, killed, attacker: msg.attacker });
     }
 }
 

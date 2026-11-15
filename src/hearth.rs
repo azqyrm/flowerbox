@@ -15,10 +15,10 @@ use std::f32::consts::TAU;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::character::action::{ActionKind, ActionPhase, ActionRequest, CharacterAction};
+use crate::character::action::{ActionKind, ActionPhase, ActionRequest, ActiveAction, CharacterAction};
 use crate::character::controller::CharacterController;
 use crate::character::stats::{Health, Stamina};
-use crate::character::{ActionIntent, CharacterSystems};
+use crate::character::{ActionIntent, CharacterSystems, MoveIntent};
 use crate::healing::HealingAle;
 use crate::input::{GameplayBlocked, PlayerInput};
 use crate::interact::{InteractPrompt, InteractSystems};
@@ -32,8 +32,10 @@ impl Plugin for HearthPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<WorldReset>()
             .add_message::<SunRevived>()
+            .add_message::<RestComplete>()
+            .init_resource::<SharedRest>()
             .add_systems(Startup, spawn_hearth)
-            .add_systems(FixedUpdate, rest_at_hearth.after(CharacterSystems::Actions).before(CharacterSystems::Stats))
+            .add_systems(FixedUpdate, (rest_at_hearth, complete_rest).chain().after(CharacterSystems::Actions).before(CharacterSystems::Stats))
             .add_systems(Update, (hearth_interaction.in_set(InteractSystems::Hearth), start_death_sequence, run_death_sequence, animate_hearth));
     }
 }
@@ -60,6 +62,16 @@ pub struct RespawnPoint {
     pub position: Vec3,
     pub facing: f32,
 }
+
+/// The rest at the sunflower is complete: enemies respawn ([`WorldReset`]) and the resting
+/// player is restored. Offline it follows the start of the rest at once; online the host sends it
+/// when every player rests (`net::world`).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct RestComplete;
+
+/// Online: the rest only completes when every player rests, decided by the host. Offline: false.
+#[derive(Resource, Default, Debug, PartialEq)]
+pub struct SharedRest(pub bool);
 
 /// The local player just revived the sunflower (online, the host tells everyone: `net::world`).
 #[derive(Message, Debug, Clone, Copy)]
@@ -358,13 +370,24 @@ fn hearth_interaction(
     blocked: Res<GameplayBlocked>,
     hearths: Query<(&Hearth, &Transform)>,
     mut player: Query<
-        (&Transform, &CharacterAction, &CharacterController, &mut PlayerInput, &mut ActionIntent, Has<DeathSequence>),
+        (&Transform, &mut CharacterAction, &CharacterController, &mut PlayerInput, &mut ActionIntent, &MoveIntent, Has<DeathSequence>),
         With<Player>,
     >,
 ) {
-    let Ok((tf, action, ctrl, mut input, mut intent, dying)) = player.single_mut() else { return };
+    let Ok((tf, mut action, ctrl, mut input, mut intent, movement, dying)) = player.single_mut() else { return };
     if prompt.0.is_some() || blocked.0 {
         return; // something closer claimed E, or a menu is open
+    }
+    // Resting: E again, or moving, stands up (once fully down).
+    if let Some(cur) = action.current.filter(|a| a.kind == ActionKind::Rest) {
+        let down = cur.phase() == ActionPhase::Active;
+        prompt.0 = down.then_some(strings::PROMPT_STAND_UP);
+        let interact = std::mem::take(&mut input.interact);
+        if down && (interact || movement.dir.length() > 0.3) {
+            let weapon = cur.weapon;
+            action.start(ActiveAction::new(ActionKind::StandUp, cur.dir, weapon));
+        }
+        return;
     }
     let interact = std::mem::take(&mut input.interact);
     let near = hearths
@@ -384,27 +407,20 @@ fn hearth_interaction(
 #[derive(Component, Default)]
 struct RestApplied(Option<u32>);
 
-/// While kneeling: turn toward the sunflower; when the rest begins, restore everything.
-#[allow(clippy::type_complexity)]
+/// While kneeling: turn toward the sunflower. Once down: revive it if needed, set the respawn
+/// point, and (offline) complete the rest at once.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn rest_at_hearth(
     time: Res<Time>,
     mut commands: Commands,
+    shared: Res<SharedRest>,
     mut banner: MessageWriter<Banner>,
     mut revived: MessageWriter<SunRevived>,
-    mut reset: MessageWriter<WorldReset>,
+    mut complete: MessageWriter<RestComplete>,
     mut hearths: Query<(&mut Hearth, &Transform), Without<CharacterController>>,
-    mut resters: Query<(
-        Entity,
-        &CharacterAction,
-        &Transform,
-        &mut CharacterController,
-        &mut Health,
-        &mut Stamina,
-        Option<&mut HealingAle>,
-        Option<&mut RestApplied>,
-    )>,
+    mut resters: Query<(Entity, &CharacterAction, &Transform, &mut CharacterController, Option<&mut RestApplied>), With<Player>>,
 ) {
-    for (entity, action, tf, mut ctrl, mut health, mut stamina, ale, applied) in &mut resters {
+    for (entity, action, tf, mut ctrl, applied) in &mut resters {
         let Some(cur) = action.current.filter(|a| a.kind == ActionKind::Rest) else { continue };
         let Some((mut hearth, htf)) = hearths
             .iter_mut()
@@ -428,17 +444,36 @@ fn rest_at_hearth(
             continue;
         }
         applied.0 = Some(action.serial);
-        replenish(&mut health, &mut stamina, ale);
         let (position, facing) = Hearth::respawn_spot(htf);
         commands.entity(entity).insert(RespawnPoint { position, facing });
-        reset.write(WorldReset);
+        if !shared.0 {
+            complete.write(RestComplete);
+        }
         if !hearth.kindled {
             hearth.kindled = true;
             banner.write(Banner(strings::HEARTH_REKINDLED));
             revived.write(SunRevived);
             info!("hearth kindled");
         }
-        info!("rested at the hearth: HP, stamina and Healing Ale restored");
+        info!("resting at the sunflower");
+    }
+}
+
+/// The rest completed: enemies respawn (world reset), then the resting player is restored.
+#[allow(clippy::type_complexity)]
+fn complete_rest(
+    mut done: MessageReader<RestComplete>,
+    mut reset: MessageWriter<WorldReset>,
+    mut player: Query<(&CharacterAction, &mut Health, &mut Stamina, Option<&mut HealingAle>), With<Player>>,
+) {
+    if done.read().count() == 0 {
+        return;
+    }
+    reset.write(WorldReset);
+    let Ok((action, mut health, mut stamina, ale)) = player.single_mut() else { return };
+    if matches!(action.current, Some(a) if a.kind == ActionKind::Rest) {
+        replenish(&mut health, &mut stamina, ale);
+        info!("rest complete: enemies respawn; HP, stamina and Healing Ale restored");
     }
 }
 

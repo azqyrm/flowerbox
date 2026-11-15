@@ -48,8 +48,11 @@ pub enum ActionKind {
     DrinkAle,
     /// Eating a consumable (Poppy, Camomile); its effect lands at the start of the active phase.
     UseItem,
-    /// Kneeling at a Hearth; its effect lands at the start of the active phase.
+    /// Kneeling at a Hearth and staying there (active never ends); starting it revives the
+    /// sunflower and sets the respawn point; the rest *completes* separately (`hearth::RestComplete`).
     Rest,
+    /// Getting up from a rest.
+    StandUp,
     Hurt,
     /// Parried: reeling, open to a riposte.
     Stunned,
@@ -239,11 +242,23 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             ground: GroundRule::Ground,
             hop: 0.0,
         },
+        // Kneel, then stay resting until something stands you up (`StandUp`).
         Rest => ActionDef {
             startup: REST_STARTUP,
-            active: REST_ACTIVE,
+            active: f32::INFINITY,
+            recovery: 0.0,
+            cancel: f32::INFINITY,
+            stamina_cost: 0.0,
+            iframes: None,
+            movement: ActionMovement::Locked,
+            ground: GroundRule::Ground,
+            hop: 0.0,
+        },
+        StandUp => ActionDef {
+            startup: 0.0,
+            active: 0.0,
             recovery: REST_RECOVERY,
-            cancel: REST_STARTUP + REST_ACTIVE + REST_RECOVERY,
+            cancel: REST_RECOVERY,
             stamina_cost: 0.0,
             iframes: None,
             movement: ActionMovement::Locked,

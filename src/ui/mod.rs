@@ -4,6 +4,7 @@
 
 use bevy::prelude::*;
 
+pub mod damage_numbers;
 pub mod hud;
 pub mod icons;
 pub mod inventory_ui;
@@ -15,7 +16,7 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<Banner>().add_plugins((hud::HudPlugin, inventory_ui::InventoryUiPlugin, markers::MarkersPlugin, notifications::NotificationsPlugin));
+        app.add_message::<Banner>().add_plugins((hud::HudPlugin, inventory_ui::InventoryUiPlugin, markers::MarkersPlugin, notifications::NotificationsPlugin, damage_numbers::DamageNumbersPlugin));
     }
 }
 

@@ -24,7 +24,7 @@ use crate::character::action::{ActionKind, ActiveAction, CharacterAction, action
 use crate::character::controller::CharacterController;
 use crate::character::guard::{Guard, Parried};
 use crate::character::stats::{DamageMessage, Health};
-use crate::combat::{Hitstop, Hurtbox, Team};
+use crate::combat::{Dummy, Hitstop, Hurtbox, Team};
 use crate::enemy::{Enemy, EnemiesSuppressed};
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
@@ -147,6 +147,7 @@ fn receive(
     mut puppets: Query<(Entity, &mut Puppet)>,
     mut real_enemies: Query<(Entity, &mut CharacterAction), (With<Enemy>, Without<Remote>)>,
     mut me: Query<&mut CharacterAction, (With<Player>, Without<Enemy>)>,
+    dummy: Query<Entity, With<Dummy>>,
     link: Res<NetLink>,
 ) {
     if !session.online() {
@@ -172,7 +173,12 @@ fn receive(
             }
             NetInbox::Reliable(peer, Reliable::Damage { target, amount, from }) if session.is_host() => {
                 let attacker = session.peers.get(peer).and_then(|id| puppets.iter().find(|(_, p)| p.id == *id).map(|(e, _)| e));
-                if let Some((e, _)) = real_enemies.iter().find(|(e, _)| enemy_id(*e) == *target) {
+                if *target == DUMMY_ID {
+                    if let Some(e) = dummy.iter().next() {
+                        info!("a guest hit the dummy for {amount}");
+                        damage.write(DamageMessage { target: e, amount: *amount, from: Some(Vec3::from_array(*from)), attacker });
+                    }
+                } else if let Some((e, _)) = real_enemies.iter().find(|(e, _)| enemy_id(*e) == *target) {
                     info!("a guest hit enemy {target} for {amount}");
                     damage.write(DamageMessage { target: e, amount: *amount, from: Some(Vec3::from_array(*from)), attacker });
                 }
@@ -421,6 +427,7 @@ fn forward_hits(
     mut damage: MessageReader<DamageMessage>,
     mut parries: MessageReader<Parried>,
     puppets: Query<&Puppet>,
+    dummies: Query<(), With<Dummy>>,
 ) {
     if session.is_host() {
         // The host parried a guest: stun them on their machine.
@@ -440,11 +447,14 @@ fn forward_hits(
         return;
     }
     for d in damage.read() {
-        if let Ok(p) = puppets.get(d.target) {
-            let from = d.from.unwrap_or_default();
-            link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Damage { target: p.id, amount: d.amount, from: v3(from) }) });
-            hitstop.remaining = hitstop.remaining.max(HITSTOP_LIGHT);
-        }
+        let target = match puppets.get(d.target) {
+            Ok(p) => p.id,
+            Err(_) if dummies.contains(d.target) => DUMMY_ID,
+            Err(_) => continue,
+        };
+        let from = d.from.unwrap_or_default();
+        link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Damage { target, amount: d.amount, from: v3(from) }) });
+        hitstop.remaining = hitstop.remaining.max(HITSTOP_LIGHT);
     }
     for parry in parries.read() {
         if let Some(p) = parry.attacker.and_then(|a| puppets.get(a).ok()) {
