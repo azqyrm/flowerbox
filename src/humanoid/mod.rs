@@ -335,12 +335,36 @@ impl HumanoidSpec {
                 hair: Color::srgb(0.12, 0.08, 0.05),
                 eye_glow: None,
                 skin_tex: None,
-                top_tex: None,
-                bottom_tex: None,
+                top_tex: Some(Tex::Cloth),
+                bottom_tex: Some(Tex::Cloth),
                 bald: false,
-                extras: vec![],
+                extras: Self::wanderer_gear(),
             },
         }
+    }
+
+    /// The player's gear on top of the tunic: a tattered half-cape, a pauldron with a spike on the
+    /// left shoulder, leather bracers, a belt with pouches and a brass buckle, and a glowing
+    /// sunflower brooch (the sunflower's bearer).
+    fn wanderer_gear() -> Vec<Part> {
+        let leather = Color::srgb(0.24, 0.15, 0.08);
+        let iron = Color::srgb(0.34, 0.33, 0.35);
+        let mut gear = vec![
+            Part::new(Bone::Chest, Shape::Box(Vec3::new(0.36, 0.62, 0.025)), Vec3::new(0.06, 0.12, 0.15), Vec3::new(-0.12, 0.0, 0.08), Paint::Textured(Color::srgb(0.18, 0.15, 0.12), Tex::Cloth)),
+            Part::new(Bone::Chest, Shape::Box(Vec3::new(0.2, 0.3, 0.02)), Vec3::new(-0.12, -0.08, 0.16), Vec3::new(-0.2, 0.0, -0.15), Paint::Textured(Color::srgb(0.16, 0.13, 0.1), Tex::Cloth)),
+            Part::new(Bone::UpperArmL, Shape::Ball(0.095), Vec3::new(-0.02, 0.02, 0.0), Vec3::ZERO, Paint::TexturedMetal(iron, Tex::Rust)),
+            Part::new(Bone::UpperArmL, Shape::Cone(0.025, 0.12), Vec3::new(-0.08, 0.08, 0.0), Vec3::new(0.0, 0.0, 0.7), Paint::Metal(iron)),
+            Part::new(Bone::Chest, Shape::Box(Vec3::new(0.05, 0.5, 0.02)), Vec3::new(-0.05, 0.25, -0.13), Vec3::new(0.0, 0.0, 0.6), Paint::Textured(leather, Tex::Leather)),
+            Part::new(Bone::Pelvis, Shape::Ring(0.022, 0.2), Vec3::new(0.0, 0.11, 0.0), Vec3::ZERO, Paint::Textured(leather, Tex::Leather)),
+            Part::new(Bone::Pelvis, Shape::Box(Vec3::new(0.07, 0.06, 0.02)), Vec3::new(0.0, 0.11, -0.13), Vec3::ZERO, Paint::Metal(Color::srgb(0.8, 0.6, 0.25))),
+            Part::new(Bone::Pelvis, Shape::Box(Vec3::new(0.09, 0.1, 0.06)), Vec3::new(0.19, 0.05, -0.02), Vec3::new(0.0, 0.0, 0.1), Paint::Textured(leather, Tex::Leather)),
+            Part::new(Bone::Pelvis, Shape::Box(Vec3::new(0.07, 0.09, 0.05)), Vec3::new(-0.18, 0.05, 0.05), Vec3::new(0.0, 0.0, -0.1), Paint::Textured(leather, Tex::Leather)),
+            // The sunflower brooch: golden petals around a dark heart.
+            Part::new(Bone::Chest, Shape::Cylinder(0.04, 0.012), Vec3::new(-0.11, 0.33, -0.135), Vec3::new(1.57, 0.0, 0.0), Paint::Glow(LinearRgba::rgb(4.0, 2.6, 0.3))),
+            Part::new(Bone::Chest, Shape::Cylinder(0.018, 0.016), Vec3::new(-0.11, 0.33, -0.142), Vec3::new(1.57, 0.0, 0.0), Paint::Color(Color::srgb(0.2, 0.1, 0.03))),
+        ];
+        gear.extend(symmetric(&[Part::new(Bone::ForearmR, Shape::Cylinder(0.068, 0.15), Vec3::new(0.0, -0.17, 0.0), Vec3::ZERO, Paint::Textured(leather, Tex::Leather))]));
+        gear
     }
 
     /// A Hollow: same skeleton (so every animation fits), gaunt and grey, in rags, with
@@ -361,7 +385,9 @@ impl HumanoidSpec {
                 skin_tex: Some(Tex::Leather),
                 top_tex: Some(Tex::Cloth),
                 bottom_tex: Some(Tex::Cloth),
-                ..HumanoidLook::default()
+                bald: false,
+                // Rags, no gear.
+                extras: vec![],
             },
             ..Self::human()
         }

@@ -443,8 +443,18 @@ pub fn spawn_weapon_model(
                     PartShape::Cylinder { radius, height } => Cylinder::new(radius, height).into(),
                     PartShape::Sphere(r) => Sphere::new(r).into(),
                 };
+                // Texture by what it looks like: rough metal rusts, wood and leather show their grain;
+                // polished steel stays clean.
+                let tex = if part.metallic >= 0.5 && part.roughness >= 0.5 {
+                    Some(crate::textures::Tex::Rust)
+                } else if part.metallic < 0.2 {
+                    Some(crate::textures::Tex::Leather)
+                } else {
+                    None
+                };
                 let material = materials.add(StandardMaterial {
                     base_color: part.color,
+                    base_color_texture: tex.and_then(crate::textures::get),
                     metallic: part.metallic,
                     perceptual_roughness: part.roughness,
                     ..default()

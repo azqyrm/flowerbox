@@ -6,7 +6,9 @@
 use bevy::prelude::*;
 
 use super::light_sword::RUST;
-use super::{AttackSpec, ModelSource, Moveset, PartShape, Stance, SwingKey, WeaponClass, WeaponDef, WeaponPart, light_sword};
+use super::{AttackSpec, ModelSource, Moveset, PartShape, Stance, Styled, SwingKey, WeaponClass, WeaponDef, WeaponPart, light_sword};
+use crate::humanoid::{Paint, Shape};
+use crate::textures::Tex;
 
 const fn chop(startup: f32, recovery: f32, stamina: f32, lunge: f32, damage: f32, windup: SwingKey, strike: SwingKey) -> AttackSpec {
     AttackSpec {
@@ -78,6 +80,7 @@ pub const MOVESET: Moveset = Moveset {
     ..light_sword::MOVESET
 };
 
+#[allow(dead_code)] // the primitive version, kept as a fallback look
 const RUSTED_AXE_PARTS: [WeaponPart; 4] = [
     WeaponPart {
         shape: PartShape::Cylinder { radius: 0.021, height: 0.82 },
@@ -104,13 +107,29 @@ const RUSTED_AXE_PARTS: [WeaponPart; 4] = [
     WeaponPart { shape: PartShape::Sphere(0.026), color: RUST, metallic: 0.6, roughness: 0.7, offset: Vec3::new(0.0, -0.15, 0.0) },
 ];
 
+/// The rusted axe's new look: a bearded blade hooking down, a spiked poll, a leather-wrapped haft
+/// with iron bands — all of it rusting.
+const RUSTED_AXE_STYLED: [Styled; 9] = [
+    Styled::new(Shape::Cylinder(0.021, 0.82), 0.26, Paint::Textured(Color::srgb(0.3, 0.2, 0.11), Tex::Leather)),
+    Styled::new(Shape::Ring(0.006, 0.024), 0.0, Paint::TexturedMetal(RUST, Tex::Rust)),
+    Styled::new(Shape::Ring(0.006, 0.024), 0.45, Paint::TexturedMetal(RUST, Tex::Rust)),
+    Styled::new(Shape::Ball(0.028), -0.15, Paint::TexturedMetal(RUST, Tex::Rust)),
+    Styled::at(Shape::Box(Vec3::new(0.15, 0.17, 0.022)), Vec3::new(0.08, 0.6, 0.0), Vec3::ZERO, Paint::TexturedMetal(RUST, Tex::Rust)),
+    // The beard: the lower edge hooks down past the haft.
+    Styled::at(Shape::Box(Vec3::new(0.06, 0.12, 0.02)), Vec3::new(0.13, 0.5, 0.0), Vec3::new(0.0, 0.0, 0.45), Paint::TexturedMetal(RUST, Tex::Rust)),
+    Styled::at(Shape::Box(Vec3::new(0.012, 0.2, 0.024)), Vec3::new(0.16, 0.59, 0.0), Vec3::ZERO, Paint::Metal(Color::srgb(0.62, 0.6, 0.58))),
+    // A spike on the poll.
+    Styled::at(Shape::Cone(0.022, 0.11), Vec3::new(-0.08, 0.62, 0.0), Vec3::new(0.0, 0.0, 1.57), Paint::TexturedMetal(RUST, Tex::Rust)),
+    Styled::at(Shape::Cone(0.012, 0.07), Vec3::new(0.0, 0.72, 0.0), Vec3::ZERO, Paint::TexturedMetal(RUST, Tex::Rust)),
+];
+
 /// A hand axe. Hits harder than a sword, reaches less far; only the head cuts.
 pub static RUSTED_AXE: WeaponDef = WeaponDef {
     name: "Rusted Axe",
     class: WeaponClass::Axe,
     base_damage: 24.0,
     blade: (0.5, 0.72),
-    model: ModelSource::Parts(&RUSTED_AXE_PARTS),
+    model: ModelSource::Styled(&RUSTED_AXE_STYLED),
     guard_block: 0.3,
 };
 

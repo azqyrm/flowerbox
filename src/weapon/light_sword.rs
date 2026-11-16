@@ -2,7 +2,9 @@
 
 use bevy::prelude::*;
 
-use super::{AttackSpec, GuardSpec, ModelSource, Moveset, PartShape, Stance, SwingKey, WeaponClass, WeaponDef, WeaponPart};
+use super::{AttackSpec, GuardSpec, ModelSource, Moveset, PartShape, Stance, Styled, SwingKey, WeaponClass, WeaponDef, WeaponPart};
+use crate::humanoid::{Paint, Shape};
+use crate::textures::Tex;
 
 const LIGHT_STARTUP: f32 = 0.15;
 const LIGHT_ACTIVE: f32 = 0.12;
@@ -125,6 +127,7 @@ const BRASS: Color = Color::srgb(0.8, 0.6, 0.25);
 const BRIGHT_STEEL: Color = Color::srgb(0.86, 0.88, 0.92);
 
 /// A smith's best work: brighter steel, a brass guard and pommel, a slightly longer blade.
+#[allow(dead_code)] // the primitive version, kept as a fallback look
 const WELL_FORGED_PARTS: [WeaponPart; 5] = [
     WeaponPart { shape: PartShape::Sphere(0.04), color: BRASS, metallic: 1.0, roughness: 0.35, offset: Vec3::new(0.0, -0.11, 0.0) },
     WeaponPart {
@@ -146,9 +149,25 @@ pub static WELL_FORGED_SWORD: WeaponDef = WeaponDef {
     class: WeaponClass::LightSword,
     base_damage: 24.0,
     blade: (0.13, 1.08),
-    model: ModelSource::Parts(&WELL_FORGED_PARTS),
+    model: ModelSource::Styled(&WELL_FORGED_STYLED),
     guard_block: 0.5,
 };
+
+/// The forged sword's new look: a wire-wrapped grip, a brass guard with curled quillons, and a
+/// fuller etched with runes that glow cold blue.
+const WELL_FORGED_STYLED: [Styled; 11] = [
+    Styled::new(Shape::Ball(0.04), -0.115, Paint::Metal(BRASS)),
+    Styled::new(Shape::Cylinder(0.022, 0.21), 0.0, Paint::Textured(Color::srgb(0.2, 0.08, 0.06), Tex::Leather)),
+    Styled::new(Shape::Ring(0.005, 0.024), -0.06, Paint::Metal(BRASS)),
+    Styled::new(Shape::Ring(0.005, 0.024), 0.0, Paint::Metal(BRASS)),
+    Styled::new(Shape::Ring(0.005, 0.024), 0.06, Paint::Metal(BRASS)),
+    Styled::new(Shape::Box(Vec3::new(0.24, 0.035, 0.04)), 0.11, Paint::Metal(BRASS)),
+    Styled::at(Shape::Ring(0.008, 0.03), Vec3::new(0.13, 0.12, 0.0), Vec3::new(1.57, 0.0, 0.0), Paint::Metal(BRASS)),
+    Styled::at(Shape::Ring(0.008, 0.03), Vec3::new(-0.13, 0.12, 0.0), Vec3::new(1.57, 0.0, 0.0), Paint::Metal(BRASS)),
+    Styled::new(Shape::Box(Vec3::new(0.065, 0.95, 0.014)), 0.6, Paint::Metal(BRIGHT_STEEL)),
+    Styled::new(Shape::Box(Vec3::new(0.02, 0.72, 0.017)), 0.5, Paint::GlowTex(LinearRgba::rgb(0.6, 1.6, 4.0), Tex::Runes)),
+    Styled::new(Shape::Cone(0.033, 0.09), 1.12, Paint::Metal(BRIGHT_STEEL)),
+];
 
 pub(super) const RUST: Color = Color::srgb(0.45, 0.3, 0.2);
 
