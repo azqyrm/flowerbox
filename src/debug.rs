@@ -943,9 +943,26 @@ fn enemy_script(
             let passed = ptf.translation.z < htf.translation.z - 0.5;
             info!("autopilot: walked to z {:.2}: {}", ptf.translation.z, if passed { "passed the corpse" } else { "BLOCKED by the corpse" });
         }
+        // Again after the body vanished (CORPSE_TIME): no invisible wall where it lay.
+        if crossed(t, dt, d + CORPSE_TIME + 0.6) {
+            ptf.translation = Vec3::new(htf.translation.x, ptf.translation.y, htf.translation.z + 1.5);
+            info!("autopilot: walk through where the vanished corpse lay");
+            AUTO_WALK.store(true, Relaxed);
+        }
+        if crossed(t, dt, d + CORPSE_TIME + 1.8) {
+            AUTO_WALK.store(false, Relaxed);
+            // Straight through: no sideways deflection, the full distance.
+            let drift = (ptf.translation.x - htf.translation.x).abs();
+            let passed = ptf.translation.z < htf.translation.z - 2.5 && drift < 0.05;
+            info!(
+                "autopilot: walked to z {:.2} (sideways drift {drift:.2}): {}",
+                ptf.translation.z,
+                if passed { "passed the vanished corpse" } else { "BLOCKED by an invisible wall" }
+            );
+        }
     }
     if let Some(d) = state.died_at
-        && t > d + 5.0
+        && t > d + CORPSE_TIME + 2.5
         && !state.reset_sent
     {
         state.reset_sent = true;

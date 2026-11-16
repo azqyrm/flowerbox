@@ -26,7 +26,7 @@ use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::lockon::Targetable;
 use crate::tuning::*;
 use crate::weapon::{EquipWeapon, WeaponSystems, hollow_blade};
-use crate::character::Remote;
+use crate::character::{Remote, SolidExt};
 use crate::items::ItemId;
 use crate::items::pickup::{ClaimedDrops, ItemDropped, Pickup, PickupAssets, spawn_pickup};
 
@@ -411,8 +411,9 @@ fn enemy_death(
             Some(mut c) => {
                 c.0 += time.delta_secs();
                 if c.0 >= CORPSE_TIME && *vis != Visibility::Hidden {
+                    // Gone from sight; its collider has been off since it died (`set_solid`).
                     *vis = Visibility::Hidden;
-                    commands.entity(entity).insert(ColliderDisabled);
+                    commands.entity(entity).set_solid(false);
                 }
             }
             None => {}
@@ -472,7 +473,8 @@ fn revive_corpses(mut commands: Commands, mut q: Query<(Entity, &CharacterAction
             *vis = Visibility::Inherited;
             commands
                 .entity(entity)
-                .remove::<(Corpse, ColliderDisabled)>()
+                .remove::<Corpse>()
+                .set_solid(true)
                 .insert((Hurtbox, Targetable { height: 0.55 }));
         }
     }

@@ -157,8 +157,10 @@ pub(super) fn move_character(
             intent.jump_buffer = 0.0;
         }
 
-        // Move and slide against the level geometry.
-        let filter = if pass_through {
+        // Move and slide against the level geometry. A body lying dead ignores characters too,
+        // else the living walking into it would shove the corpse around.
+        let dead = matches!(action.current, Some(a) if a.kind == super::action::ActionKind::Dead);
+        let filter = if pass_through || dead {
             SpatialQueryFilter::from_excluded_entities(characters.iter())
         } else {
             SpatialQueryFilter::from_excluded_entities([entity])

@@ -63,11 +63,33 @@ impl Plugin for CharacterPlugin {
 fn corpses_dont_block(mut commands: Commands, q: Query<(Entity, &CharacterAction, Has<ColliderDisabled>), With<Collider>>) {
     for (entity, action, disabled) in &q {
         let dead = matches!(action.current, Some(a) if a.kind == action::ActionKind::Dead);
-        if dead && !disabled {
-            commands.entity(entity).insert(ColliderDisabled);
-        } else if !dead && disabled {
-            commands.entity(entity).remove::<ColliderDisabled>();
+        if dead == disabled {
+            continue;
         }
+        commands.entity(entity).set_solid(!dead);
+    }
+}
+
+/// Turns an entity's collider on or off **idempotently**. Never insert `ColliderDisabled` on an
+/// entity that already has it: in Bevy 0.20 a re-insert fires `Discard`, and avian's observer for
+/// `Discard<ColliderDisabled>` puts the collider back into the collision tree while it is still
+/// tagged disabled — so its bounding box is never updated again and it becomes a frozen,
+/// invisible wall (the reported "despawned corpse blocks the way"). The check runs when the
+/// command applies, so two systems asking in the same frame can't double-insert either.
+pub trait SolidExt {
+    fn set_solid(&mut self, solid: bool) -> &mut Self;
+}
+
+impl SolidExt for EntityCommands<'_> {
+    fn set_solid(&mut self, solid: bool) -> &mut Self {
+        self.queue(move |mut e: EntityWorldMut| {
+            let disabled = e.contains::<ColliderDisabled>();
+            if solid && disabled {
+                e.remove::<ColliderDisabled>();
+            } else if !solid && !disabled {
+                e.insert(ColliderDisabled);
+            }
+        })
     }
 }
 

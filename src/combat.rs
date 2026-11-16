@@ -14,7 +14,7 @@ use bevy::prelude::*;
 
 use crate::character::guard::Parried;
 use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
-use crate::character::{CharacterSystems, Remote};
+use crate::character::{CharacterSystems, Remote, SolidExt};
 use crate::character::stats::{DamageMessage, DamageTaken, Health};
 use crate::humanoid::anim::action_pose;
 use crate::humanoid::pose::bone_character_transform;
@@ -396,7 +396,7 @@ fn dummy_react(mut commands: Commands, mut struck: MessageReader<DummyStruck>, m
             dummy.broken = Some(DUMMY_RESET_TIME);
             dummy.fallen_tilt = tilt_away * 1.45;
             // Lying on the floor: walk over it (and it can't be hit) until it stands up again.
-            commands.entity(entity).insert(ColliderDisabled);
+            commands.entity(entity).set_solid(false);
             info!("training dummy broken, resets in {DUMMY_RESET_TIME}s");
         }
     }
@@ -408,7 +408,7 @@ fn dummy_reset(mut commands: Commands, mut resets: MessageReader<WorldReset>, mu
         return;
     }
     for (entity, mut dummy, mut health) in &mut dummies {
-        commands.entity(entity).remove::<ColliderDisabled>();
+        commands.entity(entity).set_solid(true);
         dummy.broken = None;
         dummy.fallen_tilt = Vec2::ZERO;
         *health = Health::new(health.max);
@@ -430,7 +430,7 @@ fn dummy_animate(
             if *t <= 0.0 {
                 dummy.broken = None;
                 *health = Health::new(health.max);
-                commands.entity(entity).remove::<ColliderDisabled>();
+                commands.entity(entity).set_solid(true);
                 info!("training dummy reset");
             }
             dummy.fallen_tilt
