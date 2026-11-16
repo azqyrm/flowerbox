@@ -28,6 +28,7 @@ impl Plugin for RiddlePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<BellRung>()
             .add_message::<RingRequest>()
+            .add_message::<GuestRing>()
             .init_resource::<Riddles>()
             .add_systems(Update, ((bell_interaction, plaque_interaction).in_set(InteractSystems::Doors), judge_rings, swing_bells).chain());
     }
@@ -57,9 +58,16 @@ pub struct Plaque {
 #[derive(Resource, Debug, Default)]
 pub struct Riddles(pub Vec<(RiddleDef, usize)>);
 
-/// The local player rang bell `id` (the world's owner judges it; online it goes to the host).
+/// The local player rang bell `id`. The world's owner judges it; online a guest's goes to the host
+/// (`crate::net::world`), arriving there as a [`GuestRing`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct RingRequest {
+    pub id: u32,
+}
+
+/// Host: a guest rang bell `id` (judged like our own rings).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct GuestRing {
     pub id: u32,
 }
 
@@ -139,6 +147,7 @@ pub fn judge_rings(
     authority: Res<PickupAuthority>,
     mut riddles: ResMut<Riddles>,
     mut requests: MessageReader<RingRequest>,
+    mut guests: MessageReader<GuestRing>,
     mut doors: Query<&mut Door>,
     mut opened: MessageWriter<DoorOpened>,
     mut banner: MessageWriter<Banner>,
@@ -146,11 +155,13 @@ pub fn judge_rings(
 ) {
     if !authority.0 {
         requests.clear();
+        guests.clear();
         return;
     }
-    for req in requests.read() {
+    let rings: Vec<u32> = requests.read().map(|r| r.id).chain(guests.read().map(|g| g.id)).collect();
+    for bell in rings {
         for (riddle, progress) in &mut riddles.0 {
-            if !riddle.bells.contains(&req.id) {
+            if !riddle.bells.contains(&bell) {
                 continue;
             }
             let Some(mut door) = doors.iter_mut().find(|d| d.id == riddle.door) else { continue };
@@ -158,7 +169,7 @@ pub fn judge_rings(
                 continue;
             }
             let before = *progress;
-            if advance(&riddle.bells, progress, req.id) {
+            if advance(&riddle.bells, progress, bell) {
                 door.sealed = false;
                 door.open = true;
                 opened.write(DoorOpened { id: door.id });

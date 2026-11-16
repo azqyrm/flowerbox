@@ -53,6 +53,7 @@
 //! - `FLOWERBOX_KEYS="1.0:ShiftLeft+ 1.1:Tab+ 1.2:Tab- 1.4:ShiftLeft-"` → injects real key / mouse
 //!   events (`Name+` press, `Name-` release; `MouseLeft`, `MouseRight`, `MouseMiddle` for buttons) at
 //!   those game times, and logs menu / input-block / cursor changes. For input bugs.
+//! - `FLOWERBOX_THROW="secs:index"` → throws bag entry `index` out at that time (online tests).
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
 use bevy::prelude::*;
@@ -103,6 +104,9 @@ impl Plugin for DebugPlugin {
         }
         if std::env::var("FLOWERBOX_KEYS").is_ok() {
             app.add_systems(PreUpdate, inject_keys.before(bevy::input::InputSystems)).add_systems(PostUpdate, log_input_state);
+        }
+        if std::env::var("FLOWERBOX_THROW").is_ok() {
+            app.add_systems(Update, scripted_throw);
         }
         if std::env::var("FLOWERBOX_FPS_LOG").is_ok() {
             app.add_systems(Update, log_fps);
@@ -589,6 +593,17 @@ fn boss_script(
     if t > 170.0 {
         info!("boss test: timed out; Saint HP {:.0}", bhp.current);
         exit.write(AppExit::Success);
+    }
+}
+
+/// `FLOWERBOX_THROW="secs:index"`.
+fn scripted_throw(time: Res<Time>, mut throw: MessageWriter<crate::items::pickup::ThrowOutRequest>) {
+    let spec = std::env::var("FLOWERBOX_THROW").unwrap_or_default();
+    let Some((at, index)) = spec.split_once(':') else { return };
+    let (Ok(at), Ok(index)) = (at.parse::<f32>(), index.parse::<usize>()) else { return };
+    if crossed(time.elapsed_secs(), time.delta_secs(), at) {
+        info!("script: throw out bag entry {index}");
+        throw.write(crate::items::pickup::ThrowOutRequest { index });
     }
 }
 

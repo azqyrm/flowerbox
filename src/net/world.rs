@@ -28,6 +28,7 @@ use crate::items::pickup::{
     spawn_layout, spawn_pickup,
 };
 use crate::level::door::{Door, DoorOpened, DoorRefused, DoorRequest};
+use crate::level::riddle::{Bell, BellRung, GuestRing, RingRequest};
 use crate::player::Player;
 use crate::pvp::PvpChanged;
 use crate::ui::icons::NoticeIcon;
@@ -38,7 +39,7 @@ pub struct WorldSyncPlugin;
 
 impl Plugin for WorldSyncPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (world_inbox, local_events, shared_rest_flag, host_rest_circle).chain());
+        app.add_systems(Update, (world_inbox, local_events, bells_and_bosses, shared_rest_flag, host_rest_circle).chain());
     }
 }
 
@@ -86,7 +87,7 @@ fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
         WorldEvent::Dropped { by: Some(by), item, .. } => {
             Notify::new(NoticeIcon::Item(item.def().icon), strings::other_threw_out(&player_name(by), item.def().name))
         }
-        WorldEvent::DummyHit { .. } | WorldEvent::Dropped { by: None, .. } => return,
+        WorldEvent::DummyHit { .. } | WorldEvent::Dropped { by: None, .. } | WorldEvent::BellRung { .. } => return,
     };
     info!("world event: {}", n.text);
     notify.write(n);
@@ -378,6 +379,64 @@ fn local_events(
             doors_refused.clear();
             drops.clear();
             thrown.clear();
+        }
+    }
+}
+
+/// Bells (a guest's ring goes to the host, who judges the rite; everyone hears every bell) and
+/// defeated bosses (joiners learn them; a visiting guest's own list is put back on leaving).
+#[allow(clippy::too_many_arguments)]
+fn bells_and_bosses(
+    mut inbox: MessageReader<NetInbox>,
+    link: Res<NetLink>,
+    session: Res<NetSession>,
+    mut stash: Local<Option<Vec<crate::enemy::EnemyKind>>>,
+    mut defeated: ResMut<crate::enemy::boss::DefeatedBosses>,
+    mut rings: MessageReader<RingRequest>,
+    mut guest_rings: MessageWriter<GuestRing>,
+    mut rung: MessageWriter<BellRung>,
+    mut notify: MessageWriter<Notify>,
+    bells: Query<&Bell>,
+) {
+    let send = |to: Option<u32>, msg: Reliable| link.send(NetCmd::Reliable { to, bytes: encode(&msg) });
+    let bell_name = |id: u32| bells.iter().find(|b| b.id == id).map_or("a bell".to_string(), |b| b.name.clone());
+    for msg in inbox.read() {
+        match msg {
+            NetInbox::RoleChanged if session.role == Role::Client => *stash = Some(defeated.0.clone()),
+            NetInbox::RoleChanged if session.role == Role::Offline => {
+                if let Some(own) = stash.take() {
+                    defeated.0 = own;
+                }
+            }
+            NetInbox::GuestJoined { peer, .. } if session.is_host() => {
+                send(Some(*peer), Reliable::Bosses { defeated: defeated.0.clone() });
+            }
+            NetInbox::Reliable(HOST_PEER, Reliable::Bosses { defeated: list }) if session.role == Role::Client => {
+                defeated.0 = list.clone();
+            }
+            NetInbox::Reliable(peer, Reliable::RequestBell { id }) if session.is_host() => {
+                let Some(&by) = session.peers.get(peer) else { continue };
+                guest_rings.write(GuestRing { id: *id });
+                rung.write(BellRung { id: *id });
+                send(None, Reliable::Event(WorldEvent::BellRung { by, id: *id }));
+                info!("world event: {}", strings::rang(&player_name(by), &bell_name(*id)));
+                notify.write(Notify::new(NoticeIcon::Door, strings::rang(&player_name(by), &bell_name(*id))));
+            }
+            NetInbox::Reliable(HOST_PEER, Reliable::Event(WorldEvent::BellRung { by, id })) if session.role == Role::Client => {
+                if *by != session.my_id {
+                    rung.write(BellRung { id: *id });
+                    notify.write(Notify::new(NoticeIcon::Door, strings::rang(&player_name(*by), &bell_name(*id))));
+                }
+            }
+            _ => {}
+        }
+    }
+    for r in rings.read() {
+        match session.role {
+            // Our own ring: everyone else hears it.
+            Role::Hosting => send(None, Reliable::Event(WorldEvent::BellRung { by: session.my_id, id: r.id })),
+            Role::Client => send(Some(HOST_PEER), Reliable::RequestBell { id: r.id }),
+            _ => {}
         }
     }
 }

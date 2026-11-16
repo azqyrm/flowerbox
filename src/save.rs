@@ -69,6 +69,8 @@ pub struct SaveData {
     pub claimed_drops: Vec<u32>,
     /// Which hand's weapon was held in both hands.
     pub two_hand: Option<Hand>,
+    /// Bosses defeated for good.
+    pub bosses: Vec<crate::enemy::EnemyKind>,
 }
 
 impl SaveData {
@@ -90,6 +92,7 @@ struct SaveState {
     claimed: Vec<u32>,
     respawn: Option<([f32; 3], f32)>,
     taken: Vec<u32>,
+    bosses: Vec<crate::enemy::EnemyKind>,
 }
 
 fn save_path() -> Option<PathBuf> {
@@ -132,8 +135,10 @@ fn load_save(
     mut doors: Query<&mut Door>,
     pickups: Query<(Entity, &Pickup)>,
     mut claimed: ResMut<ClaimedDrops>,
+    mut defeated: ResMut<crate::enemy::boss::DefeatedBosses>,
 ) {
     let Some(data) = read_save() else { return };
+    defeated.0 = data.bosses.clone();
     let Ok((entity, mut inventory, mut equipment, mut ale, mut tf)) = player.single_mut() else { return };
     *inventory = Inventory { items: data.items.clone(), counts: data.counts.iter().copied().collect() };
     *equipment = Equipment::from_slots(data.equipped, &inventory);
@@ -166,6 +171,7 @@ fn load_save(
     state.claimed = data.claimed_drops.clone();
     state.respawn = data.respawn;
     state.taken = data.taken.clone();
+    state.bosses = data.bosses.clone();
     info!("save loaded ({} items, {} Ale)", data.items.len(), data.ale_charges);
 }
 
@@ -177,6 +183,7 @@ fn track_world(
     doors: Query<&Door>,
     layout: Res<PickupLayout>,
     claimed: Res<ClaimedDrops>,
+    defeated: Res<crate::enemy::boss::DefeatedBosses>,
     player: Query<Option<&RespawnPoint>, With<Player>>,
     pickups: Query<&Pickup>,
 ) {
@@ -190,8 +197,9 @@ fn track_world(
     let respawn = player.single().ok().flatten().map(|r| (r.position.to_array(), r.facing));
     let present: Vec<u32> = pickups.iter().map(|p| p.id).collect();
     let taken = layout.taken(&present);
-    if suns != state.suns || open != state.doors || respawn != state.respawn || taken != state.taken || claimed.0 != state.claimed {
+    if suns != state.suns || open != state.doors || respawn != state.respawn || taken != state.taken || claimed.0 != state.claimed || defeated.0 != state.bosses {
         state.claimed = claimed.0.clone();
+        state.bosses = defeated.0.clone();
         state.suns = suns;
         state.doors = open;
         state.respawn = respawn;
@@ -227,6 +235,7 @@ fn snapshot(state: &SaveState, inventory: &Inventory, equipment: &Equipment, ale
         doors: state.doors.clone(),
         claimed_drops: state.claimed.clone(),
         two_hand: equipment.two_hand,
+        bosses: state.bosses.clone(),
     }
 }
 
@@ -299,7 +308,7 @@ mod tests {
         equipment.equip(&inventory, 0);
         equipment.equip(&inventory, 1);
         let ale = HealingAle::new(3);
-        let state = SaveState { suns: vec![0, 1], doors: vec![2], respawn: Some(([0.0, 0.0, 10.4], 0.0)), taken: vec![1, 103], ..default() };
+        let state = SaveState { suns: vec![0, 1], doors: vec![2], respawn: Some(([0.0, 0.0, 10.4], 0.0)), taken: vec![1, 103], bosses: vec![crate::enemy::EnemyKind::Saint], ..default() };
         let data = snapshot(&state, &inventory, &equipment, &ale);
         let text = ron::ser::to_string_pretty(&data, ron::ser::PrettyConfig::default()).unwrap();
         let back: SaveData = ron::from_str(&text).unwrap();
