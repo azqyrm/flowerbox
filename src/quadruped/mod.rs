@@ -130,6 +130,10 @@ pub struct QuadrupedLook {
     pub belly: Color,
     pub claws: Color,
     pub eye_glow: LinearRgba,
+    /// Jagged spikes of matted fur sticking out (spine, mane, flanks, haunches, tail): how many
+    /// per metre of body, and how long the longest are. 0 = smooth.
+    pub shag: f32,
+    pub shag_length: f32,
 }
 
 /// Proportions (metres) and look of a quadruped. Swap this to get a different beast.
@@ -183,6 +187,8 @@ impl QuadrupedSpec {
                 belly: Color::srgb(0.36, 0.33, 0.29),
                 claws: Color::srgb(0.75, 0.72, 0.65),
                 eye_glow: LinearRgba::rgb(7.0, 3.0, 0.3),
+                shag: 1.0,
+                shag_length: 0.34,
             },
         }
     }
@@ -311,5 +317,89 @@ pub fn spawn_quadruped(
         part(leg.paw, Sphere::new(1.0).into(), &dark, t(0.0, -0.01, -0.03).with_scale(Vec3::new(r * 1.4, r * 0.9, r * 1.9)));
         part(leg.paw, Cuboid::new(r * 1.6, 0.02, 0.04).into(), &claws, t(0.0, -0.04, -0.03 - r * 1.7));
     }
+    if s.look.shag > 0.0 {
+        spawn_shag(commands, meshes, &[fur, dark], &bones, s);
+    }
     QuadrupedRig { model, bones, root_height }
+}
+
+/// Deterministic noise in [0, 1) (stable looks, the same on every machine).
+fn noise(i: u32, k: u32) -> f32 {
+    let mut x = i.wrapping_mul(0x9E37_79B9) ^ k.wrapping_mul(0x85EB_CA6B);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    (x & 0xFFFF) as f32 / 65536.0
+}
+
+/// Jagged spikes of matted fur, like the uneven edges of overlapping plates: flattened cones,
+/// each with its own length, tilt and lean, swept back. Placed per bone so they move with it.
+fn spawn_shag(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &[Handle<StandardMaterial>; 2], bones: &[Entity; QBone::COUNT], s: &QuadrupedSpec) {
+    let spike = meshes.add(Cone { radius: 0.05, height: 1.0 });
+    let len = s.look.shag_length;
+    let mut n = 0u32;
+    // One spike at `at` in `bone`'s frame, pointing along `out` (then swept back toward +Z).
+    let mut spike_at = |commands: &mut Commands, bone: QBone, at: Vec3, out: Vec3, size: f32| {
+        n += 1;
+        let r = |k| noise(n, k);
+        let length = len * size * (0.45 + 0.75 * r(1));
+        let sweep = Vec3::new((r(2) - 0.5) * 0.5, 0.0, 0.9 + 0.6 * r(3));
+        let dir = (out.normalize() + sweep).normalize();
+        let rot = Quat::from_rotation_arc(Vec3::Y, dir) * Quat::from_rotation_y(r(4) * std::f32::consts::TAU);
+        // Flattened into a blade-like edge, wider at the root.
+        let width = 0.6 + 0.9 * r(5);
+        let e = commands
+            .spawn((
+                Mesh3d(spike.clone()),
+                MeshMaterial3d(mats[(r(6) < 0.6) as usize].clone()),
+                Transform::from_translation(at + dir * length * 0.4).with_rotation(rot).with_scale(Vec3::new(width, length, 0.35 + 0.3 * r(7))),
+                bevy::camera::visibility::NoFrustumCulling,
+            ))
+            .id();
+        commands.entity(bones[bone.index()]).add_child(e);
+    };
+    let barrel = (s.chest_radius + s.hips_radius) * 0.5;
+    let rise = s.chest_height() - s.hips_height();
+    let count = |metres: f32| ((metres * 12.0 * s.look.shag).round() as usize).max(1);
+    // The spine: a ragged ridge from the hips to the shoulders.
+    let ridge = count(s.body_length);
+    for i in 0..ridge {
+        let t = i as f32 / ridge as f32;
+        let at = Vec3::new((noise(i as u32, 9) - 0.5) * 0.08, barrel * 0.95 + rise * t, -s.body_length * t);
+        spike_at(commands, QBone::Hips, at, Vec3::new((noise(i as u32, 10) - 0.5) * 0.6, 1.0, 0.0), 1.0);
+    }
+    // Flanks: two rows on each side, shorter, pointing out and down.
+    for side in [-1.0, 1.0] {
+        for row in [0.35, -0.15] {
+            let k = count(s.body_length * 0.8);
+            for i in 0..k {
+                let t = 0.1 + 0.8 * i as f32 / k as f32;
+                let at = Vec3::new(side * barrel * 0.9, barrel * row + rise * t, -s.body_length * t);
+                spike_at(commands, QBone::Hips, at, Vec3::new(side, row - 0.3, 0.0), 0.6);
+            }
+        }
+        // Haunches and shoulders: a few longer tufts.
+        for i in 0..3 {
+            let a = i as f32 * 0.6;
+            spike_at(commands, QBone::Hips, Vec3::new(side * s.hips_radius * 0.8, s.hips_radius * (0.5 - a * 0.4), 0.05), Vec3::new(side, 0.6 - a, 0.2), 0.8);
+            spike_at(commands, QBone::Chest, Vec3::new(side * s.chest_radius * 0.85, s.chest_radius * (0.4 - a * 0.35), 0.0), Vec3::new(side, 0.5 - a, 0.0), 0.9);
+        }
+    }
+    // The mane: a thick ring around the shoulders and up the neck, the longest spikes.
+    for i in 0..count(1.2) {
+        let a = (i as f32 / count(1.2) as f32 - 0.5) * 2.6; // over the top, down both sides
+        let at = Vec3::new(a.sin() * s.chest_radius, a.cos() * s.chest_radius * 0.9, -0.05 + 0.1 * noise(i as u32, 11));
+        spike_at(commands, QBone::Chest, at, Vec3::new(a.sin(), a.cos(), 0.0), 1.3);
+    }
+    for i in 0..count(s.neck.length()) {
+        let t = i as f32 / count(s.neck.length()) as f32;
+        let at = Vec3::new((noise(i as u32, 12) - 0.5) * 0.1, s.neck.y * t + 0.1, -s.neck.x * t);
+        spike_at(commands, QBone::Neck, at, Vec3::new(0.0, 1.0, 0.3), 1.0);
+    }
+    // The tail: ragged all along.
+    for i in 0..count(s.tail) {
+        let t = i as f32 / count(s.tail) as f32;
+        let a = noise(i as u32, 13) * std::f32::consts::TAU;
+        spike_at(commands, QBone::Tail, Vec3::new(0.0, 0.0, s.tail * t), Vec3::new(a.cos(), a.sin().abs() + 0.3, 0.0), 0.55);
+    }
 }
