@@ -310,7 +310,8 @@ pub static CONTORTED_MAW: WeaponDef = WeaponDef {
 };
 
 fn contorted() -> QuadrupedSpec {
-    let skin = Color::srgb(0.8, 0.77, 0.72);
+    // Pale, veined, corpse-like skin (the flesh texture under a pale tint).
+    let skin = Color::srgb(1.0, 0.93, 0.9);
     let hair = Color::srgb(0.02, 0.02, 0.02);
     let mut extras = vec![
         // An upside-down face under the skull: a wide glowing grin, the chin on top.
@@ -361,7 +362,7 @@ fn contorted() -> QuadrupedSpec {
             eye_glow: LinearRgba::rgb(6.0, 7.0, 9.0),
             shag: 0.0,
             shag_length: 0.0,
-            fur_tex: Some(Tex::Bone),
+            fur_tex: Some(Tex::Flesh),
             mane: false,
             extras,
         },

@@ -50,6 +50,17 @@ pub const MENU_HINTS: &str = "[Up/Down] Select   [Left/Right] Change   [Enter] C
 pub const SAVE_DELETED: &str = "Save deleted: the next start is a new game";
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
+pub const DOOR_SEALED: &str = "Sealed. Runes crawl over the stone: an old rite holds it shut";
+pub const PROMPT_RING: &str = "[E] Ring the bell";
+pub const PROMPT_READ: &str = "[E] Read";
+pub const RITE_WRONG: &str = "The bells clash in discord. The rite begins anew";
+pub const RITE_SOLVED: &str = "THE SEAL IS BROKEN";
+pub fn rang(who: &str, bell: &str) -> String {
+    format!("{who} rang {bell}")
+}
+pub fn rite_progress(done: usize, total: usize) -> String {
+    format!("The bell answers... ({done} of {total})")
+}
 pub const PROMPT_FOG: &str = "[E] Pass through the mist";
 pub const BOSS_DEFEATED: &str = "HALLOWED FOE UNMADE";
 pub const PROMPT_OPEN_DOOR: &str = "[E] Open";

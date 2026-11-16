@@ -19,7 +19,7 @@ use super::{ArmorSlot, ItemId, ItemKind};
 use crate::character::action::RollWeight;
 use crate::character::guard::Guard;
 use crate::character::stats::{DamageAbsorption, Health};
-use crate::humanoid::{HumanoidRig, HumanoidSpec};
+use crate::humanoid::{Bone, HumanoidRig, HumanoidSpec};
 use crate::tuning::*;
 use super::ItemIcon;
 use crate::ui::icons::NoticeIcon;
@@ -518,11 +518,12 @@ fn sync_models(
             if visuals.models.iter().any(|(s, _, _)| *s == slot) {
                 continue;
             }
-            let root = commands
-                .spawn((Name::new(item.def().name), Transform::default(), Visibility::default(), ChildOf(rig.bone(model.bone))))
-                .id();
-            (model.build)(&mut ModelBuilder { commands: &mut commands, meshes: &mut meshes, materials: &mut materials, root }, spec);
-            visuals.models.push((slot, item, root));
+            let sides: &[(Bone, f32)] = if model.pair { &[(model.bone, 1.0), (model.bone.mirror(), -1.0)] } else { &[(model.bone, 1.0)] };
+            for &(bone, side) in sides {
+                let root = commands.spawn((Name::new(item.def().name), Transform::default(), Visibility::default(), ChildOf(rig.bone(bone)))).id();
+                (model.build)(&mut ModelBuilder { commands: &mut commands, meshes: &mut meshes, materials: &mut materials, root, side }, spec);
+                visuals.models.push((slot, item, root));
+            }
         }
     }
 }

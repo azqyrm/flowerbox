@@ -8,12 +8,16 @@
 //! enemy spawn points and the level's treasures (added to `PickupLayout`). Where a door sits on
 //! the arena's ring wall the arena leaves a gap ([`ArenaOpenings`]).
 //!
-//! The file is read at start from the asset folder (`BEVY_ASSET_ROOT`, the crate folder or next to
-//! the binary); a copy compiled into the binary is the fallback.
+//! Several levels can hang off the arena ([`LEVELS`]): each is its own file and grid, with its own
+//! look ([`layout::Theme`]), ceiling height and ids. The files are read at start from the asset
+//! folder (`BEVY_ASSET_ROOT`, the crate folder or next to the binary); copies compiled into the
+//! binary are the fallback.
 
 pub mod door;
+pub mod gothic;
 pub mod layout;
 pub mod props;
+pub mod riddle;
 
 use std::path::PathBuf;
 
@@ -25,35 +29,61 @@ use crate::enemy::SpawnPoint;
 use crate::hearth::spawn_sunflower;
 use crate::items::pickup::{PickupLayout, UniqueDrops};
 use crate::tuning::*;
-use layout::{EdgeKind, Layout, LevelFile};
+use crate::textures::{self, Tex};
+use layout::{EdgeKind, Layout, LevelFile, Theme};
 
 pub struct LevelPlugin;
 
-/// The level loaded at start.
-const LEVEL: &str = "levels/lvl1.ron";
-const EMBEDDED: &str = include_str!("../../assets/levels/lvl1.ron");
+/// The levels loaded at start (asset path, embedded copy): the Sunken Halls north of the arena,
+/// the Cathedral of Ashes south of it.
+pub const LEVELS: [(&str, &str); 2] = [
+    ("levels/lvl1.ron", include_str!("../../assets/levels/lvl1.ron")),
+    ("levels/lvl2.ron", include_str!("../../assets/levels/lvl2.ron")),
+];
 
-impl Plugin for LevelPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins((door::DoorPlugin, props::PropsPlugin));
-        let Some(layout) = load_level() else { return };
-        info!("level \"{}\": {} rooms, {} wall runs, {} doors", layout.file.name, layout.floors.len(), layout.walls.len(), layout.doors.len());
-        let treasures: Vec<_> = layout.file.treasures.iter().map(|t| (t.id, t.item, layout.ground(t.at))).collect();
-        app.world_mut().get_resource_or_init::<PickupLayout>().0.extend(treasures);
-        let unique: Vec<u32> = layout.file.enemies.iter().flat_map(|e| e.drops.iter().filter_map(|d| d.unique)).collect();
-        app.world_mut().get_resource_or_init::<UniqueDrops>().0.extend(unique);
-        // Doors on the arena's ring wall open a gap in it.
-        let openings = layout
-            .doors
-            .iter()
-            .filter(|d| (d.centre.length() - ARENA_RADIUS).abs() < 0.75)
-            .map(|d| (d.centre, (d.opening + LEVEL_WALL_THICKNESS) * 0.5))
-            .collect();
-        app.insert_resource(ArenaOpenings(openings)).insert_resource(layout).add_systems(Startup, spawn_level);
+/// Every loaded level.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct Levels(pub Vec<Layout>);
+
+impl Levels {
+    /// Walkable floor height at (x, z) in any level.
+    pub fn floor_at(&self, p: Vec2) -> Option<f32> {
+        self.0.iter().find_map(|l| l.floor_at(p))
     }
 }
 
-fn load_level() -> Option<Layout> {
+impl Plugin for LevelPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((door::DoorPlugin, props::PropsPlugin, riddle::RiddlePlugin));
+        let mut levels = vec![];
+        let mut openings = vec![];
+        let mut riddles = vec![];
+        for (path, embedded) in LEVELS {
+            let Some(layout) = load_level(path, embedded) else { continue };
+            info!("level \"{}\": {} rooms, {} wall runs, {} doors", layout.file.name, layout.floors.len(), layout.walls.len(), layout.doors.len());
+            let treasures: Vec<_> = layout.file.treasures.iter().map(|t| (t.id, t.item, layout.ground(t.at))).collect();
+            app.world_mut().get_resource_or_init::<PickupLayout>().0.extend(treasures);
+            let unique: Vec<u32> = layout.file.enemies.iter().flat_map(|e| e.drops.iter().filter_map(|d| d.unique)).collect();
+            app.world_mut().get_resource_or_init::<UniqueDrops>().0.extend(unique);
+            // Doors on the arena's ring wall open a gap in it.
+            openings.extend(
+                layout
+                    .doors
+                    .iter()
+                    .filter(|d| (d.centre.length() - ARENA_RADIUS).abs() < 0.75)
+                    .map(|d| (d.centre, (d.opening + LEVEL_WALL_THICKNESS) * 0.5)),
+            );
+            riddles.extend(layout.file.riddles.iter().cloned().map(|r| (r, 0)));
+            levels.push(layout);
+        }
+        app.insert_resource(ArenaOpenings(openings))
+            .insert_resource(riddle::Riddles(riddles))
+            .insert_resource(Levels(levels))
+            .add_systems(Startup, spawn_levels);
+    }
+}
+
+fn load_level(path: &str, embedded: &str) -> Option<Layout> {
     let mut roots: Vec<PathBuf> = vec![];
     if let Ok(r) = std::env::var("BEVY_ASSET_ROOT") {
         roots.push(r.into());
@@ -66,12 +96,12 @@ fn load_level() -> Option<Layout> {
     }
     let text = roots
         .iter()
-        .find_map(|r| std::fs::read_to_string(r.join("assets").join(LEVEL)).ok())
-        .unwrap_or_else(|| EMBEDDED.to_string());
+        .find_map(|r| std::fs::read_to_string(r.join("assets").join(path)).ok())
+        .unwrap_or_else(|| embedded.to_string());
     match ron::from_str::<LevelFile>(&text) {
         Ok(file) => Some(Layout::build(file)),
         Err(e) => {
-            error!("level file {LEVEL} unreadable: {e}");
+            error!("level file {path} unreadable: {e}");
             None
         }
     }
@@ -85,28 +115,59 @@ pub fn line_of_sight(spatial: &SpatialQuery, from: Vec3, to: Vec3, consider: &dy
     spatial.cast_ray_predicate(from, dir, d.length(), true, &SpatialQueryFilter::default(), consider).is_none()
 }
 
-fn stone(materials: &mut Assets<StandardMaterial>, r: f32, g: f32, b: f32) -> Handle<StandardMaterial> {
-    materials.add(StandardMaterial { base_color: Color::srgb(r, g, b), perceptual_roughness: 0.92, reflectance: 0.2, ..default() })
+fn stone(materials: &mut Assets<StandardMaterial>, r: f32, g: f32, b: f32, tex: Option<Tex>) -> Handle<StandardMaterial> {
+    materials.add(StandardMaterial {
+        base_color: Color::srgb(r, g, b),
+        base_color_texture: tex.and_then(textures::get),
+        perceptual_roughness: 0.92,
+        reflectance: 0.2,
+        ..default()
+    })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn spawn_level(
+fn spawn_levels(
     mut commands: Commands,
-    layout: Res<Layout>,
+    levels: Res<Levels>,
     torches: Res<TorchAssets>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let floor_mat = stone(&mut materials, 0.19, 0.18, 0.17);
-    let wall_mats = [stone(&mut materials, 0.24, 0.23, 0.22), stone(&mut materials, 0.21, 0.205, 0.2)];
-    let ceiling_mat = stone(&mut materials, 0.12, 0.115, 0.11);
-    let step_mat = stone(&mut materials, 0.27, 0.26, 0.24);
+    for layout in &levels.0 {
+        spawn_level(&mut commands, layout, &torches, &mut meshes, &mut materials);
+    }
+}
+
+fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) {
+    let mut commands = commands.reborrow();
+    let (floor_mat, wall_mats, ceiling_mat, step_mat, tile) = match layout.file.theme {
+        Theme::Sunken => (
+            stone(materials, 0.19, 0.18, 0.17, None),
+            [stone(materials, 0.24, 0.23, 0.22, None), stone(materials, 0.21, 0.205, 0.2, None)],
+            stone(materials, 0.12, 0.115, 0.11, None),
+            stone(materials, 0.27, 0.26, 0.24, None),
+            None,
+        ),
+        // Cold, dark ashlar; worn flagstones; a soot-black vault.
+        Theme::Gothic => (
+            stone(materials, 0.36, 0.34, 0.35, Some(Tex::Flagstones)),
+            [stone(materials, 0.34, 0.33, 0.37, Some(Tex::Bricks)), stone(materials, 0.31, 0.3, 0.34, Some(Tex::Bricks))],
+            stone(materials, 0.12, 0.11, 0.13, Some(Tex::Bricks)),
+            stone(materials, 0.4, 0.38, 0.4, Some(Tex::Marble)),
+            Some(2.4),
+        ),
+    };
+    let ceiling_y = layout.ceiling();
+    let wall_top = layout.wall_top();
     let root = commands.spawn((Name::new(format!("Level: {}", layout.file.name)), Transform::default(), Visibility::default())).id();
     let mut block = |commands: &mut Commands, name: &str, min: Vec3, max: Vec3, mat: &Handle<StandardMaterial>, solid: bool| {
         let size = max - min;
+        let mesh = match tile {
+            Some(t) => textures::tiled_box(size, (min + max) * 0.5, t),
+            None => Cuboid::from_size(size).into(),
+        };
         let mut e = commands.spawn((
             Name::new(name.to_string()),
-            Mesh3d(meshes.add(Cuboid::from_size(size))),
+            Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(mat.clone()),
             Transform::from_translation((min + max) * 0.5),
             ChildOf(root),
@@ -120,7 +181,7 @@ fn spawn_level(
     let ceiling = |rect: (Vec2, Vec2)| holes.iter().fold(vec![rect], |pieces, h| pieces.into_iter().flat_map(|p| layout::subtract_rect(p, *h)).collect());
     for f in &layout.floors {
         for (a, b) in ceiling((f.min, f.max)) {
-            block(&mut commands, "Ceiling", Vec3::new(a.x, LEVEL_CEILING, a.y), Vec3::new(b.x, LEVEL_CEILING + 0.3, b.y), &ceiling_mat, true);
+            block(&mut commands, "Ceiling", Vec3::new(a.x, ceiling_y, a.y), Vec3::new(b.x, ceiling_y + 0.3, b.y), &ceiling_mat, true);
         }
         // No floor under stairs: their ramp is solid, and a floor slab reaching under a stair
         // from the upper room would stick up through the ramp as a step.
@@ -139,16 +200,16 @@ fn spawn_level(
             EdgeKind::Lintel(d) => layout.doors[d].floor + DOOR_HEIGHT,
         };
         let (min, max) = if w.along_x {
-            (Vec3::new(w.from - t, bottom, w.line - t), Vec3::new(w.to + t, LEVEL_WALL_TOP, w.line + t))
+            (Vec3::new(w.from - t, bottom, w.line - t), Vec3::new(w.to + t, wall_top, w.line + t))
         } else {
-            (Vec3::new(w.line - t, bottom, w.from - t), Vec3::new(w.line + t, LEVEL_WALL_TOP, w.to + t))
+            (Vec3::new(w.line - t, bottom, w.from - t), Vec3::new(w.line + t, wall_top, w.to + t))
         };
         block(&mut commands, "Wall", min, max, &wall_mats[n % 2], true);
     }
 
     // Stairs: an invisible ramp to walk on, and steps to look at.
     for s in &layout.stairs {
-        block(&mut commands, "Stair Ceiling", Vec3::new(s.min.x, LEVEL_CEILING, s.min.y), Vec3::new(s.max.x, LEVEL_CEILING + 0.3, s.max.y), &ceiling_mat, true);
+        block(&mut commands, "Stair Ceiling", Vec3::new(s.min.x, ceiling_y, s.min.y), Vec3::new(s.max.x, ceiling_y + 0.3, s.max.y), &ceiling_mat, true);
         let down = s.down.vec();
         let size = s.max - s.min;
         let (length, width) = if s.down.is_ns() { (size.y, size.x) } else { (size.x, size.y) };
@@ -186,23 +247,23 @@ fn spawn_level(
         let inward = -torch.wall.vec();
         spawn_torch(
             &mut commands,
-            &torches,
+            torches,
             Vec3::new(face.x, floor + TORCH_HEIGHT, face.y),
             Vec3::new(inward.x, 0.0, inward.y),
-            100 + n as u32,
+            layout.file.seed_base + n as u32,
             LEVEL_TORCH_INTENSITY,
             LEVEL_TORCH_RANGE,
         );
     }
     for d in &layout.doors {
-        door::spawn_door(&mut commands, &mut meshes, &mut materials, d);
+        door::spawn_door(&mut commands, meshes, materials, d);
     }
-    props::spawn_props(&mut commands, &mut meshes, &mut materials, &torches, &layout);
+    props::spawn_props(&mut commands, meshes, materials, torches, layout);
     for f in &layout.file.sunflowers {
-        spawn_sunflower(&mut commands, &mut meshes, &mut materials, f.id, layout.ground(f.at), f.facing.yaw());
+        spawn_sunflower(&mut commands, meshes, materials, f.id, layout.ground(f.at), f.facing.yaw());
     }
     for (n, e) in layout.file.enemies.iter().enumerate() {
-        let point = SpawnPoint::new(e.kind, layout.ground(e.at), e.patrol.map(|p| layout.ground(p)), 100 + n as u32).with_drops(e.drops.clone());
+        let point = SpawnPoint::new(e.kind, layout.ground(e.at), e.patrol.map(|p| layout.ground(p)), layout.file.seed_base + n as u32).with_drops(e.drops.clone());
         commands.spawn((Name::new(format!("Spawn point: {:?}", e.kind)), point));
     }
 }
@@ -212,8 +273,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_cathedral_builds_and_hangs_together() {
+        let file: LevelFile = ron::from_str(LEVELS[1].1).expect("lvl2.ron parses");
+        let l = Layout::build(file);
+        assert!(l.walls.len() > 30);
+        let on_floor = |p: layout::Px| l.floor_at(l.world(p)).is_some();
+        for t in &l.file.treasures {
+            assert!(on_floor(t.at), "treasure {} off the floor", t.id);
+        }
+        for e in &l.file.enemies {
+            assert!(on_floor(e.at), "{:?} at {:?} off the floor", e.kind, e.at);
+            if let Some(p) = e.patrol {
+                assert!(on_floor(p), "patrol {p:?} off the floor");
+            }
+        }
+        for f in &l.file.sunflowers {
+            assert!(on_floor(f.at), "sunflower {}", f.id);
+        }
+        for p in &l.file.props {
+            assert!(on_floor(p.at), "{:?} at {:?} off the floor", p.kind, p.at);
+        }
+        for (n, t) in l.file.torches.iter().enumerate() {
+            let d = l.wall_distance(l.world(t.at), t.wall);
+            assert!(d.is_some_and(|d| d < 3.0), "torch {n} at {:?} is {d:?} m from its wall", t.at);
+        }
+        // Windows stand against a wall.
+        for p in l.file.props.iter().filter(|p| p.kind == layout::PropKind::Window) {
+            let d = l.wall_distance(l.world(p.at), p.facing.opposite());
+            assert!(d.is_some_and(|d| d < 1.0), "window at {:?} is {d:?} m from its wall", p.at);
+        }
+        // Door 11 joins the arena's south wall.
+        let first = l.doors.iter().find(|d| d.id == 11).unwrap();
+        assert!((first.centre - Vec2::new(0.0, ARENA_RADIUS)).length() < 0.2);
+        // The riddle: three bells that exist, opening a sealed door.
+        let riddle = &l.file.riddles[0];
+        for b in &riddle.bells {
+            assert!(l.file.props.iter().any(|p| p.kind == layout::PropKind::Bell && p.id == *b), "bell {b} missing");
+        }
+        assert!(l.doors.iter().any(|d| d.id == riddle.door && d.sealed), "the riddle's door must be sealed");
+        // The fog gate's boss lives behind it.
+        let gate = l.file.props.iter().find(|p| p.kind == layout::PropKind::FogGate).unwrap();
+        let boss = gate.boss.unwrap();
+        assert!(l.file.enemies.iter().any(|e| e.kind == boss));
+        // Ids don't collide with level 1's.
+        let lvl1 = Layout::build(ron::from_str(LEVELS[0].1).unwrap());
+        for d in &l.doors {
+            assert!(lvl1.doors.iter().all(|o| o.id != d.id), "door id {} used twice", d.id);
+        }
+        for t in &l.file.treasures {
+            assert!(lvl1.file.treasures.iter().all(|o| o.id != t.id), "treasure id {} used twice", t.id);
+        }
+        for f in &l.file.sunflowers {
+            assert!(lvl1.file.sunflowers.iter().all(|o| o.id != f.id));
+        }
+    }
+
+    #[test]
     fn the_shipped_level_builds() {
-        let file: LevelFile = ron::from_str(EMBEDDED).expect("lvl1.ron parses");
+        let file: LevelFile = ron::from_str(LEVELS[0].1).expect("lvl1.ron parses");
         let l = Layout::build(file);
         assert!(l.walls.len() > 20);
         // Every object stands on a floor.

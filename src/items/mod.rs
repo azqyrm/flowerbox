@@ -19,7 +19,7 @@ pub mod pickup;
 use bevy::prelude::*;
 
 use crate::humanoid::{Bone, HumanoidSpec};
-use crate::weapon::{WeaponDef, axe, light_sword};
+use crate::weapon::{WeaponDef, axe, greatsword, light_sword};
 
 pub struct ItemsPlugin;
 
@@ -47,11 +47,16 @@ pub enum ItemId {
     WellForgedSword,
     ForgeKey,
     WoodcutterHatchet,
+    PenitentHauberk,
+    AshenGauntlets,
+    GraveGreaves,
+    BellringerRing,
+    Penitence,
 }
 
 impl ItemId {
     #[allow(dead_code)] // tests
-    pub const ALL: [ItemId; 15] = [
+    pub const ALL: [ItemId; 20] = [
         ItemId::Longsword,
         ItemId::RustedShortsword,
         ItemId::RustedAxe,
@@ -67,6 +72,11 @@ impl ItemId {
         ItemId::WellForgedSword,
         ItemId::ForgeKey,
         ItemId::WoodcutterHatchet,
+        ItemId::PenitentHauberk,
+        ItemId::AshenGauntlets,
+        ItemId::GraveGreaves,
+        ItemId::BellringerRing,
+        ItemId::Penitence,
     ];
 
     pub fn def(self) -> &'static ItemDef {
@@ -86,6 +96,11 @@ impl ItemId {
             ItemId::WellForgedSword => &WELL_FORGED_SWORD,
             ItemId::ForgeKey => &FORGE_KEY,
             ItemId::WoodcutterHatchet => &WOODCUTTER_HATCHET,
+            ItemId::PenitentHauberk => &PENITENT_HAUBERK,
+            ItemId::AshenGauntlets => &ASHEN_GAUNTLETS,
+            ItemId::GraveGreaves => &GRAVE_GREAVES,
+            ItemId::BellringerRing => &BELLRINGER_RING,
+            ItemId::Penitence => &PENITENCE,
         }
     }
 }
@@ -93,11 +108,8 @@ impl ItemId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ArmorSlot {
     Head,
-    #[allow(dead_code)] // no chest/hand/leg armour exists yet
     Chest,
-    #[allow(dead_code)]
     Hands,
-    #[allow(dead_code)]
     Legs,
 }
 
@@ -145,6 +157,11 @@ pub enum ItemIcon {
     Key,
     Poppy,
     Camomile,
+    Greatsword,
+    Mail,
+    Gauntlet,
+    Greaves,
+    BellRing,
 }
 
 /// Primitive model attached to a bone while the item is equipped (shields, armour).
@@ -152,6 +169,8 @@ pub enum ItemIcon {
 pub struct ItemModel {
     pub bone: Bone,
     pub build: fn(&mut models::ModelBuilder, &HumanoidSpec),
+    /// Also on the mirrored bone (gauntlets, greaves); the builder reads `ModelBuilder::side`.
+    pub pair: bool,
 }
 
 /// Static description of an item.
@@ -242,7 +261,7 @@ static RUSTED_AXE: ItemDef = ItemDef {
 static WOODEN_SHIELD: ItemDef = ItemDef {
     weight: 3.0,
     block: 0.6,
-    model: Some(ItemModel { bone: Bone::ForearmL, build: models::wooden_shield }),
+    model: Some(ItemModel { bone: Bone::ForearmL, build: models::wooden_shield, pair: false }),
     ..ItemDef::base(
         "Wooden Shield",
         ItemKind::Shield,
@@ -254,7 +273,7 @@ static WOODEN_SHIELD: ItemDef = ItemDef {
 static STUDDED_BUCKLER: ItemDef = ItemDef {
     weight: 1.5,
     block: 0.4,
-    model: Some(ItemModel { bone: Bone::ForearmL, build: models::studded_buckler }),
+    model: Some(ItemModel { bone: Bone::ForearmL, build: models::studded_buckler, pair: false }),
     ..ItemDef::base(
         "Studded Buckler",
         ItemKind::Shield,
@@ -266,7 +285,7 @@ static STUDDED_BUCKLER: ItemDef = ItemDef {
 static LEATHER_HOOD: ItemDef = ItemDef {
     weight: 1.0,
     absorption: 0.06,
-    model: Some(ItemModel { bone: Bone::Head, build: models::leather_hood }),
+    model: Some(ItemModel { bone: Bone::Head, build: models::leather_hood, pair: false }),
     ..ItemDef::base(
         "Leather Hood",
         ItemKind::Armor(ArmorSlot::Head),
@@ -363,6 +382,67 @@ static FORGE_KEY: ItemDef = ItemDef {
         ItemKind::Key,
         ItemIcon::Key,
         "A heavy iron key, warm to the touch, taken from the warg of the sunken vault. It opens the door to the old forgery.",
+    )
+};
+
+static PENITENT_HAUBERK: ItemDef = ItemDef {
+    weight: 6.0,
+    absorption: 0.12,
+    model: Some(ItemModel { bone: Bone::Chest, build: models::hauberk, pair: false }),
+    ..ItemDef::base(
+        "Penitent's Hauberk",
+        ItemKind::Armor(ArmorSlot::Chest),
+        ItemIcon::Mail,
+        "Rusted mail under a blood-red tabard, worn by the cathedral's penitents while they flogged themselves along the nave. Heavy, and it remembers every blow.",
+    )
+};
+
+static ASHEN_GAUNTLETS: ItemDef = ItemDef {
+    weight: 2.0,
+    absorption: 0.05,
+    model: Some(ItemModel { bone: Bone::ForearmR, build: models::gauntlet, pair: true }),
+    ..ItemDef::base(
+        "Ashen Gauntlets",
+        ItemKind::Armor(ArmorSlot::Hands),
+        ItemIcon::Gauntlet,
+        "Iron gauntlets blackened in the censers' smoke. The acolytes who wore them swung their hatchets without flinching.",
+    )
+};
+
+static GRAVE_GREAVES: ItemDef = ItemDef {
+    weight: 3.5,
+    absorption: 0.07,
+    model: Some(ItemModel { bone: Bone::ShinR, build: models::greave, pair: true }),
+    ..ItemDef::base(
+        "Grave Greaves",
+        ItemKind::Armor(ArmorSlot::Legs),
+        ItemIcon::Greaves,
+        "Shin plates pried from an effigy in the ossuary. Cold as the stone they lay on.",
+    )
+};
+
+static BELLRINGER_RING: ItemDef = ItemDef {
+    weight: 0.3,
+    absorption: 0.04,
+    max_hp_bonus: 15.0,
+    rare: true,
+    ..ItemDef::base(
+        "Bellringer's Ring",
+        ItemKind::Ring,
+        ItemIcon::BellRing,
+        "A bronze band hung with a bell no bigger than a seed. It never rings, yet the dead seem to hear it.",
+    )
+};
+
+static PENITENCE: ItemDef = ItemDef {
+    weight: 9.0,
+    weapon: Some(&greatsword::PENITENCE),
+    rare: true,
+    ..ItemDef::base(
+        "Penitence",
+        ItemKind::Weapon,
+        ItemIcon::Greatsword,
+        "The Thorned Saint's blade, grown to fit a human grip as its bearer fell. Slow, wide and crushing; its runes still drink the light. Ability: Penitent Whirl.",
     )
 };
 

@@ -25,8 +25,9 @@ pub struct SoundPlugin;
 
 impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, build_sounds)
-            .add_systems(Update, (add_listener, start_loops, footsteps, action_sounds, impact_sounds, hum_volume));
+        app.add_message::<PlaySound>()
+            .add_systems(Startup, build_sounds)
+            .add_systems(Update, (add_listener, start_loops, footsteps, action_sounds, impact_sounds, hum_volume, play_requests));
     }
 }
 
@@ -46,6 +47,62 @@ impl Noise {
         self.0 = x;
         (x as f32 / u32::MAX as f32) * 2.0 - 1.0
     }
+}
+
+/// A one-shot anyone can ask for (`PlaySound::at`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sound {
+    /// A big bronze bell.
+    Bell,
+    /// A slam's shockwave: a deep boom.
+    Shockwave,
+    /// A horror's shriek.
+    Shriek,
+}
+
+#[derive(Message, Debug, Clone, Copy)]
+pub struct PlaySound {
+    pub sound: Sound,
+    pub pos: Vec3,
+    pub volume: f32,
+}
+
+impl PlaySound {
+    pub fn at(sound: Sound, pos: Vec3) -> Self {
+        Self { sound, pos, volume: 1.0 }
+    }
+}
+
+/// A church bell: inharmonic partials (hum, prime, tierce, quint, nominal) ringing out slowly.
+pub fn bell(fundamental: f32) -> Vec<f32> {
+    let partials = [(0.5, 0.5, 0.35), (1.0, 0.6, 0.6), (1.2, 0.35, 0.9), (1.5, 0.25, 1.2), (2.0, 0.4, 1.6), (2.6, 0.15, 2.4)];
+    samples(3.2, |t| {
+        let strike = (-t * 60.0).exp() * 0.25 * (TAU * fundamental * 4.1 * t).sin();
+        partials.iter().map(|(ratio, amp, decay)| (TAU * fundamental * ratio * t).sin() * amp * (-t * decay).exp()).sum::<f32>() * 0.45 + strike
+    })
+}
+
+/// A deep boom with rumble (shockwaves).
+pub fn boom(seed: u32) -> Vec<f32> {
+    let (mut n, mut lp) = (Noise(seed.max(1)), LowPass { y: 0.0 });
+    samples(1.1, |t| {
+        let body = (TAU * (55.0 - 25.0 * t) * t).sin() * (-t * 4.0).exp() * 0.8;
+        let rumble = lp.step(n.next(), 220.0) * (-t * 3.0).exp() * 1.4;
+        (body + rumble).clamp(-1.0, 1.0)
+    })
+}
+
+/// A shriek: two detuned high voices with vibrato over breath noise, swelling and dying.
+pub fn shriek(seed: u32) -> Vec<f32> {
+    let (mut n, mut lp) = (Noise(seed.max(1)), LowPass { y: 0.0 });
+    samples(1.3, |t| {
+        let env = (t * 8.0).min(1.0) * (-((t - 0.3).max(0.0)) * 2.6).exp();
+        let vib = (TAU * 7.0 * t).sin() * 18.0;
+        let a = (TAU * (1180.0 + vib) * t).sin();
+        let b = (TAU * (1255.0 - vib) * t + 1.3).sin();
+        let breath = lp.step(n.next(), 3000.0);
+        ((a + b) * 0.28 + breath * 0.35) * env
+    })
 }
 
 /// One-pole low-pass at `cutoff` Hz.
@@ -187,6 +244,9 @@ struct Sounds {
     gulp: Handle<AudioSource>,
     hum: Handle<AudioSource>,
     crackle: Vec<Handle<AudioSource>>,
+    bell: Handle<AudioSource>,
+    boom: Handle<AudioSource>,
+    shriek: Handle<AudioSource>,
 }
 
 fn build_sounds(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
@@ -203,6 +263,9 @@ fn build_sounds(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>
         gulp: add(gulp()),
         hum: add(hum_loop()),
         crackle: (1..=3).map(|i| add(crackle_loop(i * 4099))).collect(),
+        bell: add(bell(196.0)),
+        boom: add(boom(41)),
+        shriek: add(shriek(43)),
     };
     commands.insert_resource(sounds);
 }
@@ -323,6 +386,18 @@ fn action_sounds(
     played.retain(|e, _| q.contains(*e));
 }
 
+fn play_requests(mut commands: Commands, sounds: Option<Res<Sounds>>, mut requests: MessageReader<PlaySound>) {
+    let Some(sounds) = sounds else { return };
+    for r in requests.read() {
+        let s = match r.sound {
+            Sound::Bell => &sounds.bell,
+            Sound::Shockwave => &sounds.boom,
+            Sound::Shriek => &sounds.shriek,
+        };
+        play(&mut commands, s, r.pos, r.volume);
+    }
+}
+
 /// Weapon hits (detected on this machine), dummy hits (from anyone), blocks and parries.
 #[allow(clippy::too_many_arguments)]
 fn impact_sounds(
@@ -381,6 +456,9 @@ mod tests {
             ("gulp", gulp()),
             ("hum", hum_loop()),
             ("crackle", crackle_loop(3)),
+            ("bell", bell(196.0)),
+            ("boom", boom(41)),
+            ("shriek", shriek(43)),
         ] {
             let peak = s.iter().fold(0.0f32, |m, x| m.max(x.abs()));
             assert!(rms(&s) > 0.01, "{name} is silent");

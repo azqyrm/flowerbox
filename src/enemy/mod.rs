@@ -37,14 +37,16 @@ pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
+        // Fog gates, the boss bar and defeated bosses belong to the level, enemies or not.
+        app.add_plugins(boss::BossPlugin);
         // The older autopilot scripts (combat, hearth, …) were written for an empty arena.
-        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll" | "wargkill" | "mp")) {
+        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll" | "wargkill" | "mp" | "bestiary" | "boss")) {
             return;
         }
         app.init_resource::<EnemiesSuppressed>()
             .add_systems(Startup, create_spawn_points)
             .add_systems(Update, trigger_spawn_points.before(WeaponSystems::Equip))
-            .add_plugins((boss::BossPlugin, dormancy::DormancyPlugin))
+            .add_plugins(dormancy::DormancyPlugin)
             .add_systems(FixedUpdate, (fighter::fighter_ai, beast::beast_ai).before(CharacterSystems::Actions))
             .add_systems(FixedUpdate, beast::pounce_tracking.in_set(CharacterSystems::Combat))
             .add_systems(Update, (enemy_death, drop_loot, revive_corpses, enemy_reset).chain());

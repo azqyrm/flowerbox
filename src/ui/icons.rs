@@ -45,6 +45,57 @@ pub fn spawn_icon(commands: &mut Commands, parent: Entity, icon: ItemIcon, scale
                 block(commands, sword, Node { width: s(w), height: s(h), border_radius: r(rad), ..default() }, c);
             }
         }
+        ItemIcon::Greatsword => {
+            // A broad dark blade with a glowing red fuller and a thorned guard.
+            let sword = commands
+                .spawn((
+                    Node { width: s(20.0), height: s(58.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, ..default() },
+                    UiTransform { rotation: Rot2::degrees(45.0), ..UiTransform::IDENTITY },
+                    ChildOf(root),
+                ))
+                .id();
+            let blade = block(commands, sword, Node { width: s(9.0), height: s(36.0), border_radius: BorderRadius::new(s(4.0), s(4.0), s(0.0), s(0.0)), justify_content: JustifyContent::Center, ..default() }, Color::srgb(0.45, 0.45, 0.48));
+            block(commands, blade, Node { width: s(2.0), height: s(30.0), margin: UiRect::top(s(4.0)), ..default() }, Color::srgb(0.95, 0.2, 0.1));
+            block(commands, sword, Node { width: s(20.0), height: s(4.0), border_radius: r(1.0), ..default() }, Color::srgb(0.3, 0.28, 0.3));
+            block(commands, sword, Node { width: s(4.0), height: s(13.0), ..default() }, GRIP);
+            block(commands, sword, Node { width: s(7.0), height: s(5.0), border_radius: r(3.0), ..default() }, IRON);
+        }
+        ItemIcon::Mail => {
+            // A mail shirt: body, short sleeves, a ring texture of dots.
+            let shirt = block(commands, root, Node { width: s(28.0), height: s(36.0), border_radius: BorderRadius::new(s(4.0), s(4.0), s(2.0), s(2.0)), flex_wrap: FlexWrap::Wrap, column_gap: s(3.0), row_gap: s(3.0), padding: UiRect::all(s(3.0)), ..default() }, Color::srgb(0.5, 0.5, 0.53));
+            for _ in 0..20 {
+                block(commands, shirt, Node { width: s(2.5), height: s(2.5), border_radius: BorderRadius::MAX, ..default() }, Color::srgb(0.25, 0.25, 0.27));
+            }
+            for x in [-17.0, 17.0] {
+                block(commands, root, Node { position_type: PositionType::Absolute, left: s(28.0 + x - 6.0), top: s(10.0), width: s(12.0), height: s(14.0), border_radius: r(3.0), ..default() }, Color::srgb(0.46, 0.46, 0.49));
+            }
+            block(commands, root, Node { position_type: PositionType::Absolute, top: s(28.0), width: s(30.0), height: s(4.0), ..default() }, Color::srgb(0.45, 0.06, 0.07));
+        }
+        ItemIcon::Gauntlet => {
+            let g = block(commands, root, Node { width: s(22.0), height: s(36.0), border_radius: BorderRadius::new(s(9.0), s(9.0), s(3.0), s(3.0)), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, justify_content: JustifyContent::SpaceEvenly, ..default() }, Color::srgb(0.32, 0.3, 0.32));
+            for _ in 0..4 {
+                block(commands, g, Node { width: s(18.0), height: s(2.0), ..default() }, Color::srgb(0.55, 0.38, 0.22));
+            }
+            block(commands, root, Node { position_type: PositionType::Absolute, left: s(12.0), top: s(18.0), width: s(7.0), height: s(14.0), border_radius: r(3.0), ..default() }, Color::srgb(0.3, 0.28, 0.3));
+        }
+        ItemIcon::Greaves => {
+            for x in [-8.0, 8.0] {
+                let leg = block(commands, root, Node { position_type: PositionType::Absolute, left: s(28.0 + x - 6.0), top: s(6.0), width: s(12.0), height: s(40.0), border_radius: BorderRadius::new(s(5.0), s(5.0), s(2.0), s(2.0)), flex_direction: FlexDirection::Column, justify_content: JustifyContent::SpaceEvenly, ..default() }, Color::srgb(0.34, 0.32, 0.33));
+                block(commands, leg, Node { width: s(12.0), height: s(3.0), ..default() }, Color::srgb(0.55, 0.38, 0.22));
+                block(commands, root, Node { position_type: PositionType::Absolute, left: s(28.0 + x - 7.0), top: s(44.0), width: s(14.0), height: s(6.0), border_radius: r(2.0), ..default() }, Color::srgb(0.2, 0.15, 0.1));
+            }
+        }
+        ItemIcon::BellRing => {
+            let ring = commands
+                .spawn((
+                    Node { width: s(30.0), height: s(30.0), border: UiRect::all(s(5.0)), border_radius: BorderRadius::MAX, justify_content: JustifyContent::Center, ..default() },
+                    BorderColor::all(Color::srgb(0.62, 0.42, 0.2)),
+                    ChildOf(root),
+                ))
+                .id();
+            // A tiny bell instead of a stone.
+            block(commands, ring, Node { position_type: PositionType::Absolute, top: s(-14.0), width: s(12.0), height: s(12.0), border_radius: BorderRadius::new(s(6.0), s(6.0), s(1.0), s(1.0)), ..default() }, Color::srgb(0.8, 0.6, 0.25));
+        }
         ItemIcon::Axe => {
             let axe = commands
                 .spawn((

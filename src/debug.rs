@@ -44,6 +44,9 @@
 //!   every hit (hand, damage) and the stamina each attack cost.
 //! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
 //!   `FLOWERBOX_WALK="x,z"` walks that way instead (collision checks), logging the position.
+//! - `FLOWERBOX_AUTOPILOT=bestiary` → every enemy kind stands in a row in the arena (brains off),
+//!   for screenshots. `FLOWERBOX_SPECIAL="Saint:Whirlwind@2.0"` makes one of them perform an
+//!   ability at that time (several, comma-separated).
 //! - `FLOWERBOX_KEYS="1.0:ShiftLeft+ 1.1:Tab+ 1.2:Tab- 1.4:ShiftLeft-"` → injects real key / mouse
 //!   events (`Name+` press, `Name-` release; `MouseLeft`, `MouseRight`, `MouseMiddle` for buttons) at
 //!   those game times, and logs menu / input-block / cursor changes. For input bugs.
@@ -116,6 +119,9 @@ impl Plugin for DebugPlugin {
             }
             Ok("wargkill") => {
                 app.add_systems(Update, wargkill_script);
+            }
+            Ok("bestiary") => {
+                app.add_systems(Update, bestiary_script);
             }
             Ok("weapons") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
@@ -496,6 +502,62 @@ fn auto_screenshot(
 // ── Default autopilot (FLOWERBOX_AUTOPILOT=1) ────────────────────────────
 
 /// True on the frame where time `at` is crossed.
+/// Every enemy kind in a row north of the player, brains removed (`FLOWERBOX_SPECIAL` cues).
+#[allow(clippy::too_many_arguments)]
+fn bestiary_script(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut equip: MessageWriter<crate::weapon::EquipWeapon>,
+    brains: Query<Entity, Or<(With<FighterAi>, With<crate::enemy::beast::BeastAi>)>>,
+    mut row: Local<Vec<(crate::enemy::EnemyKind, Entity)>>,
+    mut intents: Query<(&mut ActionIntent, &mut MoveIntent), With<Enemy>>,
+) {
+    use crate::enemy::EnemyKind;
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    for e in &brains {
+        commands.entity(e).remove::<(FighterAi, crate::enemy::beast::BeastAi)>();
+    }
+    for (_, mut m) in &mut intents {
+        *m = MoveIntent::default();
+    }
+    if crossed(t, dt, 0.3) {
+        let kinds = [EnemyKind::Hollow, EnemyKind::Acolyte, EnemyKind::Mourner, EnemyKind::Saint, EnemyKind::Contorted, EnemyKind::Warg];
+        for (i, kind) in kinds.into_iter().enumerate() {
+            let x = -8.0 + 3.2 * i as f32;
+            let e = crate::enemy::kinds::spawn_enemy(&mut commands, &mut meshes, &mut materials, &mut equip, kind, Vec3::new(x, 0.0, 3.0), None, 0.0, 7 + i as u32);
+            row.push((kind, e));
+        }
+        info!("bestiary: {} kinds", row.len());
+    }
+    let cues = std::env::var("FLOWERBOX_SPECIAL").unwrap_or_default();
+    for cue in cues.split(',').filter(|c| !c.is_empty()) {
+        let Some((who, rest)) = cue.split_once(':') else { continue };
+        let Some((what, when)) = rest.split_once('@') else { continue };
+        let Ok(when) = when.parse::<f32>() else { continue };
+        if !crossed(t, dt, when) {
+            continue;
+        }
+        let ability = match what {
+            "Whirlwind" => crate::ability::AbilityId::Whirlwind,
+            "DashStrike" => crate::ability::AbilityId::DashStrike,
+            "GroundSlam" => crate::ability::AbilityId::GroundSlam,
+            "Shriek" => crate::ability::AbilityId::Shriek,
+            "RendingTurn" => crate::ability::AbilityId::RendingTurn,
+            _ => continue,
+        };
+        for (kind, e) in row.iter() {
+            if format!("{kind:?}") == who
+                && let Ok((mut intent, _)) = intents.get_mut(*e)
+            {
+                info!("bestiary: {who} uses {what}");
+                intent.buffer(ActionRequest::Special(ability));
+            }
+        }
+    }
+}
+
 fn crossed(t: f32, dt: f32, at: f32) -> bool {
     t - dt < at && t >= at
 }
@@ -1187,7 +1249,7 @@ fn log_audio(
 // ── Level walk ───────────────────────────────────────────────────────────
 
 /// `FLOWERBOX_POS="x,z[,yaw]"`: start at that floor point.
-fn place_player(layout: Option<Res<crate::level::layout::Layout>>, mut player: Query<(&mut Transform, &mut CharacterController), With<Player>>) {
+fn place_player(layout: Option<Res<crate::level::Levels>>, mut player: Query<(&mut Transform, &mut CharacterController), With<Player>>) {
     let Ok(s) = std::env::var("FLOWERBOX_POS") else { return };
     let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
     let Ok((mut tf, mut ctrl)) = player.single_mut() else { return };
@@ -1281,6 +1343,62 @@ const LEVEL_ROUTE: [((f32, f32), At); 59] = [
     (px(356.0, 600.0), At::Go), // back in the T room
 ];
 
+/// The cathedral (level 2, world metres): every bell in the rite's order, the shortcut, the
+/// lectern, the unsealed door, the crypt, the fog gate (`FLOWERBOX_ROUTE=cathedral`).
+const CATHEDRAL_ROUTE: [((f32, f32), At); 43] = [
+    ((2.4, 10.5), At::Go), // past the arena's sunflower…
+    ((1.7, 14.6), At::Go), // …and the pillar before the door
+    ((0.0, 16.6), At::Interact(1.8)), // door 11, from the arena
+    ((0.0, 22.0), At::Go),
+    ((3.0, 28.0), At::Interact(3.5)), // sunflower 11
+    ((0.0, 30.6), At::Interact(1.8)), // door 12, the great doors
+    ((0.0, 36.0), At::Go),
+    ((0.0, 74.0), At::Go), // up the nave
+    ((-3.0, 81.0), At::Go),
+    ((-20.0, 81.0), At::Go),
+    ((-30.0, 81.0), At::Go), // stairs down to the ossuary
+    ((-37.0, 81.0), At::Go),
+    ((-38.0, 91.0), At::Go),
+    ((-44.0, 92.5), At::Interact(1.5)), // the Bell of Bones
+    ((-38.0, 91.0), At::Go),
+    ((-37.0, 81.0), At::Go),
+    ((-30.0, 81.0), At::Go),
+    ((-3.0, 81.0), At::Go),
+    ((20.0, 81.0), At::Go),
+    ((24.6, 81.0), At::Interact(1.8)), // door 14 to the cloister
+    ((28.5, 81.0), At::Go),
+    ((30.0, 84.5), At::Go),
+    ((39.0, 84.6), At::Interact(1.5)), // the Bell of the Drowned
+    ((44.0, 81.0), At::Go),
+    ((49.0, 78.0), At::Go),
+    ((49.0, 70.0), At::Go),
+    ((47.5, 65.5), At::Interact(3.5)), // sunflower 12
+    ((39.0, 63.5), At::Go),
+    ((39.0, 55.0), At::Go), // stairs up to the chapel
+    ((40.0, 46.8), At::Interact(1.5)), // the Bell of the Glass Sun: the seal breaks
+    ((30.0, 47.0), At::Go),
+    ((21.0, 47.0), At::Go),
+    ((14.4, 47.0), At::Interact(1.8)), // door 15, the shortcut, from the gallery
+    ((11.0, 47.0), At::Go),
+    ((10.0, 70.0), At::Go),
+    ((5.0, 79.0), At::Go),
+    ((4.0, 87.2), At::Interact(0.6)), // the lectern
+    ((-3.0, 88.0), At::Go),
+    ((0.0, 95.0), At::Go), // through the unsealed door
+    ((0.0, 108.5), At::Go), // down into the crypt
+    ((1.0, 128.5), At::Interact(3.5)), // sunflower 13
+    ((0.0, 131.2), At::Interact(1.0)), // the fog gate
+    ((0.0, 140.0), At::Go), // in the Choir of Thorns
+];
+
+/// The route `FLOWERBOX_ROUTE` names (level 1's by default).
+fn level_route() -> &'static [((f32, f32), At)] {
+    match std::env::var("FLOWERBOX_ROUTE").as_deref() {
+        Ok("cathedral") => &CATHEDRAL_ROUTE,
+        _ => &LEVEL_ROUTE,
+    }
+}
+
 #[derive(Resource, Default)]
 struct LevelRun {
     next: usize,
@@ -1322,12 +1440,15 @@ fn level_script(
         run.wait -= dt;
         return;
     }
-    let Some(&((x, z), at)) = LEVEL_ROUTE.get(run.next) else {
+    let Some(&((x, z), at)) = level_route().get(run.next) else {
         run.done = true;
         let revived: Vec<u32> = hearths.iter().filter(|h| h.kindled).map(|h| h.id).collect();
         let open: Vec<u32> = doors.iter().filter(|d| d.open).map(|d| d.id).collect();
         let sword = inventory.items.contains(&ItemId::WellForgedSword);
         info!("level walk: done at {:.2}; revived sunflowers {revived:?}; open doors {open:?}; has the sword: {sword}", tf.translation);
+        if tf.translation.z > 133.0 {
+            info!("level walk: in the Choir of Thorns (through the mist)");
+        }
         exit.write(AppExit::Success);
         return;
     };
@@ -1444,7 +1565,7 @@ fn warg_script(
     wargs: Query<(&Enemy, &Transform, &CharacterAction), Without<Player>>,
     mut player: Query<(&mut Transform, &CharacterAction, &mut ActionIntent, &mut Health), With<Player>>,
     session: Res<crate::net::NetSession>,
-    layout: Option<Res<crate::level::layout::Layout>>,
+    layout: Option<Res<crate::level::Levels>>,
 ) {
     let t = time.elapsed_secs();
     *LEVEL_DIR.lock().unwrap() = (Vec3::ZERO, false, false);

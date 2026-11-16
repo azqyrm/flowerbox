@@ -118,8 +118,8 @@ pub fn spawn_fog_gate(
 ) {
     let yaw = f32::atan2(into.x, into.z);
     let mist = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.75, 0.8, 0.95, 0.35),
-        emissive: LinearRgba::rgb(0.8, 0.9, 1.6),
+        base_color: Color::srgba(0.7, 0.78, 0.95, 0.1),
+        emissive: LinearRgba::new(0.12, 0.16, 0.32, 0.1),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         double_sided: true,

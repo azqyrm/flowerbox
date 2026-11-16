@@ -77,17 +77,27 @@ impl Default for NotificationSettings {
 pub struct Notify {
     pub icon: NoticeIcon,
     pub text: String,
+    /// Stays this long instead of the usual lifetime (inscriptions to read).
+    pub lifetime: Option<f32>,
 }
 
 impl Notify {
     pub fn new(icon: NoticeIcon, text: impl Into<String>) -> Self {
-        Self { icon, text: text.into() }
+        Self { icon, text: text.into(), lifetime: None }
+    }
+
+    /// Stays `seconds` on screen.
+    pub fn lasting(mut self, seconds: f32) -> Self {
+        self.lifetime = Some(seconds);
+        self
     }
 }
 
 #[derive(Component)]
 struct Notice {
     age: f32,
+    /// Its own lifetime (else the settings' one).
+    lifetime: Option<f32>,
     /// Order of arrival (newest = highest).
     seq: u64,
     /// Original colours of every node in the notice, to fade them together.
@@ -153,7 +163,7 @@ fn spawn_notifications(
             TextShadow { offset: Vec2::splat(2.0), color: Color::srgba(0.0, 0.0, 0.0, 0.95) },
             ChildOf(row),
         ));
-        commands.entity(row).insert(Notice { age: 0.0, seq: *seq, colors: vec![] });
+        commands.entity(row).insert(Notice { age: 0.0, lifetime: msg.lifetime, seq: *seq, colors: vec![] });
     }
 }
 
@@ -178,7 +188,8 @@ fn animate_notifications(
     for (index, (_, entity)) in order.into_iter().enumerate() {
         let Ok((_, mut notice, mut node, mut vis)) = notices.get_mut(entity) else { continue };
         notice.age += dt;
-        let gone = notice.age >= s.lifetime + s.fade || index >= s.max_shown;
+        let lifetime = notice.lifetime.unwrap_or(s.lifetime);
+        let gone = notice.age >= lifetime + s.fade || index >= s.max_shown;
         if gone {
             commands.entity(entity).despawn();
             continue;
@@ -223,7 +234,7 @@ fn animate_notifications(
         }
         vis.set_if_neq(Visibility::Inherited);
         // Alpha: older ones dimmer; the end of the lifetime fades out.
-        let fade = 1.0 - ((notice.age - s.lifetime) / s.fade.max(1e-3)).clamp(0.0, 1.0);
+        let fade = 1.0 - ((notice.age - lifetime) / s.fade.max(1e-3)).clamp(0.0, 1.0);
         let alpha = fade * s.older_alpha.powi(index as i32);
         for (e, base, kind) in &notice.colors {
             let Ok((bg, border, text, shadow)) = colors.get_mut(*e) else { continue };

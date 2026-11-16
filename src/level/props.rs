@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use super::layout::{Layout, PropKind};
 use crate::arena::{TorchAssets, spawn_fire};
-use crate::tuning::*;
+
 
 pub struct PropsPlugin;
 
@@ -93,6 +93,7 @@ pub fn spawn_props(
     let dust = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.92, 0.75), emissive: LinearRgba::rgb(6.0, 5.2, 3.8), unlit: true, ..default() });
     let mote = meshes.add(Sphere::new(0.012).mesh().ico(1).unwrap());
 
+    let gothic = super::gothic::GothicMats::new(materials);
     let mut exits = vec![];
     // Sunbeams to fill with dust once the props are placed: (top of the opening, sun direction,
     // size, height above the floor).
@@ -109,6 +110,13 @@ pub fn spawn_props(
             commands.spawn((RigidBody::Static, Collider::cuboid(size.x, size.y, size.z), Transform::from_translation(at), ChildOf(root)));
         };
         let t = Transform::from_xyz;
+        match prop.kind {
+            PropKind::Anvil | PropKind::Forge | PropKind::SkyGrate => {}
+            _ => {
+                super::gothic::spawn_gothic_prop(commands, meshes, materials, &gothic, layout, prop, root, frame);
+                continue;
+            }
+        }
         match prop.kind {
             PropKind::Anvil => {
                 // A tree-stump block, the anvil on it (horn forward), a hammer resting on top.
@@ -133,7 +141,8 @@ pub fn spawn_props(
                 }
                 part(commands, Cuboid::new(2.1, 0.5, 1.5).into(), &brick, t(0.0, 2.6, 0.1));
                 part(commands, Cuboid::new(1.5, 0.6, 1.1).into(), &brick, t(0.0, 3.1, 0.2));
-                part(commands, Cuboid::new(0.9, LEVEL_CEILING - 3.4 + 0.3, 0.8).into(), &brick, t(0.0, (3.4 + LEVEL_CEILING + 0.3) * 0.5, 0.25));
+                let ceiling = layout.ceiling() - floor.y;
+                part(commands, Cuboid::new(0.9, ceiling - 3.4 + 0.3, 0.8).into(), &brick, t(0.0, (3.4 + ceiling + 0.3) * 0.5, 0.25));
                 for x in [-0.95, 0.95] {
                     part(commands, Cuboid::new(0.15, 1.7, 0.15).into(), &brick, t(x, 1.75, -0.55));
                 }
@@ -151,10 +160,13 @@ pub fn spawn_props(
                     commands.spawn((Name::new("Steam Vent"), SteamVent { every, timer: 0.0, n: 0 }, Transform::from_translation(world(at))));
                 }
             }
+            _ => {}
+        }
+        match prop.kind {
             PropKind::SkyGrate => {
                 // Bars across the opening, daylight above, a sunbeam down through it.
                 let (w, d) = prop.size;
-                let y = LEVEL_CEILING + 0.15 - floor.y;
+                let y = layout.ceiling() + 0.15 - floor.y;
                 for i in 0..=((w / 0.32) as i32) {
                     let x = -w * 0.5 + i as f32 * w / (w / 0.32).floor();
                     part(commands, Cylinder::new(0.035, d).into(), &dark_iron, t(x, y, 0.0).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)));
@@ -183,6 +195,7 @@ pub fn spawn_props(
                 exits.push(Vec2::new(floor.x, floor.z));
                 beams.push((top, sun_from, w, d, y));
             }
+            _ => {}
         }
     }
     // Dust in each sunbeam: specks scattered through the slanted column below the opening.
@@ -201,7 +214,8 @@ pub fn spawn_props(
             ));
         }
     }
-    commands.insert_resource(SteamExits(exits));
+    // Several levels add up their openings (the last level mustn't replace the others').
+    commands.queue(move |world: &mut World| world.get_resource_or_init::<SteamExits>().0.extend(exits));
 }
 
 fn emit_steam(time: Res<Time>, mut commands: Commands, assets: Option<Res<SteamAssets>>, mut vents: Query<(&mut SteamVent, &Transform)>) {

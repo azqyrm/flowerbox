@@ -359,6 +359,7 @@ fn shockwaves(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut damage: MessageWriter<DamageMessage>,
     mut shake: ResMut<crate::combat::CameraShake>,
+    mut sounds: MessageWriter<crate::sound::PlaySound>,
     bodies: Query<(Entity, &Transform, &CharacterAction, Option<&Wielded>, Option<&WaveSent>)>,
     victims: Query<(Entity, &Transform), (With<Player>, Without<Remote>)>,
 ) {
@@ -370,6 +371,8 @@ fn shockwaves(
         }
         let Some(wave) = id.wave(wielded.map_or(10.0, |w| w.right.base_damage)) else { continue };
         commands.entity(entity).insert(WaveSent(action.serial));
+        let sound = if wave.blockable { crate::sound::Sound::Shockwave } else { crate::sound::Sound::Shriek };
+        sounds.write(crate::sound::PlaySound::at(sound, tf.translation));
         let floor = tf.translation - Vec3::Y * (PLAYER_HALF_HEIGHT - 0.05);
         let material = materials.add(StandardMaterial {
             base_color: Color::srgba(1.0, 0.45, 0.25, 0.8),

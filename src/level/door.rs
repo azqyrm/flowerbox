@@ -49,6 +49,8 @@ pub struct Door {
     pub open: bool,
     /// The key item it needs, if locked.
     pub key: Option<ItemId>,
+    /// Only a riddle opens it (`super::riddle`); E just tells you so.
+    pub sealed: bool,
     /// Shown opening 0 (closed) … 1 (open).
     swing: f32,
     hinge: Vec3,
@@ -127,6 +129,9 @@ fn yaw_of(v: Vec2) -> f32 {
 const LEAF_THICKNESS: f32 = 0.12;
 
 pub fn spawn_door(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, plan: &DoorPlan) {
+    if plan.arch {
+        return; // just the opening
+    }
     let wood = materials.add(StandardMaterial { base_color: Color::srgb(0.3, 0.19, 0.1), perceptual_roughness: 0.85, ..default() });
     let dark = materials.add(StandardMaterial { base_color: Color::srgb(0.2, 0.12, 0.06), perceptual_roughness: 0.9, ..default() });
     let iron = materials.add(StandardMaterial { base_color: Color::srgb(0.1, 0.1, 0.1), metallic: 0.7, perceptual_roughness: 0.5, ..default() });
@@ -136,6 +141,7 @@ pub fn spawn_door(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials:
         id: plan.id,
         open: false,
         key: plan.key,
+        sealed: plan.sealed,
         swing: 0.0,
         hinge: Vec3::new(h.x, plan.floor, h.y),
         width,
@@ -198,7 +204,10 @@ fn door_interaction(
     if !std::mem::take(&mut input.interact) {
         return;
     }
-    if !door.opens_from(feet) {
+    if door.sealed {
+        notify.write(Notify::new(NoticeIcon::Door, strings::DOOR_SEALED.to_string()));
+        info!("door {} is sealed", door.id);
+    } else if !door.opens_from(feet) {
         notify.write(Notify::new(NoticeIcon::Door, strings::DOOR_OTHER_SIDE.to_string()));
         refused.write(DoorRefused);
         info!("door {} only opens from the other side", door.id);
@@ -311,6 +320,7 @@ mod tests {
             open_yaw: yaw_of(Dir::North.vec()),
             opens: Dir::North.vec(),
             key: None,
+            sealed: false,
             blocker: None,
         };
         let closed = d.transform().translation;

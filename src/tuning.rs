@@ -286,3 +286,7 @@ pub const FOG_RANGE: f32 = 1.6;
 pub const FOG_STEP: f32 = 1.4;
 /// The boss bar shows while a living boss is this close (m).
 pub const BOSS_BAR_RANGE: f32 = 26.0;
+
+/// Bells and inscriptions: reach (m); inscriptions stay on screen this long (s).
+pub const BELL_RANGE: f32 = 2.2;
+pub const PLAQUE_NOTICE_TIME: f32 = 12.0;

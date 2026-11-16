@@ -1,0 +1,196 @@
+// Level 2: "The Cathedral of Ashes", south of the arena. Coordinates are world metres
+// (x east, y = world z, growing south); the arena's south wall is at y = 18.
+// Format: see src/level/layout.rs. Rects are (x0, y0, x1, y1).
+//
+// Route: arena door 11 → narthex (sunflower 11) → great doors 12 → nave + aisles → transept.
+//   West: stairs down to the ossuary (Bell of Bones, weeping statue).
+//   East: door 14 → cloister (fountain, Bell of the Drowned, sunflower 12) → stairs up → bell
+//   chapel (glass-sun window, Bell of the Glass Sun) → gallery → one-way door 15 back into the
+//   nave's east aisle (shortcut).
+//   South: the apse (altar, the riddle's lectern) → sealed door 13 (ring the bells in order) →
+//   crypt stairs → crypt → antechamber (sunflower 13) → fog gate → the Choir of Thorns (boss).
+(
+    name: "The Cathedral of Ashes",
+    px_per_m: 1.0,
+    origin_px: (0.0, 0.0),
+    origin_world: (0.0, 0.0),
+    theme: Gothic,
+    ceiling: Some(10.0),
+    seed_base: 500,
+    rooms: [
+        (name: "Narthex", floor: 0.0, rects: [(-1.5, 18.0, 1.5, 24.0), (-7.0, 24.0, 7.0, 32.0)]),
+        (name: "Cathedral", floor: 0.0, rects: [
+            (-7.0, 32.0, 7.0, 76.0),     // the nave
+            (-13.0, 36.0, -7.0, 72.0),   // west aisle
+            (7.0, 36.0, 13.0, 72.0),     // east aisle
+            (-26.0, 76.0, 26.0, 86.0),   // transept
+            (-8.0, 86.0, 8.0, 96.0),     // apse
+        ]),
+        (name: "Ossuary", floor: -3.0, rects: [(-52.0, 66.0, -34.0, 96.0)]),
+        (name: "Cloister", floor: 0.0, rects: [(26.0, 62.0, 52.0, 100.0)]),
+        (name: "Bell Chapel", floor: 2.5, rects: [(30.0, 40.0, 50.0, 54.0), (20.0, 45.0, 30.0, 49.0)]),
+        (name: "Crypt", floor: -4.0, rects: [(-8.0, 108.0, 8.0, 124.0), (-4.0, 124.0, 4.0, 132.0)]),
+        (name: "Choir of Thorns", floor: -4.0, rects: [(-15.0, 136.0, 15.0, 156.0), (-11.0, 132.0, 11.0, 160.0)]),
+    ],
+    stairs: [
+        (rect: (-34.0, 78.0, -26.0, 84.0), down: West, top: 0.0, bottom: -3.0),
+        (rect: (36.0, 54.0, 42.0, 62.0), down: South, top: 2.5, bottom: 0.0),
+        (rect: (13.0, 45.0, 20.0, 49.0), down: West, top: 2.5, bottom: 0.0),
+        (rect: (-1.75, 96.0, 1.75, 108.0), down: South, top: 0.0, bottom: -4.0),
+    ],
+    doors: [
+        // Arena → narthex.
+        (id: 11, at: (0.0, 18.0), width: 2.6, hinge: East, opens: South),
+        // The great doors of the nave.
+        (id: 12, at: (0.0, 32.0), width: 3.0, hinge: West, opens: South),
+        // Apse → crypt stairs: sealed by the rite of the three bells.
+        (id: 13, at: (0.0, 96.0), width: 2.6, hinge: East, opens: South, sealed: true),
+        // Transept → cloister.
+        (id: 14, at: (26.0, 81.0), width: 2.6, hinge: North, opens: East),
+        // Gallery stairs → east aisle: opens only from the gallery (the shortcut back).
+        (id: 15, at: (13.0, 47.0), width: 2.6, hinge: North, opens: West),
+        // Antechamber → the Choir of Thorns: an archway; the fog gate stands in it.
+        (id: 16, at: (0.0, 132.0), width: 3.0, hinge: West, opens: South, arch: true),
+    ],
+    torches: [
+        (at: (-6.7, 26.0), wall: West), (at: (6.7, 31.0), wall: East),
+        (at: (-6.7, 34.0), wall: West), (at: (6.7, 34.0), wall: East),
+        (at: (-12.7, 48.0), wall: West), (at: (-12.7, 60.0), wall: West), (at: (-12.7, 70.5), wall: West),
+        (at: (12.7, 52.0), wall: East), (at: (12.7, 70.5), wall: East),
+        (at: (-24.0, 76.3), wall: North), (at: (24.0, 76.3), wall: North), (at: (-11.0, 76.3), wall: North), (at: (11.0, 76.3), wall: North),
+        (at: (-22.0, 85.7), wall: South), (at: (22.0, 85.7), wall: South),
+        (at: (-7.7, 88.5), wall: West), (at: (7.7, 88.5), wall: East),
+        (at: (-51.7, 72.0), wall: West), (at: (-51.7, 86.0), wall: West), (at: (-34.3, 70.0), wall: East), (at: (-34.3, 92.0), wall: East),
+        (at: (26.3, 68.0), wall: West), (at: (26.3, 95.0), wall: West), (at: (51.7, 72.0), wall: East), (at: (51.7, 92.0), wall: East),
+        (at: (30.0, 62.3), wall: North), (at: (48.0, 62.3), wall: North), (at: (39.0, 99.7), wall: South),
+        (at: (30.3, 42.0), wall: West), (at: (49.7, 46.0), wall: East), (at: (46.0, 53.7), wall: South), (at: (25.0, 45.3), wall: North),
+        (at: (-7.7, 112.0), wall: West), (at: (7.7, 112.0), wall: East), (at: (-7.7, 120.0), wall: West), (at: (7.7, 120.0), wall: East),
+        (at: (-3.7, 128.0), wall: West),
+        (at: (-14.7, 140.0), wall: West), (at: (14.7, 140.0), wall: East), (at: (-14.7, 152.0), wall: West), (at: (14.7, 152.0), wall: East),
+        (at: (-6.0, 159.7), wall: South), (at: (6.0, 159.7), wall: South), (at: (-7.0, 132.3), wall: North), (at: (7.0, 132.3), wall: North),
+    ],
+    enemies: [
+        // The nave: Hollows and acolytes among the pews; a Mourner waits at the crossing.
+        (at: (-3.0, 38.0), patrol: Some((3.0, 38.0))),
+        (at: (-10.0, 45.0)),
+        (at: (10.0, 55.0)),
+        (kind: Acolyte, at: (0.0, 58.0)),
+        (kind: Acolyte, at: (-10.0, 64.0), patrol: Some((-10.0, 40.0))),
+        (at: (4.0, 66.0)),
+        (kind: Mourner, at: (0.0, 73.0)),
+        // Transept.
+        (kind: Acolyte, at: (-18.0, 81.0)),
+        (at: (18.0, 80.0), patrol: Some((10.0, 80.0))),
+        // The ossuary: wargs among the bones, the Contorted by the weeping statue.
+        (kind: Warg, at: (-44.0, 72.0)),
+        (kind: Warg, at: (-40.0, 86.0), patrol: Some((-48.0, 86.0))),
+        (at: (-36.0, 80.0)),
+        (at: (-50.0, 76.0)),
+        (kind: Contorted, at: (-45.0, 89.5)),
+        // The cloister: acolytes, a warg, the second Contorted crawling round the fountain.
+        (kind: Acolyte, at: (30.0, 70.0), patrol: Some((30.0, 92.0))),
+        (kind: Acolyte, at: (48.0, 90.0)),
+        (kind: Warg, at: (42.0, 95.0)),
+        (kind: Contorted, at: (35.0, 78.0), patrol: Some((35.0, 86.0))),
+        // The bell chapel and its gallery.
+        (kind: Acolyte, at: (35.0, 48.0)),
+        (kind: Acolyte, at: (45.0, 50.0)),
+        (at: (24.0, 47.0)),
+        // The crypt: two Hollows and the second Mourner among the sarcophagi.
+        (at: (-5.0, 110.0)),
+        (at: (5.0, 116.0)),
+        (kind: Mourner, at: (0.0, 120.0)),
+        // The Thorned Saint.
+        (kind: Saint, at: (0.0, 150.0), drops: [(item: Penitence, unique: Some(400))]),
+    ],
+    treasures: [
+        (id: 300, item: Poppy, at: (-5.0, 30.0)),
+        (id: 301, item: HopCone, at: (-11.0, 70.5)),
+        (id: 302, item: PenitentHauberk, at: (11.0, 37.0)),
+        (id: 303, item: Camomile, at: (-24.0, 84.5)),
+        (id: 304, item: GraveGreaves, at: (-36.0, 94.5)),
+        (id: 305, item: HopCone, at: (-51.0, 67.0)),
+        (id: 306, item: AshenGauntlets, at: (50.5, 98.5)),
+        (id: 307, item: HopCone, at: (28.0, 64.0)),
+        (id: 308, item: BellringerRing, at: (32.0, 42.0)),
+        (id: 309, item: Poppy, at: (6.5, 122.5)),
+        (id: 310, item: HopCone, at: (-3.0, 126.0)),
+    ],
+    sunflowers: [
+        (id: 11, at: (4.5, 28.0), facing: West),
+        (id: 12, at: (49.0, 65.5), facing: West),
+        (id: 13, at: (2.5, 128.5), facing: West),
+    ],
+    riddles: [(id: 1, bells: [1, 2, 3], door: 13)],
+    props: [
+        // The nave arcade and the crossing.
+        (kind: Column, at: (-7.0, 38.0), size: (0.55, 0.0)), (kind: Column, at: (7.0, 38.0), size: (0.55, 0.0)),
+        (kind: Column, at: (-7.0, 44.0), size: (0.55, 0.0)), (kind: Column, at: (7.0, 44.0), size: (0.55, 0.0)),
+        (kind: Column, at: (-7.0, 50.0), size: (0.55, 0.0)), (kind: Column, at: (7.0, 50.0), size: (0.55, 0.0)),
+        (kind: Column, at: (-7.0, 56.0), size: (0.55, 0.0)), (kind: Column, at: (7.0, 56.0), size: (0.55, 0.0)),
+        (kind: Column, at: (-7.0, 62.0), size: (0.55, 0.0)), (kind: Column, at: (7.0, 62.0), size: (0.55, 0.0)),
+        (kind: Column, at: (-7.0, 68.0), size: (0.55, 0.0)), (kind: Column, at: (7.0, 68.0), size: (0.55, 0.0)),
+        (kind: Column, at: (-7.0, 76.5), size: (0.7, 0.0)), (kind: Column, at: (7.0, 76.5), size: (0.7, 0.0)),
+        (kind: Window, at: (-12.6, 42.0), facing: East, size: (2.4, 4.5)),
+        (kind: Window, at: (-12.6, 54.0), facing: East, size: (2.4, 4.5)),
+        (kind: Window, at: (-12.6, 66.0), facing: East, size: (2.4, 4.5)),
+        (kind: Window, at: (12.6, 40.5), facing: West, size: (2.4, 4.5)),
+        (kind: Window, at: (12.6, 60.0), facing: West, size: (2.4, 4.5)),
+        (kind: Window, at: (12.6, 66.0), facing: West, size: (2.4, 4.5)),
+        (kind: Window, at: (-6.6, 28.0), facing: East, size: (1.6, 3.5)),
+        (kind: Pews, at: (-3.9, 41.0), facing: South, size: (6.0, 4.4)),
+        (kind: Pews, at: (3.9, 41.0), facing: South, size: (6.0, 4.4)),
+        (kind: Pews, at: (-3.9, 51.0), facing: South, size: (4.0, 4.4)),
+        (kind: Pews, at: (3.9, 51.0), facing: South, size: (4.0, 4.4)),
+        (kind: Chandelier, at: (0.0, 40.0)), (kind: Chandelier, at: (0.0, 52.0)), (kind: Chandelier, at: (0.0, 64.0)), (kind: Chandelier, at: (0.0, 81.0)),
+        (kind: Chandelier, at: (-17.0, 81.0)), (kind: Chandelier, at: (17.0, 81.0)), (kind: Chandelier, at: (0.0, 27.5)),
+        (kind: Chandelier, at: (-43.0, 72.0)), (kind: Chandelier, at: (-43.0, 88.0)), (kind: Chandelier, at: (40.0, 47.0)),
+        // Transept and apse.
+        (kind: Window, at: (-18.0, 76.6), facing: South, size: (2.6, 4.5)),
+        (kind: Window, at: (18.0, 76.6), facing: South, size: (2.6, 4.5)),
+        (kind: Window, at: (-15.0, 85.4), facing: North, size: (2.6, 4.5)),
+        (kind: Window, at: (15.0, 85.4), facing: North, size: (2.6, 4.5)),
+        (kind: Window, at: (-7.6, 91.5), facing: East, size: (2.0, 4.0)),
+        (kind: Window, at: (7.6, 91.5), facing: West, size: (2.0, 4.0)),
+        (kind: Altar, at: (0.0, 91.0), facing: North),
+        (kind: Plaque, at: (4.0, 88.5), facing: North, text: "HERE SLEEPS THE THORNED SAINT, BEHIND THE SEAL OF THREE BELLS. | Wake first she who weeps among the bones, | then he who drowns where no rain can reach him, | and last the one who gazes into the glass sun. | Ring them so, and the stair below shall open."),
+        (kind: Candles, at: (-3.0, 89.0)), (kind: Candles, at: (-5.5, 94.0)), (kind: Candles, at: (5.5, 94.0)),
+        // The ossuary.
+        (kind: Statue, at: (-49.6, 92.0), facing: East, size: (1.1, 0.0)),
+        (kind: Bell, at: (-45.5, 92.5), facing: East, id: 1, text: "The Bell of Bones"),
+        (kind: Bones, at: (-50.0, 70.5)), (kind: Bones, at: (-38.0, 72.0)), (kind: Bones, at: (-44.0, 82.0)),
+        (kind: Bones, at: (-50.0, 82.0)), (kind: Bones, at: (-37.5, 89.0)), (kind: Bones, at: (-41.0, 94.0)),
+        (kind: Sarcophagus, at: (-43.0, 76.0), facing: North), (kind: Sarcophagus, at: (-47.0, 76.0), facing: North),
+        (kind: Candles, at: (-48.0, 94.5)), (kind: Candles, at: (-36.0, 67.5)),
+        // The cloister.
+        (kind: Column, at: (32.0, 68.0), size: (0.45, 0.0)), (kind: Column, at: (46.0, 68.0), size: (0.45, 0.0)),
+        (kind: Column, at: (32.0, 76.0), size: (0.45, 0.0)), (kind: Column, at: (46.0, 76.0), size: (0.45, 0.0)),
+        (kind: Column, at: (32.0, 86.0), size: (0.45, 0.0)), (kind: Column, at: (46.0, 86.0), size: (0.45, 0.0)),
+        (kind: Column, at: (32.0, 94.0), size: (0.45, 0.0)), (kind: Column, at: (46.0, 94.0), size: (0.45, 0.0)),
+        (kind: Column, at: (39.0, 68.0), size: (0.45, 0.0)), (kind: Column, at: (39.0, 94.0), size: (0.45, 0.0)),
+        (kind: Fountain, at: (39.0, 81.0)),
+        (kind: Bell, at: (39.0, 86.5), facing: North, id: 2, text: "The Bell of the Drowned"),
+        (kind: Chandelier, at: (39.0, 72.0)), (kind: Chandelier, at: (39.0, 90.0)),
+        (kind: Window, at: (51.6, 81.0), facing: West, size: (2.4, 4.5)),
+        // The bell chapel: the glass sun.
+        (kind: Window, at: (40.0, 40.6), facing: South, size: (4.2, 5.0)),
+        (kind: Window, at: (30.6, 52.0), facing: East, size: (1.6, 3.5)),
+        (kind: Bell, at: (40.0, 45.0), facing: South, id: 3, text: "The Bell of the Glass Sun"),
+        (kind: Candles, at: (34.0, 42.0)), (kind: Candles, at: (46.5, 42.0)),
+        // The crypt.
+        (kind: Sarcophagus, at: (-4.5, 112.0), facing: North), (kind: Sarcophagus, at: (4.5, 112.0), facing: North),
+        (kind: Sarcophagus, at: (-4.5, 118.0), facing: North), (kind: Sarcophagus, at: (4.5, 118.0), facing: North),
+        (kind: Candles, at: (-7.0, 115.0)), (kind: Candles, at: (7.0, 115.0)), (kind: Candles, at: (0.0, 123.0)),
+        (kind: Bones, at: (-6.5, 122.5)), (kind: Chandelier, at: (0.0, 115.0)),
+        // The Choir of Thorns.
+        (kind: FogGate, at: (0.0, 132.4), facing: South, size: (3.2, 4.0), boss: Some(Saint)),
+        (kind: Column, at: (-11.0, 140.0), size: (0.75, 0.0)), (kind: Column, at: (11.0, 140.0), size: (0.75, 0.0)),
+        (kind: Column, at: (-11.0, 152.0), size: (0.75, 0.0)), (kind: Column, at: (11.0, 152.0), size: (0.75, 0.0)),
+        (kind: Window, at: (0.0, 159.6), facing: North, size: (3.2, 6.0)),
+        (kind: Window, at: (-14.6, 146.0), facing: East, size: (2.4, 5.0)),
+        (kind: Window, at: (14.6, 146.0), facing: West, size: (2.4, 5.0)),
+        (kind: Chandelier, at: (0.0, 146.0)),
+        (kind: Candles, at: (-9.0, 158.0)), (kind: Candles, at: (9.0, 158.0)),
+        (kind: Bones, at: (-13.0, 154.5)), (kind: Bones, at: (13.0, 136.5)),
+    ],
+)

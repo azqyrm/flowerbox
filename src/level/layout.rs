@@ -43,6 +43,15 @@ impl Dir {
     }
 
     /// True for North / South.
+    pub fn opposite(self) -> Dir {
+        match self {
+            Dir::North => Dir::South,
+            Dir::South => Dir::North,
+            Dir::East => Dir::West,
+            Dir::West => Dir::East,
+        }
+    }
+
     pub fn is_ns(self) -> bool {
         matches!(self, Dir::North | Dir::South)
     }
@@ -72,9 +81,44 @@ pub struct LevelFile {
     pub sunflowers: Vec<SunflowerDef>,
     #[serde(default)]
     pub props: Vec<PropDef>,
+    /// Look of walls, floors and ceilings.
+    #[serde(default)]
+    pub theme: Theme,
+    /// Ceiling height (world y) shared by every room; default `LEVEL_CEILING`.
+    #[serde(default)]
+    pub ceiling: Option<f32>,
+    /// Base of the ids of torches and of enemy AI seeds (different per level so two levels' torches
+    /// don't flicker in step).
+    #[serde(default = "default_seed_base")]
+    pub seed_base: u32,
+    /// Puzzles: ring bells in order to open a sealed door (`crate::level::riddle`).
+    #[serde(default)]
+    pub riddles: Vec<RiddleDef>,
 }
 
-/// Furniture and fixtures (`crate::level::props`).
+fn default_seed_base() -> u32 {
+    100
+}
+
+/// How a level's stone looks.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Theme {
+    /// Plain warm stone (level 1).
+    #[default]
+    Sunken,
+    /// Dark gothic ashlar, flagstone floors, cold stone (the cathedral).
+    Gothic,
+}
+
+/// A riddle: ring the `bells` (prop ids) in this order and door `door` (sealed) opens.
+#[derive(Deserialize, Debug, Clone)]
+pub struct RiddleDef {
+    pub id: u32,
+    pub bells: Vec<u32>,
+    pub door: u32,
+}
+
+/// Furniture and fixtures (`crate::level::props`, the cathedral's in `crate::level::gothic`).
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropKind {
     Anvil,
@@ -82,6 +126,32 @@ pub enum PropKind {
     Forge,
     /// An opening in the ceiling (`size` metres, x × z) with iron bars: daylight and a sunbeam.
     SkyGrate,
+    /// A round gothic column, floor to ceiling (`size.0` = radius). Solid.
+    Column,
+    /// A tall stained-glass window on the wall behind it (`size` = width, height), glowing.
+    Window,
+    /// Rows of pews (`size.0` rows, `size.1` metres long), facing `facing`. Solid.
+    Pews,
+    /// A stone altar with candles.
+    Altar,
+    /// A faceless robed statue on a plinth, weeping glowing tears (`size.0` = scale).
+    Statue,
+    /// A bell in a wooden frame; ring it with E (`id`, for riddles; `text` = its name).
+    Bell,
+    /// A stone lectern with an inscription (`text`), read with E.
+    Plaque,
+    /// A heap of skulls and bones.
+    Bones,
+    /// A cluster of candles on the floor (a small warm light).
+    Candles,
+    /// An iron ring of candles hanging from the ceiling.
+    Chandelier,
+    /// A carved stone coffin. Solid.
+    Sarcophagus,
+    /// A basin with water and a weathered figure (the cloister's).
+    Fountain,
+    /// Mist across a boss arena's entrance (`size` = width, height; `facing` = into the arena).
+    FogGate,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -93,6 +163,15 @@ pub struct PropDef {
     pub facing: Dir,
     #[serde(default)]
     pub size: (f32, f32),
+    /// Bells: the id riddles name.
+    #[serde(default)]
+    pub id: u32,
+    /// Plaques: the inscription; bells: the name.
+    #[serde(default)]
+    pub text: String,
+    /// Fog gates: whose arena it closes.
+    #[serde(default)]
+    pub boss: Option<crate::enemy::EnemyKind>,
 }
 
 /// A room: one or more rectangles sharing a floor height. No walls between its own rectangles.
@@ -126,6 +205,12 @@ pub struct DoorDef {
     /// Locked: needs this item in the bag.
     #[serde(default)]
     pub key: Option<ItemId>,
+    /// Sealed: only a riddle opens it (`RiddleDef::door`).
+    #[serde(default)]
+    pub sealed: bool,
+    /// An archway: the opening and its lintel, no door leaf (a fog gate can stand in it).
+    #[serde(default)]
+    pub arch: bool,
 }
 
 /// A torch on the wall that lies `wall`-wards of `at`.
@@ -208,6 +293,8 @@ pub struct DoorPlan {
     pub hinge: Dir,
     pub opens: Dir,
     pub key: Option<ItemId>,
+    pub sealed: bool,
+    pub arch: bool,
     along_x: bool,
     /// Grid index of the wall line, and the cell span of the hole.
     line: i32,
@@ -345,6 +432,16 @@ impl Layout {
         })
     }
 
+    /// The ceiling height of this level.
+    pub fn ceiling(&self) -> f32 {
+        self.file.ceiling.unwrap_or(LEVEL_CEILING)
+    }
+
+    /// Top of its walls (a little above the ceiling).
+    pub fn wall_top(&self) -> f32 {
+        self.ceiling() + (LEVEL_WALL_TOP - LEVEL_CEILING)
+    }
+
     /// Openings in the ceiling (min, max on x/z), from the sky grates.
     pub fn ceiling_holes(&self) -> Vec<(Vec2, Vec2)> {
         self.file
@@ -444,6 +541,8 @@ impl Layout {
                 hinge: d.hinge,
                 opens: d.opens,
                 key: d.key,
+                sealed: d.sealed,
+                arch: d.arch,
                 along_x,
                 line,
                 span,
