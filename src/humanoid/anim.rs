@@ -9,13 +9,13 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
-use super::pose::{HumanoidPose, PoseMask, bone_model_transform};
+use super::pose::{HumanoidPose, PoseMask, bone_model_transform, reach_left_hand};
 use super::{Bone, HumanoidRig, HumanoidSpec};
 use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
 use crate::character::controller::CharacterController;
 use crate::character::guard::Guard;
 use crate::tuning::*;
-use crate::weapon::{EquippedWeapon, Stance, SwingKey, WeaponClass};
+use crate::weapon::{AttackHand, Stance, SwingKey, WeaponClass, Wielded};
 
 fn rx(a: f32) -> Quat {
     Quat::from_rotation_x(a)
@@ -377,7 +377,32 @@ fn swing_state(a: &ActiveAction, rest: Key) -> Option<(Key, Key, f32)> {
 }
 
 /// Pose for a running action, and which bones it controls. `None` = no action pose.
+///
+/// Attacks swung with the left hand are the mirror image of the right-handed swing; a dual attack
+/// swings both arms at once (the right swing and its mirror). So every weapon class gets left and
+/// dual animations from its right-hand swing keys.
 pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
+    let (pose, mask) = right_handed_pose(a)?;
+    Some(match a.hand {
+        AttackHand::Right => (pose, mask),
+        AttackHand::Left => (pose.mirrored(), mask),
+        AttackHand::Both => (dual(&pose), mask),
+    })
+}
+
+/// Both arms swing: the right arm as posed, the left as its mirror; the chest keeps only what
+/// both sides agree on (the lean, not the twist).
+fn dual(p: &HumanoidPose) -> HumanoidPose {
+    let m = p.mirrored();
+    let mut out = *p;
+    for bone in [Bone::UpperArmL, Bone::ForearmL, Bone::HandL] {
+        out.set(bone, m.get(bone));
+    }
+    out.set(Bone::Chest, p.get(Bone::Chest).slerp(m.get(Bone::Chest), 0.5));
+    out
+}
+
+fn right_handed_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
     let d = &a.def;
     let total = d.total();
     let p01 = a.elapsed / total.max(1e-3);
@@ -410,11 +435,28 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
             p.add(Bone::UpperArmL, rz(-0.4 * b));
             Some((p, PoseMask::Full))
         }
+        ActionKind::Ability(id) if id.strike().is_none() => {
+            // A war cry: chest thrown back, both arms flung out and up, head back — then settle.
+            let k = match a.phase() {
+                ActionPhase::Startup => ease(a.elapsed / d.startup.max(1e-3)),
+                ActionPhase::Active => 1.0,
+                _ => 1.0 - ease((a.elapsed - d.startup - d.active) / d.recovery.max(1e-3)),
+            };
+            let shake = if a.phase() == ActionPhase::Active { (a.elapsed * 30.0).sin() * 0.04 } else { 0.0 };
+            p.add(Bone::Chest, rx(0.3 * k + shake)).set(Bone::Head, rx(-0.45 * k));
+            p.set(Bone::UpperArmL, Quat::IDENTITY.slerp(rz(-2.5) * rx(0.35), k)).set(Bone::ForearmL, rx(0.35 * k));
+            p.set(Bone::UpperArmR, p.get(Bone::UpperArmR).slerp(rz(2.5) * rx(0.35), k)).set(Bone::ForearmR, rx(0.35 * k));
+            p.set(Bone::ThighL, rx(0.3 * k)).set(Bone::ShinL, rx(-0.35 * k));
+            p.set(Bone::ThighR, rx(-0.2 * k)).set(Bone::ShinR, rx(-0.3 * k));
+            p.pelvis_offset.y = -0.08 * k;
+            Some((p, PoseMask::Full))
+        }
         ActionKind::LightAttack(_)
         | ActionKind::HeavyCharge
         | ActionKind::HeavyAttack
         | ActionKind::JumpAttack
-        | ActionKind::RunningAttack => {
+        | ActionKind::RunningAttack
+        | ActionKind::Ability(_) => {
             let rest = Key { chest: Quat::IDENTITY, shoulder: p.get(Bone::UpperArmR) };
             let (from, to, t) = swing_state(a, rest)?;
             let t = ease(t);
@@ -592,6 +634,59 @@ pub fn guard_arm(p: &mut HumanoidPose, weight: f32) {
         .set(Bone::HandL, h.slerp(Quat::IDENTITY, weight));
 }
 
+/// Actions that pose the left arm themselves (it isn't free to hold a weapon or a grip).
+fn left_arm_busy(action: &CharacterAction) -> bool {
+    let Some(a) = action.current else { return false };
+    match a.kind {
+        ActionKind::LightAttack(_) | ActionKind::HeavyCharge | ActionKind::HeavyAttack | ActionKind::JumpAttack | ActionKind::RunningAttack => {
+            a.hand != AttackHand::Right
+        }
+        ActionKind::Ability(id) => id.strike().is_none(),
+        // A flinch keeps the grip; rolls, drinking, resting, doors… pose the arm themselves.
+        ActionKind::Hurt | ActionKind::Stunned => false,
+        _ => true,
+    }
+}
+
+/// What the hands hold: a left-hand weapon is carried in the mirror image of its class's guard
+/// (unless an action uses the left arm); a weapon held in both hands gets the free hand on its
+/// handle (IK, just below the right fist toward the pommel).
+fn hands_layer(spec: &HumanoidSpec, pose: &mut HumanoidPose, action: &CharacterAction, wielded: Option<&Wielded>) {
+    let Some(w) = wielded else { return };
+    if left_arm_busy(action) {
+        return;
+    }
+    match (w.two_hand, w.left) {
+        (Some(_), _) => {
+            let hand = bone_model_transform(spec, pose, Bone::HandR);
+            let grip = hand.transform_point(Vec3::NEG_Y * 0.12);
+            reach_left_hand(spec, pose, grip);
+        }
+        (None, Some(left)) => {
+            let attacking_right = action.current.is_some_and(|a| a.damage_multiplier().is_some() || a.kind == ActionKind::HeavyCharge);
+            // During a right-hand swing the left weapon is held back a little (still in guard).
+            let g = guard_pose(left.class).mirrored();
+            let k = if attacking_right { 0.7 } else { 1.0 };
+            for bone in [Bone::UpperArmL, Bone::ForearmL, Bone::HandL] {
+                pose.set(bone, pose.get(bone).slerp(g.get(bone), k));
+            }
+        }
+        (None, None) => {}
+    }
+}
+
+/// Guarding with a two-handed weapon: the blade raised across the body (the left hand follows by IK).
+fn weapon_guard_arm(p: &mut HumanoidPose, weight: f32) {
+    if weight <= 0.0 {
+        return;
+    }
+    let mut g = *p;
+    set_sword_arm(&mut g, 1.05, 1.25, Vec3::new(-0.35, 0.0, 1.35));
+    for bone in [Bone::UpperArmR, Bone::ForearmR, Bone::HandR] {
+        p.set(bone, p.get(bone).slerp(g.get(bone), weight));
+    }
+}
+
 /// Brief losses of ground shorter than this (stepping over rubble, a missed probe) don't
 /// switch to the air pose or trigger a landing.
 const AIR_GRACE: f32 = 0.1;
@@ -606,14 +701,14 @@ pub fn animate_humanoids(
         &mut HumanoidAnimator,
         &CharacterController,
         &CharacterAction,
-        Option<&EquippedWeapon>,
+        Option<&Wielded>,
         Option<&Guard>,
     )>,
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();
     let smooth = |rate: f32| 1.0 - (-rate * dt).exp();
-    for (spec, rig, mut anim, ctrl, action, equipped, guard) in &mut characters {
+    for (spec, rig, mut anim, ctrl, action, wielded, guard) in &mut characters {
         anim.time += dt;
         // Airborne only after a short grace period, or right away when clearly jumping.
         if ctrl.grounded {
@@ -649,7 +744,7 @@ pub fn animate_humanoids(
                 landing: bell(1.0 - anim.landing) * anim.landing.min(1.0).sqrt(),
                 blocked: anim.blocked,
                 time: anim.time,
-                weapon: equipped.map_or_else(WeaponClass::default, |e| e.class()),
+                weapon: wielded.map_or_else(WeaponClass::default, |w| w.class()),
             },
         );
 
@@ -673,7 +768,13 @@ pub fn animate_humanoids(
         // Guard layer: the shield arm follows the raise (eased); lowering takes ~0.15 s.
         let raise = guard.map_or(0.0, Guard::raise_progress);
         anim.guard = if guard.is_some_and(Guard::is_up) { raise * raise * (3.0 - 2.0 * raise) } else { (anim.guard - dt / 0.15).max(0.0) };
-        guard_arm(&mut pose, anim.guard);
+        let two_handed = wielded.is_some_and(|w| w.two_hand.is_some());
+        if two_handed {
+            weapon_guard_arm(&mut pose, anim.guard); // guarding with the weapon held in both hands
+        } else {
+            guard_arm(&mut pose, anim.guard);
+        }
+        hands_layer(spec, &mut pose, action, wielded);
 
         if let Ok(mut tf) = transforms.get_mut(rig.model) {
             *tf = pose.model_transform(rig.root_height);
@@ -738,6 +839,46 @@ mod tests {
             assert!(high.y > 2.0, "{kind:?} raised: {high}");
             assert!(low.y < 1.1 && low.z < -0.8, "{kind:?} lands in front: {low}");
         }
+    }
+
+    fn hand_tip(class: WeaponClass, kind: ActionKind, hand: AttackHand, bone: Bone, elapsed: f32) -> Vec3 {
+        let spec = HumanoidSpec::human();
+        let a = ActiveAction { elapsed, ..ActiveAction::new(kind, Vec3::NEG_Z, class).with_hand(hand) };
+        let (pose, _) = action_pose(&a).unwrap();
+        bone_model_transform(&spec, &pose, bone).transform_point(Vec3::Y * 1.03)
+    }
+
+    #[test]
+    fn left_swings_are_the_mirror_of_right_swings() {
+        let d = at(ActionKind::LightAttack(0), 0.0).def;
+        for t in [d.startup * 0.5, d.startup + d.active * 0.5, d.startup + d.active] {
+            let r = hand_tip(WeaponClass::LightSword, ActionKind::LightAttack(0), AttackHand::Right, Bone::HandR, t);
+            let l = hand_tip(WeaponClass::LightSword, ActionKind::LightAttack(0), AttackHand::Left, Bone::HandL, t);
+            assert!((l - Vec3::new(-r.x, r.y, r.z)).length() < 1e-3, "{r} ↔ {l}");
+        }
+    }
+
+    #[test]
+    fn dual_swings_bring_both_blades_in_front() {
+        for class in [WeaponClass::LightSword, WeaponClass::Axe] {
+            let d = at_with(class, ActionKind::LightAttack(0), 0.0).def;
+            let best = |bone| {
+                (0..=10)
+                    .map(|i| hand_tip(class, ActionKind::LightAttack(0), AttackHand::Both, bone, d.startup + d.active * i as f32 / 10.0).z)
+                    .fold(f32::INFINITY, f32::min)
+            };
+            assert!(best(Bone::HandR) < -0.9 && best(Bone::HandL) < -0.9, "{class:?}: both blades reach forward");
+        }
+    }
+
+    #[test]
+    fn axe_chops_come_down_vertically() {
+        let d = at_with(WeaponClass::Axe, ActionKind::LightAttack(0), 0.0).def;
+        let top = tip_with(WeaponClass::Axe, ActionKind::LightAttack(0), d.startup);
+        let bottom = tip_with(WeaponClass::Axe, ActionKind::LightAttack(0), d.startup + d.active);
+        assert!(top.y > 2.0, "raised over the head: {top}");
+        assert!(bottom.y < 1.0 && bottom.z < -0.5, "down in front: {bottom}");
+        assert!((top.x - bottom.x).abs() < 0.5, "a vertical arc, not a sideways sweep: {top} → {bottom}");
     }
 
     /// Every class's strikes must end in front of the character, or they can't hit anything.

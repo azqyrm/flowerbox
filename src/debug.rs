@@ -39,6 +39,9 @@
 //!   puppets seen (players / enemies) and how many puppets (re)appeared so far.
 //!   `FLOWERBOX_MP_DIE_AT=secs` kills this player then. `FLOWERBOX_MP_FIGHT=1`: run at the nearest
 //!   living enemy (within 25 m) and keep attacking it.
+//! - `FLOWERBOX_AUTOPILOT=weapons` → at the training dummy: right, left and dual sword attacks, a
+//!   dual jump attack, dual axes, a two-handed axe, Warcry and a buffed chop, Lunging Thrust; logs
+//!   every hit (hand, damage) and the stamina each attack cost.
 //! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
 //!   `FLOWERBOX_WALK="x,z"` walks that way instead (collision checks), logging the position.
 //! - `FLOWERBOX_KEYS="1.0:ShiftLeft+ 1.1:Tab+ 1.2:Tab- 1.4:ShiftLeft-"` → injects real key / mouse
@@ -47,6 +50,7 @@
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
 use bevy::prelude::*;
+use crate::weapon::AttackHand;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::time::common_conditions::on_timer;
 
@@ -67,7 +71,7 @@ use crate::hearth::WorldReset;
 use crate::lockon::LockOn;
 use crate::ui::inventory_ui::{Filter, InventoryMenu};
 use crate::items::inventory::{EquipRequest, EquipSlot, Equipment, Inventory};
-use crate::weapon::EquippedWeapon;
+use crate::weapon::Wielded;
 use crate::humanoid::{HumanoidRig, HumanoidSpec};
 use crate::input::{Autopilot, PlayerInput};
 use crate::player::Player;
@@ -111,6 +115,10 @@ impl Plugin for DebugPlugin {
             }
             Ok("wargkill") => {
                 app.add_systems(Update, wargkill_script);
+            }
+            Ok("weapons") => {
+                app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
+                    .add_systems(Update, weapons_script);
             }
             Ok("still") => {
                 // `FLOWERBOX_WALK="x,z"`: walk that way (world direction), logging the position.
@@ -357,19 +365,21 @@ fn show_iframe_ring(
 fn draw_blade_hitbox(
     mut gizmos: Gizmos,
     overlay: Query<&Visibility, With<DebugOverlay>>,
-    attackers: Query<(&Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &EquippedWeapon)>,
+    attackers: Query<(&Transform, &CharacterAction, &HumanoidSpec, &HumanoidRig, &Wielded)>,
 ) {
     if !overlay_on(&overlay) {
         return;
     }
-    for (tf, action, spec, rig, equipped) in &attackers {
+    for (tf, action, spec, rig, wielded) in &attackers {
         let Some(cur) = action.current else { continue };
         if cur.damage_multiplier().is_none() || cur.phase() != ActionPhase::Active {
             continue;
         }
-        let Some((a, b)) = blade_world(tf, spec, rig, equipped.def, &cur) else { continue };
-        gizmos.line(a, b, Color::srgb(1.0, 0.1, 0.1));
-        gizmos.sphere(Isometry3d::from_translation(b), BLADE_HIT_RADIUS, Color::srgb(1.0, 0.3, 0.1));
+        for (bone, weapon) in wielded.blades(cur.hand) {
+            let Some((a, b)) = blade_world(tf, spec, rig, weapon, bone, &cur) else { continue };
+            gizmos.line(a, b, Color::srgb(1.0, 0.1, 0.1));
+            gizmos.sphere(Isometry3d::from_translation(b), BLADE_HIT_RADIUS, Color::srgb(1.0, 0.3, 0.1));
+        }
     }
 }
 
@@ -421,7 +431,7 @@ fn debug_keys(
         let weapons: Vec<usize> = (0..inventory.items.len()).filter(|&i| inventory.items[i].def().weapon.is_some()).collect();
         let pos = weapons.iter().position(|&i| Some(i) == current);
         if let Some(&next) = weapons.get(pos.map_or(0, |p| (p + 1) % weapons.len())) {
-            equip.write(EquipRequest { character: entity, index: next, equip: true });
+            equip.write(EquipRequest { character: entity, index: next, equip: true, slot: None });
         }
     }
     // H = a 15-damage hit from the front, J = from behind (to test the guard).
@@ -437,8 +447,8 @@ fn debug_keys(
     }
     let requests = [
         (KeyCode::Digit1, ActionRequest::Roll),
-        (KeyCode::Digit2, ActionRequest::LightAttack),
-        (KeyCode::Digit3, ActionRequest::HeavyAttack),
+        (KeyCode::Digit2, ActionRequest::LightAttack(AttackHand::Right)),
+        (KeyCode::Digit3, ActionRequest::HeavyAttack(AttackHand::Right)),
         (KeyCode::Digit4, ActionRequest::DrinkAle),
     ];
     for (key, request) in requests {
@@ -520,12 +530,12 @@ fn autopilot_script(
     }
     for s in [2.9, 3.25, 3.6] {
         if at(s) {
-            intent.buffer(ActionRequest::LightAttack);
+            intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
         }
     }
     // Autopilot jumps at t=6.0; a light attack shortly after becomes a jump attack.
     if at(6.15) {
-        intent.buffer(ActionRequest::LightAttack);
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
     }
     if at(7.5) {
         info!("autopilot: lethal damage");
@@ -633,7 +643,7 @@ fn combat_script(
     let (x, z) = DUMMY_POSITION;
     if crossed(time.elapsed_secs(), time.delta_secs(), 16.0) {
         let index = inventory.add(ItemId::RustedShortsword);
-        equip.write(EquipRequest { character: entity, index, equip: true });
+        equip.write(EquipRequest { character: entity, index, equip: true, slot: None });
     }
     for (at, distance) in [(0.2, 1.5), (12.5, 4.4), (14.4, 4.0), (16.0, 1.3)] {
         if crossed(t, dt, at) {
@@ -757,7 +767,7 @@ fn inventory_script(
     }
     if at(2.0) {
         for index in [3, 2, 4] {
-            equip.write(EquipRequest { character: entity, index, equip: true });
+            equip.write(EquipRequest { character: entity, index, equip: true, slot: None });
         }
     }
     if at(2.6) {
@@ -785,10 +795,10 @@ fn inventory_script(
     let shortsword = inventory.items.iter().position(|i| *i == ItemId::RustedShortsword);
     if let Some(index) = shortsword {
         if at(6.5) {
-            equip.write(EquipRequest { character: entity, index, equip: true });
+            equip.write(EquipRequest { character: entity, index, equip: true, slot: None });
         }
         if at(7.0) {
-            equip.write(EquipRequest { character: entity, index, equip: false });
+            equip.write(EquipRequest { character: entity, index, equip: false, slot: None });
         }
     }
 }
@@ -814,7 +824,7 @@ fn guard_script(
     let Ok((entity, tf, ctrl, stamina)) = player.single() else { return };
     let (t, dt) = (time.elapsed_secs(), time.delta_secs());
     if crossed(t, dt, 0.5) {
-        equip.write(EquipRequest { character: entity, index: 2, equip: true });
+        equip.write(EquipRequest { character: entity, index: 2, equip: true, slot: None });
     }
     let forward = Vec3::new(-ctrl.facing.sin(), 0.0, -ctrl.facing.cos());
     for (at, amount, behind) in [(0.3, 10.0, false), (1.05, 10.0, false), (1.26, 10.0, false), (1.8, 10.0, false), (2.6, 160.0, false), (4.5, 10.0, false), (4.7, 5.0, true), (5.5, 5.0, false)] {
@@ -885,7 +895,7 @@ fn enemy_script(
     if crossed(t, dt, 1.0) {
         htf.translation = Vec3::new(0.0, htf.translation.y, 4.0);
         enemy.home = htf.translation.with_y(0.0);
-        equip.write(EquipRequest { character: pe, index: 2, equip: true });
+        equip.write(EquipRequest { character: pe, index: 2, equip: true, slot: None });
     }
     if crossed(t, dt, 3.0) {
         lock.target = Some(he);
@@ -909,7 +919,7 @@ fn enemy_script(
         let opening = matches!(haction.current.map(|a| a.kind), Some(ActionKind::Stunned | ActionKind::Hurt));
         if opening && dist < 2.4 && paction.current.is_none() && intent.buffered.is_none() {
             info!("autopilot: attack");
-            intent.buffer(ActionRequest::LightAttack);
+            intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
         }
     }
     // Drop the shield once the Hollow reels (to riposte).
@@ -1068,7 +1078,7 @@ fn pvp_script(
     }
     if [5.0, 5.9, 6.8, 10.0, 10.9].iter().any(|&s| at(s)) {
         info!("autopilot: attack");
-        intent.buffer(ActionRequest::LightAttack);
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
     }
 }
 
@@ -1109,10 +1119,10 @@ fn netrest_script(
         place(0.0, 1.5, 0.0);
     }
     if at(2.6) || at(3.4) {
-        intent.buffer(ActionRequest::LightAttack);
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
     }
     if at(4.2) {
-        intent.buffer(ActionRequest::HeavyAttack);
+        intent.buffer(ActionRequest::HeavyAttack(AttackHand::Right));
     }
     if at(6.0) {
         place(0.8, 10.3, std::f32::consts::PI);
@@ -1588,7 +1598,7 @@ fn mp_fight(
         *LEVEL_DIR.lock().unwrap() = (to.normalize(), false, false);
     } else if *swing <= 0.0 {
         *swing = 0.7;
-        intent.buffer(ActionRequest::LightAttack);
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
     }
 }
 
@@ -1673,5 +1683,112 @@ fn log_input_state(
     if *last != now {
         info!("input state: {now}");
         *last = now;
+    }
+}
+
+// ── Weapons test ─────────────────────────────────────────────────────────
+
+/// Equip / attack timeline at the training dummy (see the module docs).
+#[allow(clippy::type_complexity)]
+fn weapons_script(
+    time: Res<Time>,
+    mut started: Local<bool>,
+    mut last_stamina: Local<Option<(f32, String)>>,
+    mut equip: MessageWriter<EquipRequest>,
+    mut two_hand: MessageWriter<crate::items::inventory::TwoHandRequest>,
+    mut exit: MessageWriter<AppExit>,
+    mut dummy: Query<&mut Health, (With<Dummy>, Without<Player>)>,
+    mut player: Query<(Entity, &mut Transform, &mut CharacterController, &mut Inventory, &mut ActionIntent, &CharacterAction, &mut Stamina), With<Player>>,
+) {
+    use crate::items::inventory::{EquipSlot, TwoHandRequest};
+    use crate::weapon::Hand;
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let at = |s: f32| crossed(t, dt, s);
+    *LEVEL_DIR.lock().unwrap() = (Vec3::ZERO, false, at(5.0));
+    let Ok((me, mut tf, mut ctrl, mut inv, mut intent, action, mut stamina)) = player.single_mut() else { return };
+    if !*started {
+        *started = true;
+        for mut h in &mut dummy {
+            *h = Health::new(100_000.0);
+        }
+        tf.translation = Vec3::new(0.0, tf.translation.y, 1.45);
+        ctrl.facing = 0.0;
+    }
+    // Endless stamina between tests, so every attack can start; log what each one cost.
+    if let Some(cur) = action.current
+        && cur.elapsed < 0.02
+        && cur.def.stamina_cost > 0.0
+    {
+        let label = format!("{:?} {:?}", cur.kind, cur.hand);
+        if last_stamina.as_ref().is_none_or(|(_, l)| *l != label) {
+            info!("weapons: {label} costs {:.1} stamina", cur.def.stamina_cost);
+            *last_stamina = Some((cur.def.stamina_cost, label));
+        }
+    } else if action.current.is_none() {
+        *stamina = Stamina::new(stamina.max);
+        *last_stamina = None;
+    }
+    // Step up to the dummy before every attack (joining online moves you beside the host).
+    if [1.4, 2.4, 3.4, 4.9, 7.5, 9.5, 12.9].iter().any(|&w| at(w)) {
+        tf.translation = Vec3::new(0.0, tf.translation.y, 1.45);
+        ctrl.facing = 0.0;
+    }
+    let index_of = |inv: &Inventory, item: ItemId| inv.items.iter().position(|i| *i == item);
+    let step = |when: f32, what: &str| {
+        let now = at(when);
+        if now {
+            info!("weapons: {what}");
+        }
+        now
+    };
+    if step(0.8, "sword right, shortsword left (a light-sword pair)") {
+        let i = inv.add(ItemId::RustedShortsword);
+        equip.write(EquipRequest { character: me, index: i, equip: true, slot: Some(EquipSlot::LeftHand) });
+    }
+    if step(1.5, "right light") {
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
+    }
+    if step(2.5, "left light") {
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Left));
+    }
+    if step(3.5, "dual light") {
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Both));
+    }
+    if step(5.15, "dual jump attack") {
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Both));
+    }
+    if step(7.0, "axe right, hatchet left (an axe pair)") {
+        let a = index_of(&inv, ItemId::RustedAxe).unwrap_or_else(|| inv.add(ItemId::RustedAxe));
+        let h = inv.add(ItemId::WoodcutterHatchet);
+        equip.write(EquipRequest { character: me, index: a, equip: true, slot: Some(EquipSlot::RightHand) });
+        equip.write(EquipRequest { character: me, index: h, equip: true, slot: Some(EquipSlot::LeftHand) });
+    }
+    if step(7.6, "dual axe chop") {
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Both));
+    }
+    if step(9.2, "two-hand the axe") {
+        two_hand.write(TwoHandRequest { character: me, hand: Hand::Right });
+    }
+    if step(9.6, "two-handed chop") {
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
+    }
+    if step(11.2, "Warcry") {
+        intent.buffer(ActionRequest::Ability);
+    }
+    if step(13.0, "buffed two-handed chop") {
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
+    }
+    if step(14.6, "back to one hand, longsword right: Lunging Thrust") {
+        two_hand.write(TwoHandRequest { character: me, hand: Hand::Right });
+        if let Some(i) = index_of(&inv, ItemId::Longsword) {
+            equip.write(EquipRequest { character: me, index: i, equip: true, slot: Some(EquipSlot::RightHand) });
+        }
+    }
+    if step(15.2, "Lunging Thrust") {
+        tf.translation = Vec3::new(0.0, tf.translation.y, 3.0);
+        intent.buffer(ActionRequest::Ability);
+    }
+    if at(17.0) {
+        exit.write(AppExit::Success);
     }
 }

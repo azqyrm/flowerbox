@@ -14,6 +14,7 @@
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use crate::weapon::AttackHand;
 
 use super::Enemy;
 use crate::character::action::{ActionKind, ActionPhase, ActionRequest, CharacterAction};
@@ -190,7 +191,7 @@ pub fn beast_ai(
                     if try_pounce(&mut ai, &mut intent, dist, &sees) {
                         // crouching
                     } else if dist < p.bite_range && ai.timer <= 0.0 {
-                        intent.buffer(ActionRequest::LightAttack);
+                        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
                         let (a, b) = p.combo;
                         ai.combo_left = a.saturating_sub(1) + (ai.roll() * (b - a + 1) as f32) as u8;
                         ai.set(BeastState::Bite);
@@ -203,7 +204,7 @@ pub fn beast_ai(
                     let chaining = matches!(cur.kind, ActionKind::LightAttack(_)) && ai.combo_left > 0 && cur.elapsed >= cur.def.cancel - 0.1;
                     if chaining {
                         ai.combo_left -= 1;
-                        intent.buffer(ActionRequest::LightAttack);
+                        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
                     }
                     if matches!(cur.kind, ActionKind::Hurt | ActionKind::Stunned) {
                         intent.buffered = None;

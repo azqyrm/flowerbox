@@ -25,7 +25,7 @@ const COMBO: [AttackSpec; 2] = [
     slow(SwingKey::new(0.1, 0.25, 0.05, 3.0), SwingKey::new(0.0, -0.4, 0.0, 0.9)),
 ];
 
-pub const MOVESET: Moveset = Moveset { light: &COMBO, ..light_sword::MOVESET };
+pub const MOVESET: Moveset = Moveset { light: &COMBO, ability: None, ..light_sword::MOVESET };
 
 /// What the Hollows carry: a rusted blade swung with the hollow moveset.
 pub static HOLLOW_SWORD: WeaponDef = WeaponDef {
@@ -34,4 +34,5 @@ pub static HOLLOW_SWORD: WeaponDef = WeaponDef {
     base_damage: 14.0,
     blade: (0.12, 0.73),
     model: ModelSource::Parts(&light_sword::SHORTSWORD_PARTS),
+    guard_block: 0.3,
 };

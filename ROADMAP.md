@@ -38,13 +38,16 @@
 | Camera | **Mouse** | Third-person orbit camera; the cursor is locked during gameplay. Gamepad: right stick |
 | Jump | **Space** | |
 | Dodge roll / sprint | **Left Shift** | Tap to roll (i-frames). Hold to sprint (familiar element). Rolling while standing still (no WASD input) does a backstep. There's no separate backstep input. |
-| Attack | **Left Mouse** | **Tap** (released within 0.25 s) = light attack. **Hold** (0.25 s or longer) = heavy attack, released when charged or automatically at full charge. **Tap while airborne** = jump attack (the jump attack is the airborne light attack). A heavy attack can't be done in the air. |
-| Block / parry | **Right Mouse** (hold) | Needs a shield in the left hand. Raising takes 0.3 s; the last third of the raise is the parry window. Blocks frontal hits only (±57°, `GUARD_ANGLE`; hits without a direction aren't blockable); costs stamina, breaks when stamina runs out. Slower walking, no sprint |
+| Attack (right hand) | **Left Mouse** | **Tap** (released within 0.25 s) = light attack. **Hold** (0.25 s or longer) = heavy attack, released when charged or automatically at full charge. **Tap while airborne** = jump attack (the jump attack is the airborne light attack). A heavy attack can't be done in the air. |
+| Left hand | **Right Mouse** | With a left-hand **weapon**: its attacks (tap light, hold heavy, airborne jump attack); with the **same weapon class** in both hands: the **dual attack** (both at once, 1.5× stamina). With a shield (or a weapon held in both hands): block / parry — |
+| Two-hand | **Mouse wheel (hold) + Left / Right Mouse** | Holds that hand's weapon in both hands (+20 % damage, the other item put away, guard with the weapon); again: one hand. The wheel tapped alone locks on |
+| Weapon ability | **F** (gamepad L2) | The main weapon's ability: swords *Lunging Thrust*, axes *Warcry* (+25 % damage, 10 s) |
+| Block / parry | **Right Mouse** (hold, with a shield) | Needs a shield in the left hand. Raising takes 0.3 s; the last third of the raise is the parry window. Blocks frontal hits only (±57°, `GUARD_ANGLE`; hits without a direction aren't blockable); costs stamina, breaks when stamina runs out. Slower walking, no sprint |
 | Drink Healing Ale | **R** | |
 | Interact / rest at Hearth | **E** | Resting is a state: you stay kneeling; **E again or moving** stands you up. Online the rest completes only when every player rests |
-| Lock-on target | **Q** or Middle Mouse | Locks the target nearest the view centre (≤15 m, ±63°); the camera follows it, you face it and strafe, attacks aim at it. Again = release. Nothing to lock = camera recentres behind you |
+| Lock-on target | **Q**, or tap the mouse wheel | Locks the target nearest the view centre (≤15 m, ±63°); the camera follows it, you face it and strafe, attacks aim at it. Again = release. Nothing to lock = camera recentres behind you |
 | Gamepad | Souls-like | Left stick move, right stick camera, **R1** attack (tap/hold), **L1** block, **B/Circle** roll/sprint, **A/Cross** jump, **X/Square** drink, **Y/Triangle** interact, **R3** lock-on, **Start** inventory (inside: D-pad, L1/R1 filter, A equip, X unequip, B close) |
-| Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
+| Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, **L / right-click / Y: into the left hand** (dual wielding), Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
 | Online co-op | **O** | Online panel: **H** host (code copied to the clipboard), **J** join with the code in the clipboard, **C** copy code, **L** leave. Command line: `--host`, `--join <code>` |
 | Use an item | Inventory: **Enter** / double-click on a consumable | Healing Ale = drink, Poppy = PvP on, Camomile = PvP off (short eating action) |
 | Menu | **Esc** (gamepad: Select) | Resume / Settings (sensitivity, invert Y, stick speed, volume, notification corner) / Controls (rebind) / Delete save / Quit. The world keeps running |
@@ -146,7 +149,9 @@ claude_ds/
    │  └─ anim.rs        # locomotion (idle/walk/run/jump/land) + action poses, HumanoidAnimator
    ├─ player/
    │  └─ mod.rs         # Player = character_bundle + HumanoidSpec::human() + starting inventory + input
+   ├─ ability.rs        # activated abilities (AbilityId → AbilityDef: strike or buff), AttackBuff
    ├─ weapon/          # weapon CLASSES (movesets + swing animations) and weapon DEFINITIONS (models)
+   │  ├─ axe.rs         # Axe moveset (vertical chops) + Rusted Axe / Woodcutter's Hatchet
    │  ├─ mod.rs         # WeaponClass, Moveset/AttackSpec/SwingKey/GuardSpec, WeaponDef, ModelSource, EquipWeapon
    │  ├─ light_sword.rs # LightSword moveset + Longsword / Rusted Shortsword / Rusted Axe / Fists
    │  └─ hollow_blade.rs # HollowBlade moveset (long wind-ups) + the Hollow's blade
@@ -432,15 +437,18 @@ Decisions:
 - **Notifications:** door opened by another player → "Guest 1 opened a door"; deaths already notify others — recheck on screen.
 
 Steps:
-- [ ] Shift+Tab robustness (cursor follows the menu state, focus, debounce) + input harness `FLOWERBOX_KEYS`
-- [ ] Notifications: door opened by others; recheck deaths on screen
-- [ ] Player door opening animation (`ActionKind::OpenDoor`, the door opens at the push)
-- [ ] Feral warg (jagged plates)
-- [ ] Hands: `Hand` / `AttackHand`, `Wielded`, left-hand weapon equip + models, two-handing (state, IK grip, damage, weapon guard), inventory UI, save, net
-- [ ] Per-hand attacks: requests / actions with a hand, left attacks (mirrored poses), dual attacks (1.5× stamina), jump/heavy/running variants, hit detection per blade
-- [ ] Axe class: vertical, slower combo + heavy / running / jump; Woodcutter's Hatchet
-- [ ] Abilities: `AbilityDef`, F / L2, Lunging Thrust, Warcry
-- [ ] Tests, autopilot, screenshots, notes
+- [x] Shift+Tab robustness (cursor follows the menu state, focus, debounce) + input harness `FLOWERBOX_KEYS`
+- [x] Notifications: door opened by others; recheck deaths on screen
+- [x] Player door opening animation (`ActionKind::OpenDoor`, the door opens at the push)
+- [x] Feral warg (jagged plates)
+- [x] Hands: `Hand` / `AttackHand`, `Wielded`, left-hand weapon equip + models, two-handing (state, IK grip, damage, weapon guard), inventory UI, save, net
+- [x] Per-hand attacks: requests / actions with a hand, left attacks (mirrored poses), dual attacks (1.5× stamina), jump/heavy/running variants, hit detection per blade
+- [x] Axe class: vertical, slower combo + heavy / running / jump; Woodcutter's Hatchet
+- [x] Abilities: `AbilityDef`, F / L2, Lunging Thrust, Warcry
+- [x] Tests, autopilot, screenshots, notes
+- [ ] Shift+Tab: confirm on the real desktop (couldn't be reproduced here)
+- [ ] Gamepad two-handing (Souls uses Y, which is interact here)
+- [ ] Refactor the Hollow AI onto shared AI helpers (see 8.9)
 
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
@@ -487,6 +495,8 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Grabs are **victim-side** (like enemy hits online): each machine checks only its own player against pouncing creatures. Rolling i-frames at the first contact = dodged for that pounce. The bite is unblockable because a held character has no guard. The warg's bite is 120 (≥ 100 after the best armour). Each declined pounce chance raises the next (`pounce_urge`). Player HP bars show only over *other* players (your own is the HUD bar). |
 | 2026-11-16 | Doors are one-way by their swing (`opens` points away from the side that can open them); locked doors name a key item that stays in the bag. A door's collider is a separate static blocker spawned where the leaf rests (closed or open), never moved. Enemy drops come from the level file (`drops`), roll on the machine that owns the enemy (offline/host) and are broadcast; unique drops (keys) are remembered once taken (`ClaimedDrops`, saved). |
 | 2026-11-16 | Online, dying (anyone's, the host's too) no longer resets the world; only the shared rest does (user request, "for now"). Offline death still resets (Souls). Up to 5 players. The host sends enemies only when they change; guests learn what exists from a roster. |
+| 2026-11-16 | Hands are generic: `Wielded { right, left, two_hand }` replaces `EquippedWeapon`; attacks carry an `AttackHand` (Right / Left / Both); left-hand and dual poses are the **mirror** of a class's right-hand swing keys, so every class gets them for free. Left mouse = right hand, right mouse = left hand (Souls); the left item decides: shield → guard, weapon → attacks, same-class pair → dual attack. Abilities are data per class (`Moveset::ability`). |
+| 2026-11-16 | Test runs (autopilot / screenshot) render without vsync: GNOME throttled the (often hidden) test windows to ~4 FPS. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -732,4 +742,16 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Deaths:** `run_death_sequence` writes `WorldReset` only offline. Verified with 5 players: the host died mid-fight and respawned; no "enemies reset", killed Hollows stayed dead.
   - **Joining:** `PlaceNearHost` → `place_guest` puts the guest on a ring around the host's body (first direction free of walls for 1.8 m), once the host's state arrives. Before, guests always appeared at the arena start.
   - **Tests** (`mp.sh`-style: host + 4 guests on one machine, `FLOWERBOX_NET_RELAY_ONLY=1` for the guests): all 5 admitted (ids 2–5), every guest sees 4 players + 21 enemies, exactly 25 puppets appeared per guest over 60 s (no flicker), 0 datagram failures, 0 puppet timeouts; with `FLOWERBOX_MP_FIGHT=1` the host and guests kill Hollows in the middle hall, guests' hits forwarded; shared rest (`netrest`) still completes. Not tested: real separate networks. n0's public relays logged one "rate-limiting" warning per instance; before, the host was throttled continuously.
+- **N30 (2026-11-16) — hands, axe, abilities, door push, feral warg (Phase 8.12):**
+  - **Shift+Tab** (report: the inventory's cursor invisible / back to the game) couldn't be reproduced: injected input (`FLOWERBOX_KEYS`, real `KeyboardInput` / `MouseButtonInput` messages) opens and closes it correctly with Shift held. Suspect: the GNOME Wayland pointer lock. Now `toggle_cursor` makes the cursor match the state every frame while focused (and re-applies it when focus returns); the inventory toggle ignores a second toggle within 0.25 s. Needs confirmation on the real desktop.
+  - **Wielding** (`weapon::Wielded`): `right` (fists when empty), `left` (a weapon, not a shield), `two_hand`. `EquipWeapon { right, left, two_hand }` rebuilds the models (two-handed: only that weapon, in the right hand). `Equipment::two_hand` (saved, replicated `BodyState::two_hand`), `equip_to` (a weapon into the left hand), `TwoHandRequest` (refuses shields: "Only weapons can be held in both hands"). Stats: two-handed attack ×`TWO_HAND_DAMAGE_MULT` (1.2), guard = the weapon's `guard_block` (swords 0.35–0.5, axes 0.25–0.3), the shield is put away.
+  - **Attacks with hands:** `ActionRequest::LightAttack(AttackHand)` / `HeavyAttack(AttackHand)`; `ActiveAction::hand` (`with_hand(Both)` × `DUAL_STAMINA_MULT` 1.5); combos continue per hand; left / both refused without a left weapon / a matching pair. Hit detection sweeps each blade (`Wielded::blades`: HandR / HandL), each can hit a target once per swing. Replicated (`NetAction::hand`).
+  - **Poses:** `HumanoidPose::mirrored` (swap L/R bones, reflect rotations q → (x, −y, −z, w)); left = mirrored right swing; dual = right arm + mirrored left arm, chest twist averaged out. Idle with a left weapon: the mirrored guard of its class. Two-handed: `reach_left_hand` (two-bone IK; elbow twist chosen down/out) puts the left hand 12 cm below the right fist on the handle; guarding raises the weapon across the body (`weapon_guard_arm`).
+  - **Input:** the right button = `Offhand::of(wielded)`: guard / left attacks / dual. The wheel (`Action::TwoHand`, rebindable) + a button toggles that hand; tapped alone → `PlayerInput::lock_on_tap` (lock-on on release). F / L2 = `Action::Ability`.
+  - **Axe class** (`weapon/axe.rs`): combo overhead chop → diagonal chop → heavy overhead (startups 0.44–0.62 s, recoveries 0.44–0.6 s; sword: 0.15 / 0.25), heavy from far behind the head, leaping running chop, plunging jump chop. Test: the tip starts above 2 m and ends below 1 m in front with < 0.5 m sideways travel. Rusted Axe moved to the class; Woodcutter's Hatchet (axe) lies in the arena (pickup 3).
+  - **Abilities** (`ability.rs`): `AbilityDef { name, icon, stamina, effect }`, `AbilityEffect::Strike(AttackSpec)` (runs through the attack pipeline: `ActiveAction::attack` returns it) or `Buff { timings, attack_mult, duration }` → `AttackBuff` (applied at the active phase, ticks down, multiplies weapon damage). Lunging Thrust (32 stamina, ×1.9, 2.6 m lunge), Warcry (25 stamina, ×1.25 for 10 s, arms-up roar pose).
+  - **Verified** (`FLOWERBOX_AUTOPILOT=weapons`, at the dummy): right 20, left (Shortsword) 16, dual 22.5 stamina → hits 20 + 16, dual jump 37.5 stamina → 36 + 29, dual axes 27 stamina → 24 + 20, two-handed axe 29 (= 24 × 1.2), after Warcry 36 (× 1.25), Lunging Thrust 48. Online (guest runs it, host `menu`): every hit forwarded with the same numbers; the host's puppet shows the guest's hands and two-handing. Screenshots: dual axes raised overhead, two-handed grip (idle and chop), Warcry.
+  - **Door push:** `ActionKind::OpenDoor` (0.4 s reach, 0.15 s push, 0.5 s back; the free left palm and shoulder; a small step in); `PushingDoor` sends the `DoorRequest` at the push; a hit cancels it. Others get "Guest 1 opened a door". Death notifications were already working (screenshot: "Guest 1 was composted" on the host).
+  - **Feral warg:** `QuadrupedLook::shag` / `shag_length`: flattened cones, swept back, random length / tilt / lean / width from a fixed seed (the same on every machine): a ragged spine ridge, a thick mane around shoulders and neck, two rows on the flanks, tufts on haunches and shoulders, a ragged tail.
+  - **Test runs without vsync:** after the reboot every run (also an older release build) crawled at 4 FPS: GNOME throttles hidden windows. Autopilot / screenshot runs now use `PresentMode::AutoNoVsync` (160 FPS debug); normal play keeps vsync.
 

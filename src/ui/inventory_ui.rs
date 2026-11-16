@@ -111,10 +111,16 @@ fn usable(item: ItemId) -> bool {
     item == ItemId::HealingAle || item.def().effect.is_some()
 }
 
+/// Into the left hand (weapons for dual wielding, shields): L / right-click / gamepad Y.
+fn left_hand_request(character: Entity, inventory: &Inventory, index: usize) -> Option<EquipRequest> {
+    let kind = inventory.items.get(index)?.def().kind;
+    matches!(kind, ItemKind::Weapon | ItemKind::Shield).then_some(EquipRequest { character, index, equip: true, slot: Some(EquipSlot::LeftHand) })
+}
+
 fn toggle_request(character: Entity, equipment: &Equipment, index: usize) -> Option<EquipRequest> {
     match equipment.slot_of(index) {
-        None => Some(EquipRequest { character, index, equip: true }),
-        Some(_) if equipment.can_unequip(index) => Some(EquipRequest { character, index, equip: false }),
+        None => Some(EquipRequest { character, index, equip: true, slot: None }),
+        Some(_) if equipment.can_unequip(index) => Some(EquipRequest { character, index, equip: false, slot: None }),
         Some(_) => None,
     }
 }
@@ -223,7 +229,11 @@ fn menu_keys(
             equip.write(req);
         }
     } else if (pressed(&[Backspace, KeyX]) || pad(G::West)) && equipment.can_unequip(index) {
-        equip.write(EquipRequest { character: entity, index, equip: false });
+        equip.write(EquipRequest { character: entity, index, equip: false, slot: None });
+    } else if (pressed(&[KeyL]) || pad(G::North))
+        && let Some(req) = left_hand_request(entity, inventory, index)
+    {
+        equip.write(req);
     }
 }
 
@@ -405,13 +415,19 @@ fn grid_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, filter: Filte
                       mut menu: ResMut<InventoryMenu>,
                       mut equip: MessageWriter<EquipRequest>,
                       mut use_item: MessageWriter<UseItemRequest>,
-                      player: Query<&Equipment, With<Player>>| {
+                      player: Query<(&Equipment, &Inventory), With<Player>>| {
                     menu.cursor = pos;
                     menu.dirty = true;
-                    if click.count >= 2 {
+                    if click.button == PointerButton::Secondary {
+                        if let Ok((_, inventory)) = player.single()
+                            && let Some(req) = left_hand_request(character, inventory, index)
+                        {
+                            equip.write(req);
+                        }
+                    } else if click.count >= 2 {
                         if usable(item) {
                             use_item.write(UseItemRequest { item });
-                        } else if let Ok(equipment) = player.single()
+                        } else if let Ok((equipment, _)) = player.single()
                             && let Some(req) = toggle_request(character, equipment, index)
                         {
                             equip.write(req);

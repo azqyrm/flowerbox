@@ -26,7 +26,8 @@ use crate::hearth::WorldReset;
 use crate::lockon::Targetable;
 use crate::player::Player;
 use crate::pvp::Pvp;
-use crate::weapon::{EquippedWeapon, WeaponDef};
+use crate::ability::AttackBuff;
+use crate::weapon::{WeaponDef, Wielded};
 use crate::tuning::*;
 
 pub struct CombatPlugin;
@@ -54,11 +55,12 @@ pub enum Team {
     Hostile,
 }
 
-/// Entities already hit by the current swing.
+/// What the current swing already hit: (target, blade index) — each blade of a dual attack can
+/// hit a target once.
 #[derive(Component, Default)]
 pub struct SwingHits {
     serial: u32,
-    hit: Vec<Entity>,
+    hit: Vec<(Entity, usize)>,
 }
 
 /// Remaining real-time hitstop (game time runs at `HITSTOP_TIME_SCALE` meanwhile).
@@ -73,16 +75,17 @@ pub struct CameraShake {
     pub trauma: f32,
 }
 
-/// Blade (crossguard, tip) in world space for the given action state.
+/// Blade (crossguard, tip) in world space for the given action state, held in `hand_bone`.
 pub fn blade_world(
     tf: &Transform,
     spec: &HumanoidSpec,
     rig: &HumanoidRig,
     weapon: &WeaponDef,
+    hand_bone: Bone,
     action: &ActiveAction,
 ) -> Option<(Vec3, Vec3)> {
     let (pose, _) = action_pose(action)?;
-    let hand = bone_character_transform(spec, &pose, rig.root_height, Bone::HandR);
+    let hand = bone_character_transform(spec, &pose, rig.root_height, hand_bone);
     let world = |along: f32| tf.transform_point(hand.transform_point(Vec3::Y * along));
     Some((world(weapon.blade.0), world(weapon.blade.1)))
 }
@@ -99,18 +102,18 @@ fn sword_hits(
         &CharacterAction,
         &HumanoidSpec,
         &HumanoidRig,
-        &EquippedWeapon,
+        &Wielded,
         Option<&Team>,
         Option<&mut SwingHits>,
         Has<Player>,
         Has<Remote>,
         Option<&Pvp>,
+        Option<&AttackBuff>,
     )>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
-    for (entity, tf, action, spec, rig, equipped, team, hits, local_player, remote, pvp) in &mut attackers {
-        let weapon = equipped.def;
+    for (entity, tf, action, spec, rig, wielded, team, hits, local_player, remote, pvp, buff) in &mut attackers {
         let Some(mut hits) = hits else {
             commands.entity(entity).insert(SwingHits::default());
             continue;
@@ -123,29 +126,33 @@ fn sword_hits(
         if cur.phase() != ActionPhase::Active {
             continue;
         }
+        // Held in both hands, or under a Warcry: harder hits.
+        let bonus = if wielded.two_hand.is_some() { TWO_HAND_DAMAGE_MULT } else { 1.0 } * buff.map_or(1.0, |b| b.mult);
         // Sweep from the previous tick (clamped to the active window start) to now, sampling
-        // the blade every ~4 ms of action time so fast swings can't pass through a target.
+        // the blade(s) every ~4 ms of action time so fast swings can't pass through a target.
         let from = (cur.elapsed - dt).max(cur.def.startup);
         let steps = (((cur.elapsed - from) / 0.004).ceil() as usize).clamp(1, 64);
         let filter = SpatialQueryFilter::from_excluded_entities([entity]);
-        for i in 0..=steps {
-            let mut sample = cur;
-            sample.elapsed = from + (cur.elapsed - from) * i as f32 / steps as f32;
-            let Some((a, b)) = blade_world(tf, spec, rig, weapon, &sample) else { continue };
-            let blade = Collider::capsule_endpoints(BLADE_HIT_RADIUS, a, b);
-            for target in spatial.shape_intersections(&blade, Vec3::ZERO, Quat::IDENTITY, &filter) {
-                let Ok((target_team, target_action, target_remote, target_is_us, target_pvp)) = hurtboxes.get(target) else { continue };
-                let me = Striker { team, pvp, local_player, remote };
-                let them = Struck { team: target_team, pvp: target_pvp, remote: target_remote, is_us: target_is_us };
-                if hits.hit.contains(&target) || !may_hit(&me, &them) {
-                    continue;
+        for (blade_index, (bone, weapon)) in wielded.blades(cur.hand).into_iter().enumerate() {
+            for i in 0..=steps {
+                let mut sample = cur;
+                sample.elapsed = from + (cur.elapsed - from) * i as f32 / steps as f32;
+                let Some((a, b)) = blade_world(tf, spec, rig, weapon, bone, &sample) else { continue };
+                let blade = Collider::capsule_endpoints(BLADE_HIT_RADIUS, a, b);
+                for target in spatial.shape_intersections(&blade, Vec3::ZERO, Quat::IDENTITY, &filter) {
+                    let Ok((target_team, target_action, target_remote, target_is_us, target_pvp)) = hurtboxes.get(target) else { continue };
+                    let me = Striker { team, pvp, local_player, remote };
+                    let them = Struck { team: target_team, pvp: target_pvp, remote: target_remote, is_us: target_is_us };
+                    if hits.hit.contains(&(target, blade_index)) || !may_hit(&me, &them) {
+                        continue;
+                    }
+                    hits.hit.push((target, blade_index));
+                    // Hitting a parried (stunned) character is a riposte.
+                    let riposte = target_action.and_then(|a| a.current).is_some_and(|a| a.kind == ActionKind::Stunned);
+                    let amount = (weapon.base_damage * mult * bonus * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
+                    info!("{} {target} with {:?} ({:?}) for {amount}", if riposte { "RIPOSTE on" } else { "hit" }, cur.kind, cur.hand);
+                    damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
                 }
-                hits.hit.push(target);
-                // Hitting a parried (stunned) character is a riposte.
-                let riposte = target_action.and_then(|a| a.current).is_some_and(|a| a.kind == ActionKind::Stunned);
-                let amount = (weapon.base_damage * mult * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
-                info!("{} {target} with {:?} for {amount}", if riposte { "RIPOSTE on" } else { "hit" }, cur.kind);
-                damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
             }
         }
     }
@@ -206,7 +213,7 @@ fn bite_hits(
     spatial: SpatialQuery,
     hurtboxes: Query<(Option<&Team>, Option<&CharacterAction>, Has<Remote>, Has<Player>, Option<&Pvp>), With<Hurtbox>>,
     mut damage: MessageWriter<DamageMessage>,
-    mut biters: Query<(Entity, &Transform, &CharacterAction, &QuadrupedSpec, &QuadrupedRig, &EquippedWeapon, Option<&Team>, Option<&mut SwingHits>, Has<Remote>)>,
+    mut biters: Query<(Entity, &Transform, &CharacterAction, &QuadrupedSpec, &QuadrupedRig, &Wielded, Option<&Team>, Option<&mut SwingHits>, Has<Remote>)>,
     mut commands: Commands,
 ) {
     let dt = time.delta_secs();
@@ -234,12 +241,12 @@ fn bite_hits(
                 let Ok((target_team, target_action, target_remote, target_is_us, target_pvp)) = hurtboxes.get(target) else { continue };
                 let me = Striker { team, pvp: None, local_player: false, remote };
                 let them = Struck { team: target_team, pvp: target_pvp, remote: target_remote, is_us: target_is_us };
-                if hits.hit.contains(&target) || !may_hit(&me, &them) {
+                if hits.hit.contains(&(target, 0)) || !may_hit(&me, &them) {
                     continue;
                 }
-                hits.hit.push(target);
+                hits.hit.push((target, 0));
                 let riposte = target_action.and_then(|a| a.current).is_some_and(|a| a.kind == ActionKind::Stunned);
-                let amount = (equipped.def.base_damage * mult * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
+                let amount = (equipped.right.base_damage * mult * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
                 info!("bite on {target} with {:?} for {amount}", cur.kind);
                 damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
             }

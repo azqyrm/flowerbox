@@ -55,6 +55,13 @@ pub const DOOR_OTHER_SIDE: &str = "This door only opens from the other side";
 pub fn door_tried(who: &str) -> String {
     format!("{who} tried a door: it only opens from the other side")
 }
+pub fn buff(name: &str, mult: f32, secs: f32) -> String {
+    format!("{name}: +{:.0}% damage for {secs:.0} s", (mult - 1.0) * 100.0)
+}
+pub const CANT_TWO_HAND: &str = "Only weapons can be held in both hands";
+pub fn two_handing(item: &str, on: bool) -> String {
+    if on { format!("{item}: held in both hands") } else { format!("{item}: back to one hand") }
+}
 pub fn opened_door(who: &str) -> String {
     format!("{who} opened a door")
 }
@@ -72,4 +79,4 @@ pub const PICKED_UP: &str = "Picked up";
 /// Inventory screen title and key hints.
 pub const INVENTORY_TITLE: &str = "Inventory";
 pub const INVENTORY_HINTS: &str =
-    "[Enter / A] Equip / Use    [Backspace / X] Unequip    [Q] [E] / L1 R1 Filter    [Arrows / D-pad] Move    [Tab / B] Close";
+    "[Enter / A] Equip / Use    [L / right-click / Y] To left hand    [Backspace / X] Unequip    [Q] [E] / L1 R1 Filter    [Tab / B] Close";

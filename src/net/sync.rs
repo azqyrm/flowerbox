@@ -35,7 +35,7 @@ use crate::lockon::Targetable;
 use crate::player::Player;
 use crate::pvp::Pvp;
 use crate::tuning::*;
-use crate::weapon::{EquipWeapon, EquippedWeapon, WeaponSystems, hollow_blade, warg_fangs};
+use crate::weapon::{EquipWeapon, Hand, WeaponSystems, Wielded, hollow_blade, warg_fangs};
 
 pub struct SyncPlugin;
 
@@ -85,6 +85,7 @@ fn body_state(
     health: &Health,
     gear: [Option<crate::items::ItemId>; 3],
     pvp: bool,
+    two_hand: Option<Hand>,
 ) -> BodyState {
     BodyState {
         id,
@@ -94,7 +95,7 @@ fn body_state(
         moved: v3(ctrl.moved),
         vertical: ctrl.velocity.y,
         grounded: ctrl.grounded,
-        action: action.current.map(|a| NetAction { kind: a.kind, elapsed: a.elapsed, dir: v3(a.dir), charge: a.charge, weapon: a.weapon }),
+        action: action.current.map(|a| NetAction { kind: a.kind, elapsed: a.elapsed, dir: v3(a.dir), charge: a.charge, weapon: a.weapon, hand: a.hand }),
         guard: guard.and_then(|g| g.raised_for),
         hp: health.current,
         hp_max: health.max,
@@ -102,6 +103,7 @@ fn body_state(
         left_hand: gear[1],
         head: gear[2],
         pvp,
+        two_hand,
     }
 }
 
@@ -311,7 +313,7 @@ fn spawn_puppet(
                 Targetable { height: 0.55 },
                 Enemy { home: pos, patrol: None, kind: EnemyKind::Hollow },
             ));
-            equip_weapon.write(EquipWeapon { character: e, def: &hollow_blade::HOLLOW_SWORD });
+            equip_weapon.write(EquipWeapon::right(e, &hollow_blade::HOLLOW_SWORD));
         }
         BodyKind::Warg => {
             // Its bites and pounce run from the replicated actions; they only catch *our* player.
@@ -321,7 +323,7 @@ fn spawn_puppet(
                 Hurtbox,
                 Targetable { height: warg::WARG_TARGET_HEIGHT },
                 Enemy { home: pos, patrol: None, kind: EnemyKind::Warg },
-                EquippedWeapon::natural(&warg_fangs::WARG_FANGS),
+                Wielded::natural(&warg_fangs::WARG_FANGS),
             ));
         }
     }
@@ -367,7 +369,7 @@ fn drive_puppets(
             Some(a) => {
                 let new = action.current.is_none_or(|c| c.kind != a.kind) || a.elapsed + 0.05 < p.last_elapsed;
                 if new {
-                    let mut started = ActiveAction::new(a.kind, Vec3::from_array(a.dir), a.weapon);
+                    let mut started = ActiveAction::new(a.kind, Vec3::from_array(a.dir), a.weapon).with_hand(a.hand);
                     started.def = action_def(a.kind, a.weapon);
                     started.elapsed = a.elapsed;
                     started.charge = a.charge;
@@ -396,17 +398,20 @@ fn drive_puppets(
         if health.current != s.hp || health.max != s.hp_max {
             *health = Health { current: s.hp, max: s.hp_max };
         }
-        // Equipment: rebuild the puppet's tiny bag when it changes (weapon/shield/hood models follow).
+        // Equipment: rebuild the puppet's tiny bag when it changes (weapon/shield/hood models follow;
+        // each hand's item goes into that hand, so a left weapon stays left).
         let shown = [s.right_hand, s.left_hand, s.head];
         if let Some((mut inv, mut eq)) = gear
-            && shown != p.shown_gear
+            && (shown != p.shown_gear || eq.two_hand != s.two_hand)
         {
             p.shown_gear = shown;
             *inv = Inventory { items: shown.iter().flatten().copied().collect(), ..default() };
             let mut next = Equipment::default();
-            for i in 0..inv.items.len() {
-                next.equip(&inv, i);
+            for (i, item) in inv.items.clone().into_iter().enumerate() {
+                let slot = if Some(item) == s.left_hand { EquipSlot::LeftHand } else if Some(item) == s.right_hand { EquipSlot::RightHand } else { EquipSlot::Head };
+                next.equip_to(&inv, i, slot);
             }
+            next.two_hand = s.two_hand;
             *eq = next;
         }
     }
@@ -450,7 +455,7 @@ fn send_states(
     *timer = 0.0;
     let Ok((tf, ctrl, action, guard, health, inv, eq, pvp)) = player.single() else { return };
     let gear = [EquipSlot::RightHand, EquipSlot::LeftHand, EquipSlot::Head].map(|s| eq.item(s, inv));
-    let me = body_state(session.my_id, BodyKind::Player, tf, ctrl, action, Some(guard), health, gear, pvp.0);
+    let me = body_state(session.my_id, BodyKind::Player, tf, ctrl, action, Some(guard), health, gear, pvp.0, eq.two_hand);
     if session.is_host() {
         let mut bodies = vec![me];
         bodies.extend(puppets.iter().filter(|p| p.state.kind == BodyKind::Player).map(|p| p.state.clone()));
@@ -461,7 +466,7 @@ fn send_states(
                 EnemyKind::Hollow => BodyKind::Hollow,
                 EnemyKind::Warg => BodyKind::Warg,
             };
-            let state = body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; 3], false);
+            let state = body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; 3], false, None);
             ids.push(state.id);
             live.insert(state.id);
             // Only what changed, plus a keepalive for idle ones: most enemies stand still far away.

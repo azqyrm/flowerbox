@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::character::action::ActionKind;
 use crate::items::ItemId;
-use crate::weapon::WeaponClass;
+use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_VERSION: u16 = 9;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -38,6 +38,7 @@ pub struct NetAction {
     pub dir: [f32; 3],
     pub charge: f32,
     pub weapon: WeaponClass,
+    pub hand: AttackHand,
 }
 
 /// Everything another machine needs to draw (and fight) a character.
@@ -61,6 +62,8 @@ pub struct BodyState {
     pub head: Option<ItemId>,
     /// Opted into PvP (Poppy).
     pub pvp: bool,
+    /// Which hand's weapon is held in both hands.
+    pub two_hand: Option<Hand>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -183,7 +186,14 @@ mod tests {
             moved: [0.0; 3],
             vertical: 0.0,
             grounded: true,
-            action: Some(NetAction { kind: ActionKind::LightAttack(1), elapsed: 0.2, dir: [0.0, 0.0, -1.0], charge: 0.0, weapon: WeaponClass::LightSword }),
+            action: Some(NetAction {
+                kind: ActionKind::LightAttack(1),
+                elapsed: 0.2,
+                dir: [0.0, 0.0, -1.0],
+                charge: 0.0,
+                weapon: WeaponClass::LightSword,
+                hand: AttackHand::Both,
+            }),
             guard: None,
             hp: 80.0,
             hp_max: 100.0,
@@ -191,6 +201,7 @@ mod tests {
             left_hand: Some(ItemId::WoodenShield),
             head: None,
             pvp: false,
+            two_hand: None,
         }
     }
 

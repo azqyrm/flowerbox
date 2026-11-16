@@ -4,8 +4,13 @@
 //! send them). When [`Equipment`] changes:
 //! - [`EquipStats`] is recalculated (attack, absorption, block, equip load, max HP bonus) and
 //!   pushed into `Health::max` and the generic `DamageAbsorption`;
-//! - the right-hand weapon is swapped via `EquipWeapon` (bare fists when the hand is empty);
-//! - shield/armour models are attached to their bones ([`super::ItemModel`]).
+//! - what the hands wield is sent as `EquipWeapon` (bare fists when the right hand is empty; a
+//!   weapon in the left hand; which one is held in both hands, `Equipment::two_hand`);
+//! - shield/armour models are attached to their bones ([`super::ItemModel`]); a shield is put
+//!   away while something is held in both hands.
+//!
+//! Weapons go to the right hand by default; [`EquipRequest::slot`] can put one in the left hand
+//! (dual wielding). [`TwoHandRequest`] toggles holding a hand's weapon in both hands.
 
 use bevy::prelude::*;
 
@@ -16,14 +21,19 @@ use crate::character::guard::Guard;
 use crate::character::stats::{DamageAbsorption, Health};
 use crate::humanoid::{HumanoidRig, HumanoidSpec};
 use crate::tuning::*;
-use crate::weapon::{EquipWeapon, EquippedWeapon, WeaponDef, light_sword};
+use super::ItemIcon;
+use crate::ui::icons::NoticeIcon;
+use crate::ui::notifications::Notify;
+use crate::ui::strings;
+use crate::weapon::{EquipWeapon, Hand, WeaponDef, Wielded, light_sword};
 
 pub struct InventoryPlugin;
 
 impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<EquipRequest>()
-            .add_systems(Update, (handle_equip_requests, (apply_equip_stats, sync_weapon, sync_models)).chain());
+            .add_message::<TwoHandRequest>()
+            .add_systems(Update, (handle_equip_requests, handle_two_hand, (apply_equip_stats, sync_weapon, sync_models)).chain());
     }
 }
 
@@ -125,10 +135,11 @@ impl EquipSlot {
     }
 }
 
-/// Which inventory entry sits in each slot.
+/// Which inventory entry sits in each slot, and which hand's weapon is held in both hands.
 #[derive(Component, Debug, Clone, Default, PartialEq)]
 pub struct Equipment {
     slots: [Option<usize>; 9],
+    pub two_hand: Option<Hand>,
 }
 
 impl Equipment {
@@ -139,7 +150,7 @@ impl Equipment {
 
     /// From a saved table; indices beyond the bag are dropped.
     pub fn from_slots(slots: [Option<usize>; 9], inventory: &Inventory) -> Self {
-        Self { slots: slots.map(|s| s.filter(|&i| i < inventory.items.len())) }
+        Self { slots: slots.map(|s| s.filter(|&i| i < inventory.items.len())), two_hand: None }
     }
 
     pub fn get(&self, slot: EquipSlot) -> Option<usize> {
@@ -175,7 +186,58 @@ impl Equipment {
             ItemKind::Key => return None,
         };
         self.slots[slot.index()] = Some(index);
+        self.settle(inventory);
         Some(slot)
+    }
+
+    /// Puts entry `index` into a chosen hand: weapons into either hand (dual wielding), shields
+    /// only into the left. Moves it if it's in the other hand already. Other slots: as [`Self::equip`].
+    pub fn equip_to(&mut self, inventory: &Inventory, index: usize, slot: EquipSlot) -> Option<EquipSlot> {
+        let item = *inventory.items.get(index)?;
+        let fits = match (slot, item.def().kind) {
+            (EquipSlot::RightHand, ItemKind::Weapon) => true,
+            (EquipSlot::LeftHand, ItemKind::Weapon | ItemKind::Shield) => true,
+            (EquipSlot::RightHand | EquipSlot::LeftHand, _) => false,
+            _ => return self.equip(inventory, index),
+        };
+        if !fits {
+            return None;
+        }
+        if let Some(old) = self.slot_of(index) {
+            self.slots[old.index()] = None;
+        }
+        self.slots[slot.index()] = Some(index);
+        self.settle(inventory);
+        Some(slot)
+    }
+
+    /// The weapon in `hand`, if any (a shield isn't one; an empty right hand isn't either).
+    pub fn hand_weapon(&self, inventory: &Inventory, hand: Hand) -> Option<&'static WeaponDef> {
+        let slot = match hand {
+            Hand::Right => EquipSlot::RightHand,
+            Hand::Left => EquipSlot::LeftHand,
+        };
+        self.item(slot, inventory).and_then(|i| i.def().weapon)
+    }
+
+    /// Holds `hand`'s weapon in both hands, or (again) goes back to one hand. Err: nothing to hold.
+    pub fn toggle_two_hand(&mut self, inventory: &Inventory, hand: Hand) -> Result<Option<Hand>, ()> {
+        if self.two_hand == Some(hand) {
+            self.two_hand = None;
+            return Ok(None);
+        }
+        self.hand_weapon(inventory, hand).ok_or(())?;
+        self.two_hand = Some(hand);
+        Ok(self.two_hand)
+    }
+
+    /// Two-handing ends when that hand no longer holds a weapon.
+    fn settle(&mut self, inventory: &Inventory) {
+        if let Some(h) = self.two_hand
+            && self.hand_weapon(inventory, h).is_none()
+        {
+            self.two_hand = None;
+        }
     }
 
     /// Takes entry `index` off. The quick item (Healing Ale) stays. Returns whether it changed.
@@ -184,6 +246,16 @@ impl Equipment {
             Some(EquipSlot::Quick) | None => false,
             Some(slot) => {
                 self.slots[slot.index()] = None;
+                // Nothing left to hold in both hands.
+                if let Some(h) = self.two_hand {
+                    let held = match h {
+                        Hand::Right => EquipSlot::RightHand,
+                        Hand::Left => EquipSlot::LeftHand,
+                    };
+                    if held == slot {
+                        self.two_hand = None;
+                    }
+                }
                 true
             }
         }
@@ -193,12 +265,18 @@ impl Equipment {
         !matches!(self.slot_of(index), Some(EquipSlot::Quick) | None)
     }
 
-    /// The right-hand weapon (bare fists when empty).
+    /// The main weapon: the one held in both hands, else the right-hand one (bare fists when empty).
     pub fn weapon(&self, inventory: &Inventory) -> &'static WeaponDef {
-        self.item(EquipSlot::RightHand, inventory)
-            .and_then(|i| i.def().weapon)
-            .unwrap_or(&light_sword::FISTS)
+        let hand = self.two_hand.unwrap_or(Hand::Right);
+        self.hand_weapon(inventory, hand).unwrap_or(&light_sword::FISTS)
     }
+}
+
+/// Hold `hand`'s weapon in both hands (again: back to one hand).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct TwoHandRequest {
+    pub character: Entity,
+    pub hand: Hand,
 }
 
 /// Equip or unequip inventory entry `index` of `character`.
@@ -207,12 +285,14 @@ pub struct EquipRequest {
     pub character: Entity,
     pub index: usize,
     pub equip: bool,
+    /// A specific hand (`RightHand` / `LeftHand`) for weapons and shields; `None` = its usual slot.
+    pub slot: Option<EquipSlot>,
 }
 
 /// Totals from what is equipped.
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
 pub struct EquipStats {
-    /// Base damage of the right-hand weapon.
+    /// Base damage of the main weapon (× the two-handed bonus when held in both hands).
     pub attack: f32,
     /// Fraction of damage absorbed by armour.
     pub absorption: f32,
@@ -225,7 +305,8 @@ pub struct EquipStats {
 
 impl EquipStats {
     pub fn compute(inventory: &Inventory, equipment: &Equipment) -> Self {
-        let mut s = EquipStats { attack: equipment.weapon(inventory).base_damage, max_load: PLAYER_MAX_LOAD, ..default() };
+        let two_handed = if equipment.two_hand.is_some() { TWO_HAND_DAMAGE_MULT } else { 1.0 };
+        let mut s = EquipStats { attack: equipment.weapon(inventory).base_damage * two_handed, max_load: PLAYER_MAX_LOAD, ..default() };
         let mut kept = 1.0;
         for slot in EquipSlot::ALL {
             let Some(def) = equipment.item(slot, inventory).map(ItemId::def) else { continue };
@@ -235,6 +316,10 @@ impl EquipStats {
             s.max_hp_bonus += def.max_hp_bonus;
         }
         s.absorption = 1.0 - kept;
+        // Two-handing: the shield is put away; you guard with the weapon instead.
+        if equipment.two_hand.is_some() {
+            s.block = equipment.weapon(inventory).guard_block;
+        }
         s
     }
 
@@ -264,13 +349,35 @@ fn handle_equip_requests(mut requests: MessageReader<EquipRequest>, mut q: Query
         let Some(item) = inventory.items.get(req.index) else { continue };
         let mut next = equipment.clone();
         if req.equip {
-            next.equip(inventory, req.index);
+            match req.slot {
+                Some(slot) => next.equip_to(inventory, req.index, slot),
+                None => next.equip(inventory, req.index),
+            };
         } else {
             next.unequip(req.index);
         }
         if next != *equipment {
             *equipment = next;
             info!("{} {}", if req.equip { "equipped" } else { "unequipped" }, item.def().name);
+        }
+    }
+}
+
+fn handle_two_hand(
+    mut requests: MessageReader<TwoHandRequest>,
+    mut notify: MessageWriter<Notify>,
+    mut q: Query<(&Inventory, &mut Equipment, Has<crate::player::Player>)>,
+) {
+    for req in requests.read() {
+        let Ok((inventory, mut equipment, is_player)) = q.get_mut(req.character) else { continue };
+        let name = equipment.hand_weapon(inventory, req.hand).map(|w| w.name);
+        let text = match equipment.toggle_two_hand(inventory, req.hand) {
+            Ok(two) => strings::two_handing(name.unwrap_or("Weapon"), two.is_some()),
+            Err(()) => strings::CANT_TWO_HAND.to_string(),
+        };
+        info!("{text}");
+        if is_player {
+            notify.write(Notify::new(NoticeIcon::Item(ItemIcon::Sword), text));
         }
     }
 }
@@ -316,12 +423,16 @@ fn apply_equip_stats(
 
 fn sync_weapon(
     mut equip: MessageWriter<EquipWeapon>,
-    q: Query<(Entity, &Inventory, &Equipment, Option<&EquippedWeapon>), Changed<Equipment>>,
+    q: Query<(Entity, &Inventory, &Equipment, Option<&Wielded>), Changed<Equipment>>,
 ) {
     for (entity, inventory, equipment, held) in &q {
-        let want = equipment.weapon(inventory);
-        if held.is_none_or(|h| !std::ptr::eq(h.def, want)) {
-            equip.write(EquipWeapon { character: entity, def: want });
+        let right = equipment.hand_weapon(inventory, Hand::Right).unwrap_or(&light_sword::FISTS);
+        let left = equipment.hand_weapon(inventory, Hand::Left);
+        let same = held.is_some_and(|h| {
+            std::ptr::eq(h.right, right) && h.left.map(|l| l as *const _) == left.map(|l| l as *const _) && h.two_hand == equipment.two_hand
+        });
+        if !same {
+            equip.write(EquipWeapon { character: entity, right, left, two_hand: equipment.two_hand });
         }
     }
 }
@@ -340,8 +451,10 @@ fn sync_models(
 ) {
     for (inventory, equipment, rig, spec, mut visuals) in &mut q {
         // Drop models whose slot no longer holds the same item.
+        // A shield is put away while something is held in both hands.
+        let stowed = |slot: EquipSlot| slot == EquipSlot::LeftHand && equipment.two_hand.is_some();
         visuals.models.retain(|(slot, item, entity)| {
-            let keep = equipment.item(*slot, inventory) == Some(*item);
+            let keep = equipment.item(*slot, inventory) == Some(*item) && !stowed(*slot);
             if !keep {
                 commands.entity(*entity).despawn();
             }
@@ -350,6 +463,9 @@ fn sync_models(
         for slot in EquipSlot::ALL {
             let Some(item) = equipment.item(slot, inventory) else { continue };
             let Some(model) = item.def().model else { continue };
+            if stowed(slot) {
+                continue;
+            }
             if visuals.models.iter().any(|(s, _, _)| *s == slot) {
                 continue;
             }
@@ -365,6 +481,27 @@ fn sync_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dual_wield_and_two_hand() {
+        let inv = Inventory::from_items(&[ItemId::Longsword, ItemId::RustedShortsword, ItemId::WoodenShield]);
+        let mut eq = Equipment::default();
+        eq.equip(&inv, 0);
+        assert_eq!(eq.equip_to(&inv, 1, EquipSlot::LeftHand), Some(EquipSlot::LeftHand), "a sword in the left hand");
+        assert_eq!(eq.hand_weapon(&inv, Hand::Left).map(|w| w.name), Some("Rusted Shortsword"));
+        assert_eq!(eq.equip_to(&inv, 2, EquipSlot::RightHand), None, "no shield in the right hand");
+        assert_eq!(eq.toggle_two_hand(&inv, Hand::Left), Ok(Some(Hand::Left)));
+        assert_eq!(eq.weapon(&inv).name, "Rusted Shortsword", "the two-handed one is the main weapon");
+        assert_eq!(eq.toggle_two_hand(&inv, Hand::Left), Ok(None), "again: one hand");
+        eq.equip(&inv, 2); // the shield replaces the left sword
+        assert_eq!(eq.toggle_two_hand(&inv, Hand::Left), Err(()), "a shield can't be two-handed");
+        eq.toggle_two_hand(&inv, Hand::Right).unwrap();
+        let stats = EquipStats::compute(&inv, &eq);
+        assert!((stats.attack - 20.0 * TWO_HAND_DAMAGE_MULT).abs() < 1e-4);
+        assert_eq!(stats.block, light_sword::LONGSWORD.guard_block, "guarding with the sword, shield put away");
+        eq.unequip(0);
+        assert_eq!(eq.two_hand, None, "nothing left to hold");
+    }
 
     fn bag() -> Inventory {
         Inventory::from_items(&[ItemId::Longsword, ItemId::HealingAle, ItemId::WoodenShield, ItemId::RustedAxe, ItemId::LeatherHood])

@@ -69,10 +69,12 @@ pub enum Bind {
     Interact,
     LockOn,
     Inventory,
+    TwoHand,
+    Ability,
 }
 
 impl Bind {
-    pub const ALL: [Bind; 12] = [
+    pub const ALL: [Bind; 14] = [
         Bind::MoveForward,
         Bind::MoveBack,
         Bind::MoveLeft,
@@ -85,6 +87,8 @@ impl Bind {
         Bind::Interact,
         Bind::LockOn,
         Bind::Inventory,
+        Bind::TwoHand,
+        Bind::Ability,
     ];
 
     pub fn label(self) -> &'static str {
@@ -95,12 +99,14 @@ impl Bind {
             Bind::MoveRight => "Move right",
             Bind::Jump => "Jump",
             Bind::DodgeSprint => "Roll (tap) / sprint (hold)",
-            Bind::Attack => "Attack (tap light, hold heavy)",
-            Bind::Block => "Block / parry",
+            Bind::Attack => "Right hand: attack (tap light, hold heavy)",
+            Bind::Block => "Left hand: block, parry / attack",
             Bind::DrinkAle => "Drink Healing Ale",
             Bind::Interact => "Interact / rest",
             Bind::LockOn => "Lock on",
             Bind::Inventory => "Inventory",
+            Bind::TwoHand => "Two-hand (hold + a hand's button); alone: lock on",
+            Bind::Ability => "Weapon ability",
         }
     }
 
@@ -119,6 +125,8 @@ impl Bind {
             Bind::Interact => Input::Key(KeyE),
             Bind::LockOn => Input::Key(KeyQ),
             Bind::Inventory => Input::Key(Tab),
+            Bind::TwoHand => Input::Mouse(MouseButton::Middle),
+            Bind::Ability => Input::Key(KeyF),
         }
     }
 }

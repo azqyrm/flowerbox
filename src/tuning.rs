@@ -130,6 +130,10 @@ pub const REST_STARTUP: f32 = 0.7;
 pub const REST_RECOVERY: f32 = 0.8;
 
 // ── Combat ───────────────────────────────────────────────────────────────
+/// A dual attack (both same-class weapons at once) costs this × a normal attack's stamina.
+pub const DUAL_STAMINA_MULT: f32 = 1.5;
+/// Attacks with a weapon held in both hands deal this × damage.
+pub const TWO_HAND_DAMAGE_MULT: f32 = 1.2;
 /// LMB held at least this long = heavy attack (charging starts), shorter = light attack.
 pub const ATTACK_HOLD_THRESHOLD: f32 = 0.25;
 pub const HEAVY_CHARGE_MOVE_FACTOR: f32 = 0.3;

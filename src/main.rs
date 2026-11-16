@@ -1,5 +1,6 @@
 //! FlowerBox — a Soulslike prototype. See ROADMAP.md.
 
+mod ability;
 mod arena;
 mod camera;
 mod character;
@@ -29,11 +30,19 @@ mod weapon;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
+/// Running an automated test (autopilot or screenshot), not a game.
+fn test_run() -> bool {
+    std::env::var("FLOWERBOX_AUTOPILOT").is_ok() || std::env::var("FLOWERBOX_SCREENSHOT").is_ok()
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "FlowerBox".into(),
+                // Test runs (autopilots, screenshots) don't wait for vsync: a desktop that throttles
+                // hidden windows (GNOME Wayland) otherwise slows them to a few frames per second.
+                present_mode: if test_run() { bevy::window::PresentMode::AutoNoVsync } else { bevy::window::PresentMode::default() },
                 ..default()
             }),
             ..default()
@@ -58,6 +67,7 @@ fn main() {
             level::LevelPlugin,
             enemy::EnemyPlugin,
             grab::GrabPlugin,
+            ability::AbilityPlugin,
             pvp::PvpPlugin,
             save::SavePlugin,
             sound::SoundPlugin,

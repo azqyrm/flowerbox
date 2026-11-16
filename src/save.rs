@@ -22,6 +22,7 @@ use crate::items::ItemId;
 use crate::items::inventory::{Equipment, Inventory};
 use crate::items::pickup::{ClaimedDrops, Pickup, PickupLayout};
 use crate::level::door::Door;
+use crate::weapon::Hand;
 use crate::net::NetSession;
 use crate::player::Player;
 use crate::tuning::*;
@@ -66,6 +67,8 @@ pub struct SaveData {
     pub doors: Vec<u32>,
     /// Unique enemy drops already taken (keys): not dropped again.
     pub claimed_drops: Vec<u32>,
+    /// Which hand's weapon was held in both hands.
+    pub two_hand: Option<Hand>,
 }
 
 impl SaveData {
@@ -134,6 +137,7 @@ fn load_save(
     let Ok((entity, mut inventory, mut equipment, mut ale, mut tf)) = player.single_mut() else { return };
     *inventory = Inventory { items: data.items.clone(), counts: data.counts.iter().copied().collect() };
     *equipment = Equipment::from_slots(data.equipped, &inventory);
+    equipment.two_hand = data.two_hand.filter(|h| equipment.hand_weapon(&inventory, *h).is_some());
     ale.max = data.ale_max.max(1);
     ale.charges = data.ale_charges.min(ale.max);
     let suns = data.revived_suns();
@@ -222,6 +226,7 @@ fn snapshot(state: &SaveState, inventory: &Inventory, equipment: &Equipment, ale
         suns: state.suns.clone(),
         doors: state.doors.clone(),
         claimed_drops: state.claimed.clone(),
+        two_hand: equipment.two_hand,
     }
 }
 

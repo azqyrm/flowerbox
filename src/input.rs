@@ -4,6 +4,7 @@
 //! gameplay systems only read [`PlayerInput`], so presses are never lost or doubled.
 
 use bevy::prelude::*;
+use crate::weapon::AttackHand;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use leafwing_input_manager::prelude::*;
 
@@ -11,7 +12,9 @@ use crate::camera::ThirdPersonCamera;
 use crate::character::{ActionIntent, MoveIntent};
 use crate::character::action::ActionRequest;
 use crate::settings::{Bind, Bindings, Input, Settings};
+use crate::items::inventory::TwoHandRequest;
 use crate::tuning::*;
+use crate::weapon::{Hand, Wielded};
 
 pub struct InputPlugin;
 
@@ -57,6 +60,10 @@ pub enum Action {
     LockOn,
     Inventory,
     Pause,
+    /// Hold + a hand's attack button: hold that hand's weapon in both hands. Alone: lock on.
+    TwoHand,
+    /// The main weapon's ability.
+    Ability,
 }
 
 /// The player's input map: the rebindable keyboard/mouse bindings from the settings, plus fixed
@@ -80,6 +87,8 @@ pub fn input_map(bindings: &Bindings) -> InputMap<Action> {
         (Bind::Interact, Action::Interact),
         (Bind::LockOn, Action::LockOn),
         (Bind::Inventory, Action::Inventory),
+        (Bind::TwoHand, Action::TwoHand),
+        (Bind::Ability, Action::Ability),
     ] {
         bind(&mut map, action, bindings.get(b));
     }
@@ -90,7 +99,6 @@ pub fn input_map(bindings: &Bindings) -> InputMap<Action> {
     };
     let dpad = VirtualDPad::new(key(Bind::MoveForward), key(Bind::MoveBack), key(Bind::MoveLeft), key(Bind::MoveRight));
     map.with(Action::Inventory, KeyCode::KeyI)
-        .with(Action::LockOn, MouseButton::Middle)
         .with(Action::Pause, KeyCode::Escape)
         .with_dual_axis(Action::Move, dpad)
         .with_dual_axis(Action::Look, MouseMove::default())
@@ -107,6 +115,7 @@ pub fn input_map(bindings: &Bindings) -> InputMap<Action> {
     .with(Action::Interact, GamepadButton::North)
     .with(Action::LockOn, GamepadButton::RightThumb)
     .with(Action::Inventory, GamepadButton::Start)
+    .with(Action::Ability, GamepadButton::LeftTrigger2)
 }
 
 /// New key bindings take effect at once.
@@ -167,8 +176,34 @@ pub struct PlayerInput {
     /// How long Shift has been held (for tap-vs-hold).
     pub dodge_held: f32,
     pub attack: AttackTracker,
+    /// The left hand's attacks (the right button, when the left hand holds a weapon).
+    pub offhand: AttackTracker,
     /// E was pressed and nothing has used it yet (the Hearth consumes it).
     pub interact: bool,
+    /// The two-hand button is down and was already used for a combo (then releasing it doesn't
+    /// lock on).
+    two_hand_combo: bool,
+    /// The two-hand button was tapped alone: lock on (`crate::lockon` consumes it).
+    pub lock_on_tap: bool,
+}
+
+/// What the right (left-hand) button does, from what the hands hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Offhand {
+    /// Raise the shield (or the two-handed weapon); nothing without either.
+    Guard,
+    /// Attack with the left weapon, or both at once (a matching pair).
+    Attack(AttackHand),
+}
+
+impl Offhand {
+    pub fn of(wielded: Option<&Wielded>) -> Self {
+        match wielded {
+            Some(w) if w.dual_class().is_some() => Offhand::Attack(AttackHand::Both),
+            Some(w) if w.left_attacks() => Offhand::Attack(AttackHand::Left),
+            _ => Offhand::Guard,
+        }
+    }
 }
 
 /// Tap-vs-hold logic of the attack button. Pure so it can be unit tested.
@@ -184,7 +219,7 @@ pub struct AttackTracker {
 impl AttackTracker {
     /// Feed one frame of button state; returns a request when one should be queued.
     /// Tap (released before the threshold) = light, holding past the threshold = heavy (charge).
-    pub fn update(&mut self, pressed: bool, just_pressed: bool, just_released: bool, grabbed: bool, dt: f32) -> Option<ActionRequest> {
+    pub fn update(&mut self, hand: AttackHand, pressed: bool, just_pressed: bool, just_released: bool, grabbed: bool, dt: f32) -> Option<ActionRequest> {
         let mut request = None;
         if just_pressed {
             *self = Self { armed: grabbed, ..default() };
@@ -193,12 +228,12 @@ impl AttackTracker {
             self.held += dt;
             if self.held >= ATTACK_HOLD_THRESHOLD && !self.heavy_sent {
                 self.heavy_sent = true;
-                request = Some(ActionRequest::HeavyAttack);
+                request = Some(ActionRequest::HeavyAttack(hand));
             }
         }
         if just_released {
             if self.armed && !self.heavy_sent {
-                request = Some(ActionRequest::LightAttack);
+                request = Some(ActionRequest::LightAttack(hand));
             }
             *self = Self::default();
         }
@@ -228,7 +263,8 @@ fn gather_player_input(
     autopilot: Option<Res<Autopilot>>,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     cam: Query<&ThirdPersonCamera>,
-    mut players: Query<(&ActionState<Action>, &mut PlayerInput, &mut MoveIntent, &mut ActionIntent)>,
+    mut two_hand: MessageWriter<TwoHandRequest>,
+    mut players: Query<(Entity, &ActionState<Action>, &mut PlayerInput, &mut MoveIntent, &mut ActionIntent, Option<&Wielded>)>,
 ) {
     let yaw = cam.iter().next().map_or(0.0, |c| c.yaw);
     // Camera-relative basis on the ground plane (camera looks along -Z at yaw 0).
@@ -237,7 +273,7 @@ fn gather_player_input(
     let dt = time.delta_secs();
     let t = time.elapsed_secs();
 
-    for (actions, mut input, mut movement, mut intent) in &mut players {
+    for (entity, actions, mut input, mut movement, mut intent, wielded) in &mut players {
         intent.tick(dt);
         // The frame a menu closes counts as blocked too: the click on "Resume" mustn't swing.
         if blocked.0 || blocked.is_changed() {
@@ -246,6 +282,7 @@ fn gather_player_input(
             movement.sprint = false;
             input.dodge_held = 0.0;
             input.attack = AttackTracker::default();
+            input.offhand = AttackTracker::default();
             input.interact = false;
             intent.attack_held = false;
             intent.guard_held = false;
@@ -271,11 +308,34 @@ fn gather_player_input(
         input.dodge_held = if actions.pressed(&Action::DodgeSprint) { input.dodge_held + dt } else { 0.0 };
         movement.sprint = scripted_sprint.unwrap_or(input.dodge_held >= SPRINT_HOLD_THRESHOLD);
 
-        // Attack button. Ignored while the cursor is free, so the click that re-grabs it
-        // doesn't swing the sword. The autopilot may script the button instead.
+        // Two-hand button: held + a hand's button toggles two-handing that hand's weapon (the
+        // press doesn't attack); tapped alone it locks on (on release).
+        if actions.just_pressed(&Action::TwoHand) {
+            input.two_hand_combo = false;
+        }
+        let modifier = actions.pressed(&Action::TwoHand);
+        if modifier {
+            for (button, hand) in [(Action::Attack, Hand::Right), (Action::Block, Hand::Left)] {
+                if actions.just_pressed(&button) {
+                    two_hand.write(TwoHandRequest { character: entity, hand });
+                    input.two_hand_combo = true;
+                }
+            }
+            input.attack = AttackTracker::default(); // swallowed: no attack on release
+            input.offhand = AttackTracker::default();
+        }
+        if actions.just_released(&Action::TwoHand) && !input.two_hand_combo {
+            input.lock_on_tap = true;
+        }
+        if actions.just_pressed(&Action::Ability) {
+            intent.buffer(ActionRequest::Ability);
+        }
+
+        // Right hand: the attack button. Ignored while the cursor is free, so the click that
+        // re-grabs it doesn't swing the sword. The autopilot may script the button instead.
         let mut attack = (
-            actions.pressed(&Action::Attack),
-            actions.just_pressed(&Action::Attack),
+            actions.pressed(&Action::Attack) && !modifier,
+            actions.just_pressed(&Action::Attack) && !modifier,
             actions.just_released(&Action::Attack),
         );
         let mut grabbed = cursor_grabbed(&cursor);
@@ -283,14 +343,28 @@ fn gather_player_input(
             attack = script(t, dt);
             grabbed = true;
         }
-        if let Some(request) = input.attack.update(attack.0, attack.1, attack.2, grabbed, dt) {
+        if let Some(request) = input.attack.update(AttackHand::Right, attack.0, attack.1, attack.2, grabbed, dt) {
             intent.buffer(request);
         }
-        intent.attack_held = attack.0 && input.attack.is_holding();
-        // Block: only while the game has the cursor (a right click on a free cursor isn't a block).
+        let mut held = attack.0 && input.attack.is_holding();
+        // Left hand: the block button guards (shield, or a two-handed weapon) or attacks (a left
+        // weapon; a matching pair attacks with both). Only while the game has the cursor.
+        let offhand = Offhand::of(wielded);
+        let left = (
+            actions.pressed(&Action::Block) && !modifier,
+            actions.just_pressed(&Action::Block) && !modifier,
+            actions.just_released(&Action::Block),
+        );
+        if let Offhand::Attack(hand) = offhand {
+            if let Some(request) = input.offhand.update(hand, left.0, left.1, left.2, grabbed, dt) {
+                intent.buffer(request);
+            }
+            held |= left.0 && input.offhand.is_holding();
+        }
+        intent.attack_held = held;
         intent.guard_held = match autopilot.as_ref().and_then(|a| a.guard_button) {
             Some(script) => script(t),
-            None => actions.pressed(&Action::Block) && cursor_grabbed(&cursor),
+            None => offhand == Offhand::Guard && left.0 && cursor_grabbed(&cursor),
         };
 
         if actions.just_pressed(&Action::DrinkAle) {
@@ -353,21 +427,22 @@ mod tests {
     fn press(tracker: &mut AttackTracker, hold: f32, grabbed: bool) -> Vec<ActionRequest> {
         let dt = 1.0 / 60.0;
         let mut out = vec![];
-        out.extend(tracker.update(true, true, false, grabbed, dt));
+        let h = AttackHand::Right;
+        out.extend(tracker.update(h, true, true, false, grabbed, dt));
         let mut t = 0.0;
         while t < hold {
-            out.extend(tracker.update(true, false, false, true, dt));
+            out.extend(tracker.update(h, true, false, false, true, dt));
             t += dt;
         }
-        out.extend(tracker.update(false, false, true, true, dt));
+        out.extend(tracker.update(h, false, false, true, true, dt));
         out
     }
 
     #[test]
     fn attack_tap_is_light_hold_is_heavy() {
         let mut t = AttackTracker::default();
-        assert_eq!(press(&mut t, 0.1, true), vec![ActionRequest::LightAttack]);
-        assert_eq!(press(&mut t, 0.6, true), vec![ActionRequest::HeavyAttack], "heavy fires once, no light on release");
+        assert_eq!(press(&mut t, 0.1, true), vec![ActionRequest::LightAttack(AttackHand::Right)]);
+        assert_eq!(press(&mut t, 0.6, true), vec![ActionRequest::HeavyAttack(AttackHand::Right)], "heavy fires once, no light on release");
     }
 
     #[test]

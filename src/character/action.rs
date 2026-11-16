@@ -16,16 +16,19 @@ use super::controller::CharacterController;
 use super::stats::{Invulnerable, Stamina};
 use super::{ActionIntent, MoveIntent};
 use crate::tuning::*;
-use crate::weapon::{AttackSpec, EquippedWeapon, WeaponClass};
+use crate::ability::{AbilityEffect, AbilityId};
+use crate::weapon::{AttackHand, AttackSpec, WeaponClass, Wielded};
 
 /// What the player asked for (from input). Turned into an [`ActionKind`] by [`resolve_request`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionRequest {
     /// Becomes a backstep when there's no movement input.
     Roll,
-    /// Becomes a jump attack while airborne.
-    LightAttack,
-    HeavyAttack,
+    /// With the given hand(s); becomes a jump attack while airborne.
+    LightAttack(AttackHand),
+    HeavyAttack(AttackHand),
+    /// The main weapon's ability (`crate::ability`).
+    Ability,
     DrinkAle,
     /// Eat/use a consumable from the bag (what it does: `crate::pvp`).
     UseItem,
@@ -65,6 +68,8 @@ pub enum ActionKind {
     /// Grab leap: wind-up (leaning back), the leap (`active`, carries whoever it catches), then
     /// the bite and shake (`recovery`). See `crate::grab`.
     Pounce,
+    /// An activated ability (`crate::ability`): a strike with its own swing, or a buff stance.
+    Ability(AbilityId),
     /// Held in a creature's jaws: no control; bitten, then let go (`crate::grab`).
     Grabbed,
 }
@@ -328,6 +333,20 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
                 hop: 0.0,
             }
         }
+        Ability(id) => match id.def().effect {
+            AbilityEffect::Strike(spec) => ActionDef { stamina_cost: id.def().stamina_cost, ..attack_def(&spec, None, GroundRule::Ground, 0.0) },
+            AbilityEffect::Buff { startup, active, recovery, .. } => ActionDef {
+                startup,
+                active,
+                recovery,
+                cancel: startup + active + recovery * 0.6,
+                stamina_cost: id.def().stamina_cost,
+                iframes: None,
+                movement: ActionMovement::Locked,
+                ground: GroundRule::Ground,
+                hop: 0.0,
+            },
+        },
         Grabbed => ActionDef {
             startup: 0.0,
             active: GRAB_HOLD,
@@ -412,11 +431,22 @@ pub struct ActiveAction {
     pub charge: f32,
     /// Weapon class held when the action started (its moveset drives attacks and their poses).
     pub weapon: WeaponClass,
+    /// Which hand(s) an attack swings (the left mirrors the right's swing; both = the dual attack).
+    pub hand: AttackHand,
 }
 
 impl ActiveAction {
     pub fn new(kind: ActionKind, dir: Vec3, weapon: WeaponClass) -> Self {
-        Self { kind, def: action_def(kind, weapon), elapsed: 0.0, dir, charge: 0.0, weapon }
+        Self { kind, def: action_def(kind, weapon), elapsed: 0.0, dir, charge: 0.0, weapon, hand: AttackHand::Right }
+    }
+
+    /// The same action swung with `hand`: a dual attack (both) costs `DUAL_STAMINA_MULT` × stamina.
+    pub fn with_hand(mut self, hand: AttackHand) -> Self {
+        if hand == AttackHand::Both && self.hand != AttackHand::Both {
+            self.def.stamina_cost *= DUAL_STAMINA_MULT;
+        }
+        self.hand = hand;
+        self
     }
 
     /// The moveset attack this action performs, if it's an attack.
@@ -427,6 +457,7 @@ impl ActiveAction {
             ActionKind::RunningAttack => &moves.running,
             ActionKind::HeavyCharge | ActionKind::HeavyAttack => &moves.heavy,
             ActionKind::JumpAttack => &moves.jump,
+            ActionKind::Ability(id) => return id.strike(),
             _ => return None,
         })
     }
@@ -508,7 +539,7 @@ pub struct RequestContext {
     pub moving: bool,
     /// Sprinting right now (a light attack becomes the running attack).
     pub sprinting: bool,
-    /// Held weapon class (combo length, attack availability).
+    /// Weapon class of the requested hand (combo length, attack availability, ability).
     pub weapon: WeaponClass,
 }
 
@@ -528,15 +559,17 @@ pub fn resolve_request(
     let kind = match request {
         ActionRequest::Roll if moving => ActionKind::Roll,
         ActionRequest::Roll => ActionKind::Backstep,
-        ActionRequest::LightAttack if !grounded => ActionKind::JumpAttack,
-        ActionRequest::LightAttack if sprinting && current.is_none() => ActionKind::RunningAttack,
-        ActionRequest::LightAttack => match current.map(|a| a.kind) {
-            Some(ActionKind::LightAttack(n)) if ((n + 1) as usize) < weapon.moveset().light.len() => {
+        ActionRequest::LightAttack(_) if !grounded => ActionKind::JumpAttack,
+        ActionRequest::LightAttack(_) if sprinting && current.is_none() => ActionKind::RunningAttack,
+        // The combo continues with the same hand(s).
+        ActionRequest::LightAttack(hand) => match current.map(|a| (a.kind, a.hand)) {
+            Some((ActionKind::LightAttack(n), h)) if h == hand && ((n + 1) as usize) < weapon.moveset().light.len() => {
                 ActionKind::LightAttack(n + 1)
             }
             _ => ActionKind::LightAttack(0),
         },
-        ActionRequest::HeavyAttack => ActionKind::HeavyCharge,
+        ActionRequest::HeavyAttack(_) => ActionKind::HeavyCharge,
+        ActionRequest::Ability => ActionKind::Ability(weapon.moveset().ability?),
         ActionRequest::DrinkAle => ActionKind::DrinkAle,
         ActionRequest::UseItem => ActionKind::UseItem,
         ActionRequest::Rest => ActionKind::Rest,
@@ -563,13 +596,27 @@ pub(super) fn start_buffered_action(
         &MoveIntent,
         &mut Stamina,
         &mut CharacterController,
-        Option<&EquippedWeapon>,
+        Option<&Wielded>,
         Option<&RollWeight>,
     )>,
 ) {
-    for (mut action, mut intent, movement, mut stamina, mut ctrl, equipped, roll_weight) in &mut q {
-        let weapon = equipped.map_or_else(WeaponClass::default, |e| e.class());
+    for (mut action, mut intent, movement, mut stamina, mut ctrl, wielded, roll_weight) in &mut q {
         let Some(request) = intent.buffered else { continue };
+        // Which hand(s) swing: the left only with a left weapon, both only with a matching pair.
+        let hand = match request {
+            ActionRequest::LightAttack(h) | ActionRequest::HeavyAttack(h) => h,
+            _ => AttackHand::Right,
+        };
+        let usable = match hand {
+            AttackHand::Right => true,
+            AttackHand::Left => wielded.is_some_and(Wielded::left_attacks),
+            AttackHand::Both => wielded.is_some_and(|w| w.dual_class().is_some()),
+        };
+        if !usable {
+            intent.buffered = None;
+            continue;
+        }
+        let weapon = wielded.map_or_else(WeaponClass::default, |w| w.class_for(hand));
         let moving = movement.dir.length_squared() > 0.01;
         let ctx = RequestContext { grounded: ctrl.grounded, moving, sprinting: ctrl.sprinting, weapon };
         let Some(kind) = resolve_request(action.current.as_ref(), request, ctx, &stamina) else {
@@ -579,7 +626,7 @@ pub(super) fn start_buffered_action(
         let facing = Vec3::new(-ctrl.facing.sin(), 0.0, -ctrl.facing.cos());
         let is_attack = matches!(
             kind,
-            ActionKind::LightAttack(_) | ActionKind::HeavyCharge | ActionKind::RunningAttack | ActionKind::JumpAttack
+            ActionKind::LightAttack(_) | ActionKind::HeavyCharge | ActionKind::RunningAttack | ActionKind::JumpAttack | ActionKind::Ability(_)
         );
         let dir = match kind {
             ActionKind::Backstep => -facing,
@@ -593,6 +640,9 @@ pub(super) fn start_buffered_action(
             ctrl.facing = f32::atan2(-dir.x, -dir.z);
         }
         let mut started = ActiveAction::new(kind, dir, weapon);
+        if is_attack && !matches!(kind, ActionKind::Ability(_)) {
+            started = started.with_hand(hand);
+        }
         if let (ActionKind::Roll, Some(w)) = (kind, roll_weight) {
             started.def = w.roll_def();
         }
@@ -616,6 +666,7 @@ pub(super) fn release_heavy_charge(mut q: Query<(&mut CharacterAction, &ActionIn
             continue;
         }
         let mut heavy = ActiveAction::new(ActionKind::HeavyAttack, cur.dir, cur.weapon);
+        heavy.hand = cur.hand; // its stamina was paid with the charge
         heavy.charge = (cur.elapsed / charge_max).clamp(0.0, 1.0);
         action.start(heavy);
     }
@@ -670,6 +721,23 @@ mod tests {
     }
 
     #[test]
+    fn dual_attacks_cost_one_and_a_half_times_the_stamina() {
+        let one = ActiveAction::new(ActionKind::LightAttack(0), Vec3::NEG_Z, W);
+        let both = ActiveAction::new(ActionKind::LightAttack(0), Vec3::NEG_Z, W).with_hand(AttackHand::Both);
+        assert!((both.def.stamina_cost - one.def.stamina_cost * DUAL_STAMINA_MULT).abs() < 1e-4);
+        assert_eq!(both.with_hand(AttackHand::Both).def.stamina_cost, both.def.stamina_cost, "not twice");
+    }
+
+    #[test]
+    fn abilities_come_from_the_class() {
+        let s = Stamina::new(100.0);
+        let ctx = RequestContext { grounded: true, moving: false, sprinting: false, weapon: WeaponClass::Axe };
+        assert_eq!(resolve_request(None, ActionRequest::Ability, ctx, &s), Some(ActionKind::Ability(AbilityId::Warcry)));
+        let fangs = RequestContext { weapon: WeaponClass::WargFangs, ..ctx };
+        assert_eq!(resolve_request(None, ActionRequest::Ability, fangs, &s), None, "no ability");
+    }
+
+    #[test]
     fn heavier_loads_roll_slower_and_shorter() {
         let dist = |w: RollWeight| match w.roll_def().movement {
             ActionMovement::Scripted(MotionCurve::Dash { distance, .. }) => distance,
@@ -691,7 +759,7 @@ mod tests {
     fn sprinting_light_attack_is_a_running_attack_with_a_leap() {
         let s = Stamina::new(100.0);
         let sprint = RequestContext { grounded: true, moving: true, sprinting: true, weapon: W };
-        assert_eq!(resolve_request(None, ActionRequest::LightAttack, sprint, &s), Some(ActionKind::RunningAttack));
+        assert_eq!(resolve_request(None, ActionRequest::LightAttack(AttackHand::Right), sprint, &s), Some(ActionKind::RunningAttack));
         let def = action_def(ActionKind::RunningAttack, W);
         assert!(def.hop > 0.0);
         let ActionMovement::Scripted(curve) = def.movement else { panic!() };
@@ -742,10 +810,10 @@ mod tests {
     #[test]
     fn light_attacks_chain_and_wrap() {
         let s = Stamina::new(100.0);
-        let mut kind = resolve_request(None, ActionRequest::LightAttack, ctx(true, true), &s).unwrap();
+        let mut kind = resolve_request(None, ActionRequest::LightAttack(AttackHand::Right), ctx(true, true), &s).unwrap();
         let mut seen = vec![kind];
         for _ in 0..moves().light.len() {
-            kind = resolve_request(Some(&at(kind, moves().light(0).cancel)), ActionRequest::LightAttack, ctx(true, true), &s).unwrap();
+            kind = resolve_request(Some(&at(kind, moves().light(0).cancel)), ActionRequest::LightAttack(AttackHand::Right), ctx(true, true), &s).unwrap();
             seen.push(kind);
         }
         assert_eq!(seen[..4], [
@@ -762,14 +830,14 @@ mod tests {
         let mut empty = Stamina::new(100.0);
         empty.spend(100.0);
         assert_eq!(resolve_request(None, ActionRequest::Roll, ctx(false, true), &full), None, "no roll in the air");
-        assert_eq!(resolve_request(None, ActionRequest::LightAttack, ctx(true, true), &full), Some(ActionKind::LightAttack(0)));
+        assert_eq!(resolve_request(None, ActionRequest::LightAttack(AttackHand::Right), ctx(true, true), &full), Some(ActionKind::LightAttack(0)));
         assert_eq!(
-            resolve_request(None, ActionRequest::LightAttack, ctx(false, true), &full),
+            resolve_request(None, ActionRequest::LightAttack(AttackHand::Right), ctx(false, true), &full),
             Some(ActionKind::JumpAttack),
             "light attack in the air = jump attack"
         );
-        assert_eq!(resolve_request(None, ActionRequest::HeavyAttack, ctx(false, true), &full), None, "no heavy in the air");
-        assert_eq!(resolve_request(None, ActionRequest::HeavyAttack, ctx(true, true), &full), Some(ActionKind::HeavyCharge));
+        assert_eq!(resolve_request(None, ActionRequest::HeavyAttack(AttackHand::Right), ctx(false, true), &full), None, "no heavy in the air");
+        assert_eq!(resolve_request(None, ActionRequest::HeavyAttack(AttackHand::Right), ctx(true, true), &full), Some(ActionKind::HeavyCharge));
         assert_eq!(resolve_request(None, ActionRequest::Roll, ctx(true, true), &empty), None, "no stamina");
         assert_eq!(resolve_request(None, ActionRequest::Roll, ctx(true, false), &full), Some(ActionKind::Backstep), "roll standing still = backstep");
         assert_eq!(resolve_request(None, ActionRequest::Roll, ctx(false, false), &full), None, "no backstep in the air");

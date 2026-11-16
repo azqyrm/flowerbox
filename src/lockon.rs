@@ -11,7 +11,7 @@ use leafwing_input_manager::prelude::ActionState;
 use crate::camera::ThirdPersonCamera;
 use crate::character::MoveIntent;
 use crate::character::controller::CharacterController;
-use crate::input::{Action, GameplayBlocked};
+use crate::input::{Action, GameplayBlocked, PlayerInput};
 use crate::player::Player;
 use crate::tuning::*;
 
@@ -19,7 +19,7 @@ pub struct LockOnPlugin;
 
 impl Plugin for LockOnPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (toggle_lock_on, keep_lock_on).chain());
+        app.add_systems(Update, (toggle_lock_on, keep_lock_on).chain().after(crate::input::InputSystems::Gather));
     }
 }
 
@@ -57,14 +57,16 @@ pub fn pick_target(from: Vec3, view: Vec3, candidates: impl IntoIterator<Item = 
 #[allow(clippy::type_complexity)]
 fn toggle_lock_on(
     blocked: Res<GameplayBlocked>,
-    mut player: Query<(&ActionState<Action>, &Transform, &CharacterController, &mut LockOn), With<Player>>,
+    mut player: Query<(&ActionState<Action>, &Transform, &CharacterController, &mut LockOn, &mut PlayerInput), With<Player>>,
     mut cams: Query<&mut ThirdPersonCamera>,
     targets: Query<(Entity, &Transform, &Targetable), Without<Player>>,
     spatial: SpatialQuery,
     characters: Query<(), With<CharacterController>>,
 ) {
-    let Ok((actions, tf, ctrl, mut lock)) = player.single_mut() else { return };
-    if blocked.0 || !actions.just_pressed(&Action::LockOn) {
+    let Ok((actions, tf, ctrl, mut lock, mut input)) = player.single_mut() else { return };
+    // Q, or the two-hand button tapped alone (`PlayerInput::lock_on_tap`).
+    let tapped = std::mem::take(&mut input.lock_on_tap);
+    if blocked.0 || !(actions.just_pressed(&Action::LockOn) || tapped) {
         return;
     }
     if lock.target.take().is_some() {

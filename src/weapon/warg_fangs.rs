@@ -29,7 +29,7 @@ const COMBO: [AttackSpec; 3] = [bite(0.32, 0.6, 1.0), bite(0.26, 0.5, 1.0), bite
 /// Lean back for a second, leap 3 m, bite and shake.
 pub const POUNCE: PounceSpec = PounceSpec { windup: 1.0, leap: 0.42, recovery: 1.5, distance: 3.0, stamina_cost: 40.0, damage: 120.0 };
 
-pub const MOVESET: Moveset = Moveset { light: &COMBO, pounce: Some(POUNCE), ..light_sword::MOVESET };
+pub const MOVESET: Moveset = Moveset { light: &COMBO, pounce: Some(POUNCE), ability: None, ..light_sword::MOVESET };
 
 /// The warg's jaws.
 pub static WARG_FANGS: WeaponDef = WeaponDef {
@@ -38,4 +38,5 @@ pub static WARG_FANGS: WeaponDef = WeaponDef {
     base_damage: 17.0,
     blade: (0.0, 0.0),
     model: ModelSource::Parts(&[]),
+    guard_block: 0.0,
 };

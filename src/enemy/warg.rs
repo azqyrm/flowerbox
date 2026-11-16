@@ -13,7 +13,7 @@ use crate::lockon::Targetable;
 use crate::quadruped::anim::QuadrupedAnimator;
 use crate::quadruped::{QuadrupedSpec, spawn_quadruped};
 use crate::tuning::*;
-use crate::weapon::EquippedWeapon;
+use crate::weapon::Wielded;
 use crate::weapon::warg_fangs::WARG_FANGS;
 
 pub const PROFILE: BeastProfile = BeastProfile {
@@ -57,7 +57,7 @@ pub fn spawn_warg(
             Team::Hostile,
             Targetable { height: WARG_TARGET_HEIGHT },
             character_bundle(tf, WARG_HP, WARG_STAMINA),
-            EquippedWeapon::natural(&WARG_FANGS),
+            Wielded::natural(&WARG_FANGS),
         ))
         .id();
     attach_warg_body(commands, meshes, materials, warg);

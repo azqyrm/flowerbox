@@ -90,6 +90,53 @@ impl HumanoidPose {
     }
 }
 
+impl HumanoidPose {
+    /// The mirror image across the body's middle plane (x → −x): left and right bones swap, and
+    /// their rotations are reflected. A left-handed swing is the mirrored right-handed one.
+    pub fn mirrored(&self) -> Self {
+        let reflect = |q: Quat| Quat::from_xyzw(q.x, -q.y, -q.z, q.w);
+        let flip = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
+        let mut out = *self;
+        for bone in Bone::ALL {
+            out.bones[bone.mirror().index()] = reflect(self.get(bone));
+        }
+        out.pelvis_offset = flip(self.pelvis_offset);
+        out.root_rot = reflect(self.root_rot);
+        out.root_offset = flip(self.root_offset);
+        out
+    }
+}
+
+/// Two-bone IK: turns the left upper arm and bends the elbow so the left hand reaches `target`
+/// (model space), the elbow pointing down and out. Unreachable targets are approached as far as
+/// the arm goes. (Two-handed grips: the free hand on the handle.)
+pub fn reach_left_hand(spec: &HumanoidSpec, pose: &mut HumanoidPose, target: Vec3) {
+    let chest = bone_model_transform(spec, pose, Bone::Chest);
+    let shoulder = chest.transform_point(spec.rest_offset(Bone::UpperArmL));
+    let (a, b) = (spec.upper_arm, spec.forearm);
+    let to = target - shoulder;
+    let d = to.length().clamp((a - b).abs() + 1e-3, a + b - 1e-3);
+    // Elbow: the forearm bends forward (+X) by `bend`.
+    let inner = ((a * a + b * b - d * d) / (2.0 * a * b)).clamp(-1.0, 1.0).acos();
+    let bend = std::f32::consts::PI - inner;
+    let hand_in_arm = Vec3::NEG_Y * a + Quat::from_rotation_x(bend) * (Vec3::NEG_Y * b);
+    let want = (chest.rotation.inverse() * to).normalize_or(Vec3::NEG_Y);
+    let aim = Quat::from_rotation_arc(hand_in_arm.normalize(), want);
+    // Any twist about the shoulder→hand line keeps the hand in place: pick the one that puts the
+    // elbow lowest and most to the outside (−X for the left arm).
+    let best = (0..12)
+        .map(|k| Quat::from_axis_angle(want, k as f32 * std::f32::consts::TAU / 12.0) * aim)
+        .max_by(|p, q| {
+            let score = |r: &Quat| {
+                let elbow = *r * (Vec3::NEG_Y * a);
+                -elbow.y - 0.6 * elbow.x
+            };
+            score(p).total_cmp(&score(q))
+        })
+        .unwrap_or(aim);
+    pose.set(Bone::UpperArmL, best).set(Bone::ForearmL, Quat::from_rotation_x(bend));
+}
+
 /// Forward kinematics: `bone`'s transform in model space (origin at the feet).
 pub fn bone_model_transform(spec: &HumanoidSpec, pose: &HumanoidPose, bone: Bone) -> Transform {
     let local = pose.bone_local(spec, bone);
@@ -127,6 +174,37 @@ mod tests {
         pose.set(Bone::ThighL, Quat::from_rotation_x(0.6));
         let foot = bone_model_transform(&spec, &pose, Bone::FootL).translation;
         assert!(foot.z < -0.3, "{foot}");
+    }
+
+    #[test]
+    fn mirroring_swaps_sides() {
+        let spec = HumanoidSpec::human();
+        let mut pose = HumanoidPose::default();
+        pose.set(Bone::UpperArmR, Quat::from_rotation_y(0.5) * Quat::from_rotation_x(1.2));
+        let right = bone_model_transform(&spec, &pose, Bone::HandR).translation;
+        let left = bone_model_transform(&spec, &pose.mirrored(), Bone::HandL).translation;
+        assert!((left - Vec3::new(-right.x, right.y, right.z)).length() < 1e-4, "{right} ↔ {left}");
+        assert_eq!(pose.mirrored().mirrored(), pose);
+    }
+
+    #[test]
+    fn left_hand_reaches_its_target() {
+        let spec = HumanoidSpec::human();
+        let mut pose = HumanoidPose::default();
+        // Reachable (the arm is 0.54 m, the shoulder at about (-0.26, 1.4, 0)).
+        for target in [Vec3::new(0.0, 1.15, -0.3), Vec3::new(-0.05, 1.25, -0.32), Vec3::new(-0.2, 0.98, -0.2)] {
+            reach_left_hand(&spec, &mut pose, target);
+            let hand = bone_model_transform(&spec, &pose, Bone::HandL).translation;
+            assert!(hand.distance(target) < 0.02, "{target} → {hand}");
+            let elbow = bone_model_transform(&spec, &pose, Bone::ForearmL).translation;
+            assert!(elbow.y < hand.y.max(1.3), "elbow not stuck up: {elbow}");
+        }
+        // Out of reach: the arm stretches straight toward it.
+        let far = Vec3::new(0.5, 1.0, -0.8);
+        reach_left_hand(&spec, &mut pose, far);
+        let shoulder = bone_model_transform(&spec, &pose, Bone::UpperArmL).translation;
+        let hand = bone_model_transform(&spec, &pose, Bone::HandL).translation;
+        assert!((hand - shoulder).normalize().dot((far - shoulder).normalize()) > 0.99);
     }
 
     #[test]

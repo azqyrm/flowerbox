@@ -10,12 +10,21 @@
 //! Everything else — action timings, stamina costs, forward lunges, the animation poses and the
 //! FK sword hitbox — reads the moveset of the weapon held when the action starts.
 //!
+//! # Hands
+//! A character wields up to two weapons ([`Wielded`]): the right hand (bare fists when empty) and
+//! optionally a weapon in the left hand (a shield in the left hand isn't a weapon). Either can be
+//! held in **both hands** (`two_hand`). Attacks name the hand they swing ([`AttackHand`]): the
+//! right, the left (the same moveset, posed as the mirror image), or both at once — the **dual**
+//! attack, only when both weapons share a class. Nothing here is class-specific, so a new class
+//! gets left-hand, dual and two-handed play for free.
+//!
 //! # Adding / replacing a weapon model
 //! Add a [`WeaponDef`] (e.g. in `light_sword.rs`) with a [`ModelSource`]: primitive parts now,
 //! or a glTF scene later. Equip it with an [`EquipWeapon`] message; the old model is despawned and
 //! the new one attached to the right hand. Blade span (`blade`) is part of the definition, so the
 //! hitbox matches the model.
 
+pub mod axe;
 pub mod hollow_blade;
 pub mod light_sword;
 pub mod warg_fangs;
@@ -53,12 +62,14 @@ pub enum WeaponClass {
     HollowBlade,
     /// A beast's jaws: quick bites and the pounce grab (the warg). A natural weapon: no model.
     WargFangs,
+    /// Axes: slower, vertical chops.
+    Axe,
 }
 
 impl WeaponClass {
     /// Every class (tests iterate over this, so new classes get checked automatically).
     #[allow(dead_code)] // only tests use it so far
-    pub const ALL: [WeaponClass; 3] = [WeaponClass::LightSword, WeaponClass::HollowBlade, WeaponClass::WargFangs];
+    pub const ALL: [WeaponClass; 4] = [WeaponClass::LightSword, WeaponClass::HollowBlade, WeaponClass::WargFangs, WeaponClass::Axe];
 
     /// A creature's body part rather than something held (no humanoid swing animations).
     #[allow(dead_code)] // only tests use it so far
@@ -71,6 +82,7 @@ impl WeaponClass {
             WeaponClass::LightSword => &light_sword::MOVESET,
             WeaponClass::HollowBlade => &hollow_blade::MOVESET,
             WeaponClass::WargFangs => &warg_fangs::MOVESET,
+            WeaponClass::Axe => &axe::MOVESET,
         }
     }
 }
@@ -159,6 +171,8 @@ pub struct Moveset {
     pub guard: GuardSpec,
     /// A grab leap (`ActionKind::Pounce`), for creatures that have one.
     pub pounce: Option<PounceSpec>,
+    /// The class's activated ability (F / L2), if any (`crate::ability`).
+    pub ability: Option<crate::ability::AbilityId>,
 }
 
 /// A creature's grab leap: lean back (`windup`), leap `distance` metres in `leap` seconds catching
@@ -222,32 +236,112 @@ pub struct WeaponDef {
     /// Blade span along the hand's +Y (crossguard → tip), metres. Used for the hitbox.
     pub blade: (f32, f32),
     pub model: ModelSource,
+    /// Share of damage stopped when guarding with it held in both hands (weaker than a shield).
+    pub guard_block: f32,
 }
 
-/// The weapon a character holds in its right hand.
+/// A hand.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum Hand {
+    #[default]
+    Right,
+    Left,
+}
+
+/// Which hand(s) an attack swings: one of them, or both at once (the dual attack).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum AttackHand {
+    #[default]
+    Right,
+    Left,
+    Both,
+}
+
+/// What a character has in its hands. The right hand always holds something (bare fists when
+/// empty); the left holds a weapon or nothing (a shield isn't a weapon). `two_hand` holds one of
+/// them in both hands: the other is put away.
 #[derive(Component, Clone, Debug)]
-pub struct EquippedWeapon {
-    pub def: &'static WeaponDef,
-    /// Spawned model entity (child of the hand bone).
-    model: Option<Entity>,
+pub struct Wielded {
+    pub right: &'static WeaponDef,
+    pub left: Option<&'static WeaponDef>,
+    pub two_hand: Option<Hand>,
+    /// Spawned models (right hand bone, left hand bone).
+    models: [Option<Entity>; 2],
 }
 
-impl EquippedWeapon {
-    pub fn class(&self) -> WeaponClass {
-        self.def.class
-    }
-
+impl Wielded {
     /// A weapon that is part of the body (a beast's jaws): no model to attach.
     pub fn natural(def: &'static WeaponDef) -> Self {
-        Self { def, model: None }
+        Self { right: def, left: None, two_hand: None, models: [None; 2] }
+    }
+
+    /// The weapon in `hand` (the left may be empty).
+    pub fn weapon(&self, hand: Hand) -> Option<&'static WeaponDef> {
+        match hand {
+            Hand::Right => Some(self.right),
+            Hand::Left => self.left,
+        }
+    }
+
+    /// The weapon the main (right-hand) attacks swing: the two-handed one, if any.
+    pub fn main(&self) -> &'static WeaponDef {
+        match self.two_hand {
+            Some(Hand::Left) => self.left.unwrap_or(self.right),
+            _ => self.right,
+        }
+    }
+
+    pub fn class(&self) -> WeaponClass {
+        self.main().class
+    }
+
+    /// The left hand attacks (a left weapon, not two-handing).
+    pub fn left_attacks(&self) -> bool {
+        self.left.is_some() && self.two_hand.is_none()
+    }
+
+    /// Both hands hold weapons of the same class: the left button does the dual attack.
+    pub fn dual_class(&self) -> Option<WeaponClass> {
+        self.left.filter(|l| self.two_hand.is_none() && l.class == self.right.class).map(|l| l.class)
+    }
+
+    /// The weapons an attack swings, with the hand bone each is in.
+    pub fn blades(&self, hand: AttackHand) -> Vec<(Bone, &'static WeaponDef)> {
+        match hand {
+            AttackHand::Right => vec![(Bone::HandR, self.main())],
+            AttackHand::Left => self.left.map(|l| vec![(Bone::HandL, l)]).unwrap_or_default(),
+            AttackHand::Both => {
+                let mut v = vec![(Bone::HandR, self.right)];
+                v.extend(self.left.map(|l| (Bone::HandL, l)));
+                v
+            }
+        }
+    }
+
+    /// The weapon class whose moveset an attack of `hand` uses.
+    pub fn class_for(&self, hand: AttackHand) -> WeaponClass {
+        match hand {
+            AttackHand::Left => self.left.map_or(self.right.class, |l| l.class),
+            _ => self.main().class,
+        }
     }
 }
 
-/// Request: put `def` into `character`'s right hand (replacing the current weapon).
+/// Request: set what `character` wields. Old models are removed, new ones attached: the
+/// two-handed weapon (or the right one) in the right hand, a left weapon in the left hand.
 #[derive(Message, Clone, Debug)]
 pub struct EquipWeapon {
     pub character: Entity,
-    pub def: &'static WeaponDef,
+    pub right: &'static WeaponDef,
+    pub left: Option<&'static WeaponDef>,
+    pub two_hand: Option<Hand>,
+}
+
+impl EquipWeapon {
+    /// Just a right-hand weapon (enemies).
+    pub fn right(character: Entity, def: &'static WeaponDef) -> Self {
+        Self { character, right: def, left: None, two_hand: None }
+    }
 }
 
 /// Marks a weapon model entity.
@@ -260,23 +354,32 @@ fn equip_weapons(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
-    mut characters: Query<(&HumanoidRig, Option<&mut EquippedWeapon>)>,
+    mut characters: Query<(&HumanoidRig, Option<&mut Wielded>)>,
 ) {
     for req in requests.read() {
-        let Ok((rig, equipped)) = characters.get_mut(req.character) else { continue };
-        if let Some(old) = equipped.as_ref().and_then(|e| e.model) {
+        let Ok((rig, wielded)) = characters.get_mut(req.character) else { continue };
+        for old in wielded.as_ref().map_or([None; 2], |w| w.models).into_iter().flatten() {
             commands.entity(old).despawn();
         }
-        let model = spawn_weapon_model(&mut commands, &mut meshes, &mut materials, &asset_server, req.def);
-        commands.entity(rig.bone(Bone::HandR)).add_child(model);
-        let new = EquippedWeapon { def: req.def, model: Some(model) };
-        match equipped {
-            Some(mut e) => *e = new,
+        let mut new = Wielded { right: req.right, left: req.left, two_hand: req.two_hand, models: [None; 2] };
+        // Two-handed: only that weapon shows, in the right hand; the other is put away.
+        let shown: [(Bone, Option<&'static WeaponDef>); 2] = match req.two_hand {
+            Some(h) => [(Bone::HandR, new.weapon(h)), (Bone::HandL, None)],
+            None => [(Bone::HandR, Some(req.right)), (Bone::HandL, req.left)],
+        };
+        for (i, (bone, def)) in shown.into_iter().enumerate() {
+            let Some(def) = def else { continue };
+            let model = spawn_weapon_model(&mut commands, &mut meshes, &mut materials, &asset_server, def);
+            commands.entity(rig.bone(bone)).add_child(model);
+            new.models[i] = Some(model);
+        }
+        info!("wielding {} / {} (two-handed: {:?})", req.right.name, req.left.map_or("-", |l| l.name), req.two_hand);
+        match wielded {
+            Some(mut w) => *w = new,
             None => {
                 commands.entity(req.character).insert(new);
             }
         }
-        info!("equipped {} ({:?})", req.def.name, req.def.class);
     }
 }
 

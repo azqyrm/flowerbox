@@ -88,6 +88,7 @@ pub const MOVESET: Moveset = Moveset {
         run_grip: Vec3::new(2.05, 0.0, 0.3),
     },
     pounce: None,
+    ability: Some(crate::ability::AbilityId::LungingThrust),
 };
 
 const STEEL: Color = Color::srgb(0.75, 0.76, 0.78);
@@ -117,6 +118,7 @@ pub static LONGSWORD: WeaponDef = WeaponDef {
     base_damage: 20.0,
     blade: (0.13, 1.03),
     model: ModelSource::Parts(&LONGSWORD_PARTS),
+    guard_block: 0.45,
 };
 
 const BRASS: Color = Color::srgb(0.8, 0.6, 0.25);
@@ -145,9 +147,10 @@ pub static WELL_FORGED_SWORD: WeaponDef = WeaponDef {
     base_damage: 24.0,
     blade: (0.13, 1.08),
     model: ModelSource::Parts(&WELL_FORGED_PARTS),
+    guard_block: 0.5,
 };
 
-const RUST: Color = Color::srgb(0.45, 0.3, 0.2);
+pub(super) const RUST: Color = Color::srgb(0.45, 0.3, 0.2);
 
 pub(super) const SHORTSWORD_PARTS: [WeaponPart; 4] = [
     WeaponPart { shape: PartShape::Sphere(0.03), color: RUST, metallic: 0.6, roughness: 0.7, offset: Vec3::new(0.0, -0.09, 0.0) },
@@ -181,42 +184,7 @@ pub static SHORTSWORD: WeaponDef = WeaponDef {
     base_damage: 16.0,
     blade: (0.12, 0.73),
     model: ModelSource::Parts(&SHORTSWORD_PARTS),
-};
-
-const AXE_PARTS: [WeaponPart; 4] = [
-    WeaponPart {
-        shape: PartShape::Cylinder { radius: 0.021, height: 0.82 },
-        color: Color::srgb(0.3, 0.2, 0.11),
-        metallic: 0.0,
-        roughness: 0.85,
-        offset: Vec3::new(0.0, 0.26, 0.0),
-    },
-    // Head: the bit sticks out along +X (the side the sword's edge faces), a short poll behind.
-    WeaponPart {
-        shape: PartShape::Box(Vec3::new(0.15, 0.17, 0.022)),
-        color: RUST,
-        metallic: 0.6,
-        roughness: 0.65,
-        offset: Vec3::new(0.08, 0.6, 0.0),
-    },
-    WeaponPart {
-        shape: PartShape::Box(Vec3::new(0.05, 0.08, 0.04)),
-        color: RUST,
-        metallic: 0.6,
-        roughness: 0.7,
-        offset: Vec3::new(-0.03, 0.62, 0.0),
-    },
-    WeaponPart { shape: PartShape::Sphere(0.026), color: RUST, metallic: 0.6, roughness: 0.7, offset: Vec3::new(0.0, -0.15, 0.0) },
-];
-
-/// A hand axe: swung like a light sword for now (its own class later, N15). Hits harder, reaches
-/// less far; only the head cuts.
-pub static RUSTED_AXE: WeaponDef = WeaponDef {
-    name: "Rusted Axe",
-    class: WeaponClass::LightSword,
-    base_damage: 24.0,
-    blade: (0.5, 0.72),
-    model: ModelSource::Parts(&AXE_PARTS),
+    guard_block: 0.35,
 };
 
 /// Nothing in the right hand: the same swings, but with the fist.
@@ -226,4 +194,5 @@ pub static FISTS: WeaponDef = WeaponDef {
     base_damage: 8.0,
     blade: (-0.02, 0.1),
     model: ModelSource::Parts(&[]),
+    guard_block: 0.0,
 };

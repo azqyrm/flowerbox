@@ -33,10 +33,11 @@ impl Plugin for PickupPlugin {
 
 /// Items lying in the arena at start (floor x, z), clear of rubble and pillars. Their index is
 /// their pickup id (the same on every machine).
-const ARENA_PICKUPS: [(ItemId, (f32, f32)); 3] = [
+const ARENA_PICKUPS: [(ItemId, (f32, f32)); 4] = [
     (ItemId::RustedShortsword, (-7.0, -6.0)),
     (ItemId::StuddedBuckler, (9.0, -7.0)),
     (ItemId::SunseedRing, (-9.0, 7.5)),
+    (ItemId::WoodcutterHatchet, (6.5, 9.0)),
 ];
 
 /// Every item lying in a fresh world: (pickup id, item, floor position). The arena's come first

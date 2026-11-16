@@ -13,6 +13,7 @@
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use crate::weapon::AttackHand;
 
 use crate::character::action::{ActionKind, ActionRequest, CharacterAction};
 use crate::character::controller::CharacterController;
@@ -229,7 +230,7 @@ fn trigger_spawn_points(
             .id();
         let rig = spawn_humanoid(&mut commands, &mut meshes, &mut materials, enemy, &spec, PLAYER_HALF_HEIGHT);
         commands.entity(enemy).insert((spec, rig, HumanoidAnimator::default(), CharacterController { facing, ..default() }));
-        equip.write(EquipWeapon { character: enemy, def: &hollow_blade::HOLLOW_SWORD });
+        equip.write(EquipWeapon::right(enemy, &hollow_blade::HOLLOW_SWORD));
         point.spawned = Some(enemy);
         info!("a Hollow rises (spawn point at {:?})", point.pos);
     }
@@ -311,12 +312,12 @@ fn hollow_ai(
                 }
                 if dist < HOLLOW_ATTACK_RANGE && !busy && ai.timer <= 0.0 {
                     if ai.roll() < HOLLOW_HEAVY_CHANCE {
-                        intent.buffer(ActionRequest::HeavyAttack);
+                        intent.buffer(ActionRequest::HeavyAttack(AttackHand::Right));
                         intent.attack_held = true;
                         ai.timer = 0.35 + 0.3 * ai.roll();
                         ai.combo_left = 0;
                     } else {
-                        intent.buffer(ActionRequest::LightAttack);
+                        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
                         ai.combo_left = u8::from(ai.roll() < 0.5);
                     }
                     ai.set(AiState::Attack);
@@ -332,7 +333,7 @@ fn hollow_ai(
                         && cur.elapsed >= cur.def.cancel - 0.1;
                     if chaining {
                         ai.combo_left -= 1;
-                        intent.buffer(ActionRequest::LightAttack);
+                        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
                     }
                     if matches!(cur.kind, ActionKind::Hurt | ActionKind::Stunned) {
                         intent.attack_held = false;

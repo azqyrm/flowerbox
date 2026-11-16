@@ -92,6 +92,26 @@ impl Bone {
         })
     }
 
+    /// The same bone on the other side (itself for the middle).
+    pub fn mirror(self) -> Bone {
+        use Bone::*;
+        match self {
+            UpperArmL => UpperArmR,
+            ForearmL => ForearmR,
+            HandL => HandR,
+            UpperArmR => UpperArmL,
+            ForearmR => ForearmL,
+            HandR => HandL,
+            ThighL => ThighR,
+            ShinL => ShinR,
+            FootL => FootR,
+            ThighR => ThighL,
+            ShinR => ShinL,
+            FootR => FootL,
+            other => other,
+        }
+    }
+
     /// Chest, head and arms: the part of the body an upper-body action (drinking, charging) poses.
     pub fn is_upper_body(self) -> bool {
         use Bone::*;

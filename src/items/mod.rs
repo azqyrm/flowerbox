@@ -19,7 +19,7 @@ pub mod pickup;
 use bevy::prelude::*;
 
 use crate::humanoid::{Bone, HumanoidSpec};
-use crate::weapon::{WeaponDef, light_sword};
+use crate::weapon::{WeaponDef, axe, light_sword};
 
 pub struct ItemsPlugin;
 
@@ -46,11 +46,12 @@ pub enum ItemId {
     ThornbriarRing,
     WellForgedSword,
     ForgeKey,
+    WoodcutterHatchet,
 }
 
 impl ItemId {
     #[allow(dead_code)] // tests
-    pub const ALL: [ItemId; 14] = [
+    pub const ALL: [ItemId; 15] = [
         ItemId::Longsword,
         ItemId::RustedShortsword,
         ItemId::RustedAxe,
@@ -65,6 +66,7 @@ impl ItemId {
         ItemId::ThornbriarRing,
         ItemId::WellForgedSword,
         ItemId::ForgeKey,
+        ItemId::WoodcutterHatchet,
     ];
 
     pub fn def(self) -> &'static ItemDef {
@@ -83,6 +85,7 @@ impl ItemId {
             ItemId::ThornbriarRing => &THORNBRIAR_RING,
             ItemId::WellForgedSword => &WELL_FORGED_SWORD,
             ItemId::ForgeKey => &FORGE_KEY,
+            ItemId::WoodcutterHatchet => &WOODCUTTER_HATCHET,
         }
     }
 }
@@ -227,7 +230,7 @@ static RUSTED_SHORTSWORD: ItemDef = ItemDef {
 
 static RUSTED_AXE: ItemDef = ItemDef {
     weight: 4.0,
-    weapon: Some(&light_sword::RUSTED_AXE),
+    weapon: Some(&axe::RUSTED_AXE),
     ..ItemDef::base(
         "Rusted Axe",
         ItemKind::Weapon,
@@ -339,6 +342,17 @@ static WELL_FORGED_SWORD: ItemDef = ItemDef {
         ItemKind::Weapon,
         ItemIcon::FineSword,
         "Folded steel with a brass guard, left on the anvil by a smith who never came back for it. Cuts deeper and reaches a little further than a plain longsword.",
+    )
+};
+
+static WOODCUTTER_HATCHET: ItemDef = ItemDef {
+    weight: 2.5,
+    weapon: Some(&axe::WOODCUTTER_HATCHET),
+    ..ItemDef::base(
+        "Woodcutter's Hatchet",
+        ItemKind::Weapon,
+        ItemIcon::Axe,
+        "A light axe for splitting kindling. Swung like any axe; with another axe in the other hand, both bite at once.",
     )
 };
 
