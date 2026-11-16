@@ -45,11 +45,11 @@
 | Block / parry | **Right Mouse** (hold, with a shield) | Needs a shield in the left hand. Raising takes 0.3 s; the last third of the raise is the parry window. Blocks frontal hits only (±57°, `GUARD_ANGLE`; hits without a direction aren't blockable); costs stamina, breaks when stamina runs out. Slower walking, no sprint |
 | Drink Healing Ale | **R** | |
 | Interact / rest at Hearth | **E** | Resting is a state: you stay kneeling; **E again or moving** stands you up. Online the rest completes only when every player rests |
-| Lock-on target | **Q**, or tap the mouse wheel | Locks the target nearest the view centre (≤15 m, ±63°); the camera follows it, you face it and strafe, attacks aim at it. Again = release. Nothing to lock = camera recentres behind you |
-| Gamepad | Souls-like | Left stick move, right stick camera, **R1** attack (tap/hold), **L1** block, **B/Circle** roll/sprint, **A/Cross** jump, **X/Square** drink, **Y/Triangle** interact, **R3** lock-on, **Start** inventory (inside: D-pad, L1/R1 filter, A equip, X unequip, B close) |
-| Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). Inside: arrows/WASD move, Q/E filter, Enter equip/unequip, **L / right-click / Y: into the left hand** (dual wielding), Backspace unequip, mouse hover/click, double-click equips; Tab/I/Esc close |
+| Lock-on target | **Q**, or tap the mouse wheel | Locks the target nearest the view centre (≤15 m, ±63°); the camera follows it, you face it and strafe (the hips turn toward where you walk), attacks aim at it. Again = release. Nothing to lock = camera recentres behind you. **Switch target:** flick the mouse or push the right stick left / right |
+| Gamepad | Souls-like | Left stick move, right stick camera, **R1** attack (tap/hold), **L1** block, **B/Circle** roll/sprint, **A/Cross** jump, **X/Square** drink, **Y/Triangle** interact (tap; **hold Y + R1 / L1** two-hands that weapon), **R3** lock-on, **Start** inventory (inside: D-pad, L1/R1 filter, A select / options, X unequip, B back) |
+| Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). **Slot first:** Left from the grid's first column (or click a slot) walks the equipment column; Enter on a slot lists only what fits it, Enter equips into exactly that slot ("Nothing in the bag fits this slot" otherwise); X / Backspace empties it. **Item first:** Enter / double-click / right-click on an item opens its options (Drink / Eat, Equip in right / left hand, Equip, Unequip, **Throw out** — it lands in front of you, anyone can take it). Q/E filter, L puts a weapon in the left hand, Esc / Backspace go back one step, Tab/I close |
 | Online co-op | **O** | Online panel: **H** host (code copied to the clipboard), **J** join with the code in the clipboard, **C** copy code, **L** leave. Command line: `--host`, `--join <code>` |
-| Use an item | Inventory: **Enter** / double-click on a consumable | Healing Ale = drink, Poppy = PvP on, Camomile = PvP off (short eating action) |
+| Use an item | Inventory: the item's options → Drink / Eat | Healing Ale = drink, Poppy = PvP on, Camomile = PvP off, Hop Cone = +1 Ale (short eating action) |
 | Menu | **Esc** (gamepad: Select) | Resume / Settings (sensitivity, invert Y, stick speed, volume, notification corner) / Controls (rebind) / Delete save / Quit. The world keeps running |
 
 All tuning values (timings, costs, damage) live in one `tuning.rs` constants module, or in a RON file later, so it's easy to adjust game feel.
@@ -129,6 +129,7 @@ claude_ds/
 └─ src/
    ├─ main.rs           # App setup, plugin registration
    ├─ tuning.rs         # all gameplay constants
+   ├─ textures.rs       # procedural textures (bricks, flagstones, mail, cloth, runes, flesh, bone, glass, rust, leather, marble) + tiled_box
    ├─ settings.rs       # Settings (camera, volume, notification corner, key bindings) ↔ settings.ron
    ├─ save.rs           # autosave / load (bag, Ale, sunflower, respawn point, taken items) ↔ save.ron
    ├─ sound.rs          # synthesised sounds (one-shots + loops), spatial playback triggers
@@ -140,18 +141,21 @@ claude_ds/
    │  ├─ mod.rs         # CharacterPlugin, CharacterSystems, MoveIntent, ActionIntent, character_bundle()
    │  ├─ controller.rs  # kinematic movement from MoveIntent, gravity, grounding, jump, air momentum
    │  ├─ action.rs      # state machine: roll, attacks, drinking, timings, lunges, running attack
-   │  └─ stats.rs       # Health, Stamina, regen, Invulnerable, DamageMessage/DamageTaken
+   │  └─ stats.rs       # Health, Stamina, Poise, regen, Invulnerable, DamageMessage/DamageTaken
+   │                    # (mod.rs: BodySize capsules, Dormant, SolidExt::set_solid)
    ├─ quadruped/       # GENERIC: four-legged bodies (QBone, QuadrupedSpec::warg, pose + FK, gaits, action poses)
    ├─ grab.rs           # creature grabs: Pounce catches players, carry, unblockable bite, release
    ├─ humanoid/        # GENERIC: reusable humanoid body + shared animations
-   │  ├─ mod.rs         # Bone enum, HumanoidSpec (proportions/look), spawn_humanoid(), HumanoidRig
+   │  ├─ mod.rs         # Bone enum, HumanoidSpec (proportions/look/textures/extra Parts, scaled()), spawn_humanoid(), HumanoidRig
    │  ├─ pose.rs        # HumanoidPose (+ blending/masks), forward kinematics
    │  └─ anim.rs        # locomotion (idle/walk/run/jump/land) + action poses, HumanoidAnimator
    ├─ player/
    │  └─ mod.rs         # Player = character_bundle + HumanoidSpec::human() + starting inventory + input
-   ├─ ability.rs        # activated abilities (AbilityId → AbilityDef: strike or buff), AttackBuff
+   ├─ ability.rs        # abilities (AbilityId → AbilityDef: strike, buff, spin, slam, shriek), AttackBuff, shockwaves
    ├─ weapon/          # weapon CLASSES (movesets + swing animations) and weapon DEFINITIONS (models)
    │  ├─ axe.rs         # Axe moveset (vertical chops) + Rusted Axe / Woodcutter's Hatchet
+   │  ├─ claws.rs       # Claws (natural, humanoid): the Mourner's raking flurries
+   │  ├─ greatsword.rs  # Greatsword: slow wide sweeps; Penitence (player) / the Saint's blade
    │  ├─ mod.rs         # WeaponClass, Moveset/AttackSpec/SwingKey/GuardSpec, WeaponDef, ModelSource, EquipWeapon
    │  ├─ light_sword.rs # LightSword moveset + Longsword / Rusted Shortsword / Rusted Axe / Fists
    │  └─ hollow_blade.rs # HollowBlade moveset (long wind-ups) + the Hollow's blade
@@ -168,9 +172,14 @@ claude_ds/
    │  ├─ world.rs       # the host's world: world state for joiners, pickup/sunflower requests, events → notifications
    │  └─ ui.rs          # online panel (O) + status corner
    ├─ enemy/
-   │  ├─ mod.rs         # Enemy, EnemyKind, spawn points; the Hollow: spawn, AI, death, reset
-   │  ├─ beast.rs       # reusable beast AI (BeastAi + BeastProfile): chase, bite combos, pounce, circling
-   │  └─ warg.rs        # the warg: profile, spawn_warg, attach_warg_body (also for puppets)
+   │  ├─ mod.rs         # Enemy, EnemyKind, spawn points, death/corpses, drops, reset
+   │  ├─ kinds.rs       # EnemyDef per kind (body, capsule, HP, poise, weapon, brain, boss); spawn_enemy, attach_body
+   │  ├─ ai.rs          # shared brain helpers: Senses (target, sight, gaze), Rng, Steering, chain_combo
+   │  ├─ fighter.rs     # humanoid brain (FighterProfile): combos, specials, stalker, enrage
+   │  ├─ beast.rs       # four-legged brain (BeastProfile): chase, bite combos, pounce, circling
+   │  ├─ boss.rs        # boss bar, fog gate, defeat banner, DefeatedBosses
+   │  ├─ dormancy.rs    # enemies far from every player sleep (no AI/movement/animation/drawing)
+   │  └─ warg.rs        # the warg's beast profile
    ├─ items/
    │  ├─ mod.rs         # ItemId → ItemDef registry (kind, icon, weight, absorption, block, HP bonus, weapon, model)
    │  ├─ inventory.rs   # Inventory, Equipment, EquipSlot, EquipRequest, EquipStats; weapon/model sync
@@ -179,10 +188,12 @@ claude_ds/
    ├─ healing.rs        # HealingAle charges, swallow + heal over time, tankard prop
    ├─ hearth.rs         # Hearth (kindle/rest), RespawnPoint, WorldReset, DeathSequence → respawn
    ├─ level/            # levels from data files (assets/levels/*.ron)
-   │  ├─ mod.rs         # LevelPlugin: load the file, spawn floors/ceilings/walls/stairs/torches/sunflowers/spawn points; line_of_sight
+   │  ├─ mod.rs         # LevelPlugin: LEVELS (lvl1 north, lvl2 south of the arena), Levels; spawn floors/ceilings/walls/stairs/torches/sunflowers/spawn points per theme; line_of_sight
    │  ├─ layout.rs      # file format + pure geometry: grid rasterisation, wall runs, doors, stairs (unit-tested)
-   │  ├─ door.rs        # Door: one-way + locked (key), swing, blocker collider; DoorRequest / DoorOpened / DoorRefused
-   │  └─ props.rs       # forgery props: anvil, forge (fire, hood, trough), sky grate (bars, sunbeam, dust), steam
+   │  ├─ door.rs        # Door: one-way + locked (key) + sealed + archways, swing, blocker collider; DoorRequest / DoorOpened / DoorRefused
+   │  ├─ props.rs       # forgery props: anvil, forge (fire, hood, trough), sky grate (bars, sunbeam, dust), steam
+   │  ├─ gothic.rs      # cathedral props: columns, stained glass, pews, altar, statue, bells, lectern, bones, candles, chandeliers, sarcophagi, fountain, fog gate
+   │  └─ riddle.rs      # bells + lectern; ring in order to unseal a door (owner judges)
    └─ ui/
       ├─ mod.rs         # UiPlugin, Banner message, display font path
       ├─ hud.rs         # bars, Ale, equipment quadrant, prompt, banner, death band + fades
@@ -252,7 +263,7 @@ claude_ds/
 - [x] `WeaponClass` + per-class `Moveset` (attack timings, costs, lunges, damage multipliers, swing keyframes, stance, guard pose, combo length). The current sword is class `LightSword`.
 - [x] `WeaponDef` (name, class, base damage, blade span, model source) with replaceable models. `EquipWeapon` swaps the model in the hand at runtime.
 - [x] Second model `Rusted Shortsword` (same class, shorter blade, 16 damage), with the debug key F6 to swap
-- [ ] Future classes (two-handers, daggers, …): add a variant plus `weapon/<class>.rs` (see N15)
+- [x] Future classes: add a variant plus `weapon/<class>.rs` (see N15) — done for Axe (8.12), Claws and Greatsword (8.13); more (daggers, spears) the same way
 
 ### Phase 5.7 — Locomotion polish (user request, 2026-11-14)
 - [x] Walking into a wall no longer stutters: the ground probe was flickering (N16)
@@ -272,7 +283,7 @@ claude_ds/
 - [x] Swap the visual weapon or shield in hand when equipment changes (also the hood)
 - [x] World pickups (E to pick up) with a "Picked up: X" toast
 - [ ] `assets/items.ron` instead of the code registry (when there are many items)
-- [ ] Chest/hand/leg armour items and models (slots exist)
+- [x] Chest/hand/leg armour items and models: Penitent's Hauberk, Ashen Gauntlets, Grave Greaves (8.13; paired models for both arms/legs)
 
 ### Phase 8 — Familiar extras (after the core works)
 - [x] Lock-on (Q): the camera focuses the target and movement strafes around it (attacks aim at it; Q with nothing in view recentres the camera)
@@ -282,10 +293,10 @@ claude_ds/
 - [x] Roll weight classes based on equip load (Light fast roll / Medium / Heavy / Overloaded fat roll)
 - [x] Gamepad bindings (play + inventory screen; untested without a pad)
 - [x] Simple enemy: the Hollow (melee AI, telegraphed `HollowBlade` moveset, health bar, dies, resets on rest/respawn)
-- [ ] Dual wielding / weapons in the left hand (N19) — moved out of this phase's core, still open
-- [ ] Strafe animation while locked on (the legs still play the forward walk when moving sideways)
-- [ ] Switching lock-on targets (mouse flick / right stick) once there are several enemies
-- [ ] Poise: enemies (and the player) currently flinch on every hit
+- [x] Dual wielding / weapons in the left hand (N19) — done in 8.12
+- [x] Strafe animation while locked on: hips turn toward the travel, chest stays on the target, backward = reversed cycle (8.13)
+- [x] Switching lock-on targets (mouse flick / right stick) (8.13)
+- [x] Poise: optional `Poise` component, hits wear it down, only a break staggers (enemies: warg, acolyte, horrors, boss; the player and Hollows still flinch every hit) (8.13)
 
 ### Phase 8.5 — Online co-op (user request, 2026-11-15)
 - [x] Research: transports that need no game server (iroh, Steam, WebRTC/matchbox, plain QUIC) → iroh (N21)
@@ -375,8 +386,8 @@ Request: replace the north-east enemy (the vault's) with a **warg**: more aggres
 - [x] Online: `BodyKind::Warg` puppets (protocol v6); grabs decided on the victim's machine
 - [x] HP bars over other players (online), 3 s + 0.6 s fade
 - [x] Autopilots `warg` / `wargroll` (+ `FLOWERBOX_WARG_TANK`), two-instance test
-- [ ] Poise: hits still interrupt the warg's pounce (a co-op partner can save you by hitting it) — decide whether the wind-up should have hyper armour
-- [ ] Refactor the Hollow AI onto the shared helpers the beast AI uses (target pick, sight, sidestepping are duplicated)
+- [x] Poise: decided — the warg has 30 poise, so one light hit no longer breaks its pounce wind-up; two hits (or a heavy) still save a partner (8.13)
+- [x] Refactor the Hollow AI onto the shared helpers the beast AI uses (`enemy/ai.rs`, `enemy/fighter.rs`, 8.13)
 
 ### Phase 8.10 — The forgery sector, enemy drops, one-way and locked doors (user request, 2026-11-16; new plan in `assets/levels/lvl1.png`)
 Request, cleaned up:
@@ -447,8 +458,42 @@ Steps:
 - [x] Abilities: `AbilityDef`, F / L2, Lunging Thrust, Warcry
 - [x] Tests, autopilot, screenshots, notes
 - [ ] Shift+Tab: confirm on the real desktop (couldn't be reproduced here)
-- [ ] Gamepad two-handing (Souls uses Y, which is interact here)
-- [ ] Refactor the Hollow AI onto shared AI helpers (see 8.9)
+- [x] Gamepad two-handing: hold Y + R1 / L1; Y alone interacts on release (8.13)
+- [x] Refactor the Hollow AI onto shared AI helpers (8.13)
+
+### Phase 8.13 — Corpse fix, slot-first inventory, item options, the Cathedral of Ashes (user request, 2026-11-16)
+Request, cleaned up:
+1. **Bug:** a dead enemy still has a hitbox: walking into it shoves the corpse around, and once the body vanishes an invisible wall stays.
+2. **Slot-first equipping:** walk the equipment slots (right hand, left hand, …); choosing one moves the selection into the bag showing everything that fits; Enter equips it there. Nothing fits → a small notification.
+3. **Item options:** Enter on an item opens a small popup with every possibility: consume (consumables), equip left / right (weapons), equip / unequip, and **throw out** for every item — it lands in the world where other players can take it too.
+4. **Roadmap:** do as much unchecked as possible (strafe, target switching, poise, armour pieces, gamepad two-handing, the AI refactor…). Redesign the player and weapons with "crazy" textures and forms (no outside assets).
+5. **A big new level** in a dark gothic medieval-fantasy style, behind a door from the circular arena: humanoid and animal enemies, **two new horror enemies** (scary, hard, few), a **riddle** midway, sunflowers and items placed with intent, loops back, and a **boss** at the end (a third new enemy: AOE spins, dashes …).
+6. **Modular:** reuse the humanoid AI refactor for the new enemies and the boss.
+7. **Performance:** check whether many more enemies cause problems; idea: only render enemies behind an opened door or within 20 m of a player.
+
+Decisions:
+- **Corpses:** the vanished-body wall was avian's collider tree: re-inserting `ColliderDisabled` fires `Discard` in Bevy 0.20, whose avian observer re-adds the collider to the tree with a frozen box. `SolidExt::set_solid` toggles idempotently; dead characters' own move-and-slide ignores characters (no shoving).
+- **Inventory:** Souls-style both ways (slot first, item first). Throwing out *removes* the bag entry (equipment indices shift: `Equipment::forget`). The Healing Ale (your flask) can't be thrown out; keys can. Online the host owns the world: a guest's throw is a request, the host spawns the pickup and tells everyone. Thrown items aren't saved (they're the world's, like enemy drops).
+- **Enemies are data** (`EnemyDef`): one spawner and one puppet body for every kind; new kinds = a table entry. Special moves are **abilities** any character may perform (they already replicate as `ActionKind::Ability`): Whirlwind (spin, one hit per turn), Dash Strike, Ground Slam (shockwave), Shriek (unblockable wave), Rending Turn. Waves are victim-side like every enemy hit.
+- **Horrors:** the **Mourner** (2.5 m veiled, eyeless stalker; freezes while you look at it, rushes when you don't; shriek, rending spin, dash; 280 HP, poise 60) and the **Contorted** (a pale body bent backwards on all fours, upside-down glowing grin, hair to the floor; fast skittering beast with a grab; 220 HP). Two of each in the whole level.
+- **Boss — the Thorned Saint** (2.9 m, 1300 HP, poise 140; Souls boss conventions: telegraphed wind-ups, punish windows after big moves, a fog gate you can't leave, a big name bar, a second phase): combos, Whirlwind, Dash Strike from range, Ground Slam; at 50 % it shrieks into phase two (faster, shorter recoveries, Shriek and a wider Whirlwind). Drops *Penitence* (greatsword, ability Penitent Whirl). Stays dead (`DefeatedBosses`, saved, sent to joiners).
+- **Level 2** is south of the arena (level 1 is north): narthex (sunflower) → nave + aisles → transept → ossuary / cloister (sunflower) / bell chapel → apse → sealed crypt → antechamber (sunflower) → fog → the Choir of Thorns. **Loop:** the bell chapel's gallery has a one-way door back into the nave. **Riddle:** the apse lectern names three bells in an order (bones → drowned → glass sun); ringing them in order unseals the crypt; a wrong bell restarts the rite. Plan: `assets/levels/lvl2.png` (generated from the file).
+- **Several levels:** a list of level files, each its own grid with its own theme, ceiling and id range.
+- **Performance — dormancy by distance** (30 m wake / 36 m sleep), not by doors: see N31.
+- **Redesign without assets:** procedural textures generated at startup; body extras (`Part`s) and `Styled` weapon models instead of glTF.
+
+Steps:
+- [x] Corpse collider fix + autopilot check (vanished body: no deflection)
+- [x] Inventory: slot focus + picking, options popup, throw out (+ online), `FLOWERBOX_KEYS` arrows
+- [x] Shared AI (`ai.rs`), `FighterAi` + profiles, beast refactor; `EnemyDef` table; `BodyKind::Enemy(kind)` (protocol v11)
+- [x] Abilities: spin, slam, shriek, specials; poise; `BodySize`; scaled/textured/decorated bodies; `Styled` weapons; claws + greatsword
+- [x] The Mourner, the Contorted, the Ashen Acolyte, the Thorned Saint; boss bar, fog gate, defeat
+- [x] Multiple levels, gothic theme and props, riddle, archways, sealed doors; `lvl2.ron`; armour pieces, ring, Penitence; bell / boom / shriek sounds
+- [x] Dormancy + measurement; strafe; target switching; gamepad two-handing; player + weapon redesign
+- [x] Online: bells via the host, defeated bosses for joiners (protocol v12); save bosses
+- [x] Tests (100), autopilots (`cathedral` route, `boss`, `bestiary`), two-instance runs, notes (N31)
+- [ ] Interpolated puppet motion for fast spins (a Whirlwind on a guest's screen turns in 30 Hz steps)
+- [ ] Per-room ceilings (crypts are as tall as the nave: one ceiling per level)
 
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
@@ -497,6 +542,10 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Online, dying (anyone's, the host's too) no longer resets the world; only the shared rest does (user request, "for now"). Offline death still resets (Souls). Up to 5 players. The host sends enemies only when they change; guests learn what exists from a roster. |
 | 2026-11-16 | Hands are generic: `Wielded { right, left, two_hand }` replaces `EquippedWeapon`; attacks carry an `AttackHand` (Right / Left / Both); left-hand and dual poses are the **mirror** of a class's right-hand swing keys, so every class gets them for free. Left mouse = right hand, right mouse = left hand (Souls); the left item decides: shield → guard, weapon → attacks, same-class pair → dual attack. Abilities are data per class (`Moveset::ability`). |
 | 2026-11-16 | Test runs (autopilot / screenshot) render without vsync: GNOME throttled the (often hidden) test windows to ~4 FPS. |
+| 2026-11-16 | Enemies are data (`EnemyDef` per kind: body, capsule, HP, poise, weapon, brain profile, boss); special moves are abilities; brains share `enemy/ai.rs`. Horrors: Mourner (stalker) and Contorted; boss: the Thorned Saint (fog gate, name bar, enrage, stays dead). |
+| 2026-11-16 | Inventory: slot-first and item-first equipping; throwing out removes the entry (indices shift) and puts a pickup into the host's world. |
+| 2026-11-16 | Level 2 "The Cathedral of Ashes" south of the arena; several levels load side by side. Bell riddle unseals the crypt; a one-way gallery door is the loop. |
+| 2026-11-16 | Enemy dormancy by distance to every player (30 / 36 m), not by opened doors (N31). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
@@ -754,4 +803,12 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Door push:** `ActionKind::OpenDoor` (0.4 s reach, 0.15 s push, 0.5 s back; the free left palm and shoulder; a small step in); `PushingDoor` sends the `DoorRequest` at the push; a hit cancels it. Others get "Guest 1 opened a door". Death notifications were already working (screenshot: "Guest 1 was composted" on the host).
   - **Feral warg:** `QuadrupedLook::shag` / `shag_length`: flattened cones, swept back, random length / tilt / lean / width from a fixed seed (the same on every machine): a ragged spine ridge, a thick mane around shoulders and neck, two rows on the flanks, tufts on haunches and shoulders, a ragged tail.
   - **Test runs without vsync:** after the reboot every run (also an older release build) crawled at 4 FPS: GNOME throttles hidden windows. Autopilot / screenshot runs now use `PresentMode::AutoNoVsync` (160 FPS debug); normal play keeps vsync.
-
+- **N31 (2026-11-16) — corpses, inventory, the cathedral, enemies as data, dormancy (Phase 8.13):**
+  - **Corpse bug:** `corpses_dont_block` inserted `ColliderDisabled` at death and `enemy_death` inserted it *again* when the body vanished. A re-insert fires `Discard` (Bevy 0.20 lifecycle), and avian's `add_to_tree_on::<Discard<ColliderDisabled>>` re-added the collider to the collider tree while it kept the marker, so its box was never updated: an invisible capsule where the body vanished (the hidden corpse isn't despawned until a world reset). Fix: `EntityCommands::set_solid` (checks at apply time). Also dead characters' own move-and-slide excludes characters (the living shoved bodies around). Test: `enemy` autopilot walks through the vanished body — the old code deflected the player 0.51 m sideways, now 0.03.
+  - **Inventory:** `InventoryMenu { focus, slot, picking, popup }`; `EquipSlot::accepts / candidates`; `item_options`; `ItemActions` system param shared by keys and mouse observers. Hover selection uses `PointerMove` (rebuilt nodes under a resting mouse fired `PointerOver` and snapped the keyboard selection back). Real-key test: `FLOWERBOX_KEYS` (now with arrows) → slot → left hand → shield → legs ("nothing fits") → axe → options → throw out. Two windows: the unfocused one gets no keys, so the online throw test uses `FLOWERBOX_THROW="9:3"`: host logs "Guest 1 threw out Rusted Axe", both see it at the same spot.
+  - **AI:** `Senses::gather / sees / watched`, `Steering::patrol / unstick`, `chain_combo`, `Rng`. `FighterProfile` (Hollow = the old constants; behaviour verified unchanged by the `enemy` and `warg` autopilots). Specials roll their chance per decision with a short retry delay; a dash may fire during recovery from afar. Stalker: frozen while the target faces it within ~50° beyond 3.2 m.
+  - **Swing angles vs. body size:** the Saint (×1.6) swung greatsword keys authored for humans: the blade passed at 1.9–2.3 m, over a player's head — it never hit. Greatsword sweeps now descend; `big_blades_reach_a_player_in_front` checks the FK sweep of Hollow, Acolyte and Saint passes through a person in front. Lesson: a scaled body needs its own (lower) swing keys, or the AttackSpec must aim.
+  - **Boss test** (`FLOWERBOX_AUTOPILOT=boss FLOWERBOX_POS=0,138,3.14`, 5000 HP, +12 scripted damage / 0.5 s): poise breaks every ~5 hits, Whirlwind (33 per turn), Ground Slam (54 + wave 30), Shriek (14, unblockable), enrage at 50 %, death after ~36 s, "HALLOWED FOE UNMADE", the mist clears, Penitence drops. For a 100 HP player a full slam nearly kills: hard, but every special has a ≥ 0.6 s wind-up and rolls through.
+  - **Cathedral walk** (`FLOWERBOX_AUTOPILOT=level FLOWERBOX_ROUTE=cathedral`): 43 waypoints, doors 11–15, three bells in order → "riddle 1 solved", the shortcut, the lectern, the crypt, sunflowers 11–13, the fog gate. Found on the way: the fog gate didn't work in enemy-less autopilots (`BossPlugin` lived behind `EnemyPlugin`'s autopilot early-return) — it now always loads. Online (host idle, guest walks): the guest's rings solve the rite on the host and the door opens for the guest.
+  - **Performance** (release, uncapped, RX 6800 XT, `FLOWERBOX_FPS_LOG=1`, `FLOWERBOX_NO_DORMANCY=1` to compare): arena 146 → 168 FPS with dormancy (44 of 46 enemies asleep), cathedral narthex 126 → 143 (41 asleep). Both levels load at once (46 enemies, 158 point lights). The user's idea (render only behind opened doors or within 20 m) was considered: a door/room graph would need room membership for every enemy and break for open halls; the nave is 40 m long, so a 20 m cut-off makes enemies pop in where you can see them. Distance with hysteresis needs no level knowledge, works for any number of co-op players (the host decides by every player, a guest only draws/animates near itself) and costs nothing when asleep (no brain, controller, animator or draw). Lights aren't culled; at 158 lights the frame is still ~6 ms.
+  - **Not done / known:** puppet spins on guests step at 30 Hz; one ceiling per level (crypts are tall); no pathfinding (enemies sidestep obstacles); the player has no poise; chest/hand/leg armour isn't replicated to puppets (only hands + head); thrown items vanish on restart.
