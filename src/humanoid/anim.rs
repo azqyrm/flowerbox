@@ -5,7 +5,7 @@
 //! either full-body or upper-body only. Attack poses are full-body so the sword hitbox
 //! (`crate::combat`, via [`action_pose`] + forward kinematics) matches what's on screen.
 
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
 
@@ -57,7 +57,35 @@ pub struct LocomotionInput {
     pub time: f32,
     /// Held weapon class (its guard stance).
     pub weapon: WeaponClass,
+    /// Direction of travel relative to facing (radians, + = to the left; 0 = forward, ±π =
+    /// backward). Strafing (locked on) turns the hips toward it; walking backward plays the cycle
+    /// in reverse. Smoothed by the animator.
+    pub heading: f32,
 }
+
+/// Hips turned toward the direction of travel, and whether the cycle runs backward: a sideways or
+/// backward walk with the upper body still facing forward.
+pub fn strafe(heading: f32) -> (f32, bool) {
+    let h = (heading + PI).rem_euclid(TAU) - PI;
+    if h.abs() <= FRAC_PI_2 + 0.15 {
+        (h.clamp(-MAX_HIP_TWIST, MAX_HIP_TWIST), false)
+    } else {
+        // Backward: face the hips the opposite way and step backward.
+        let back = if h > 0.0 { h - PI } else { h + PI };
+        (back.clamp(-MAX_HIP_TWIST, MAX_HIP_TWIST), true)
+    }
+}
+
+/// Direction of `moved` (world) relative to `facing`: 0 = forward, + = to the character's left.
+pub fn travel_heading(facing: f32, moved: Vec3) -> f32 {
+    let forward = Vec2::new(-facing.sin(), -facing.cos());
+    let left = Vec2::new(-facing.cos(), facing.sin());
+    let v = Vec2::new(moved.x, moved.z);
+    v.dot(left).atan2(v.dot(forward))
+}
+
+/// Most the hips turn away from the facing while strafing (rad).
+const MAX_HIP_TWIST: f32 = 1.35;
 
 /// Idle guard of a weapon class (its `GuardSpec`), knees soft.
 pub fn guard_pose(weapon: WeaponClass) -> HumanoidPose {
@@ -226,7 +254,9 @@ pub fn locomotion_pose(spec: &HumanoidSpec, input: &LocomotionInput) -> Humanoid
     let mut p = guard;
     let (g, moving) = gait_for(input.speed);
     let sprint = ((input.speed - WALK_SPEED) / (SPRINT_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
-    let u = input.phase / TAU;
+    let (twist, backward) = strafe(input.heading);
+    let twist = twist * moving;
+    let u = if backward { 1.0 - input.phase / TAU } else { input.phase / TAU };
 
     // Idle breathing (fades out while moving).
     p.add(Bone::Chest, rx((input.time * 1.8).sin() * 0.025 * (1.0 - moving)));
@@ -256,6 +286,11 @@ pub fn locomotion_pose(spec: &HumanoidSpec, input: &LocomotionInput) -> Humanoid
     // Chest: more lean, twist against the hips; head stays level.
     p.add(Bone::Chest, rx(-lean * 0.6) * ry(side * g.twist) * rz(-side * g.sway * 0.6));
     p.set(Bone::Head, rx(lean * 0.8));
+    // Strafing: the hips (and legs) turn toward the travel, the chest turns back to the front.
+    if twist.abs() > 1e-3 {
+        p.add(Bone::Pelvis, ry(twist));
+        p.add(Bone::Chest, ry(-twist));
+    }
 
     // Free arm swings with the opposite leg; elbow bends more the faster you go.
     p.add(Bone::UpperArmL, rx(-side * g.arm_swing) * rz(-0.08 * sprint))
@@ -615,6 +650,8 @@ pub struct HumanoidAnimator {
     last_action: Option<(HumanoidPose, PoseMask)>,
     /// Blend weight of the raised-shield arm (follows `Guard::raise_progress`).
     guard: f32,
+    /// Smoothed travel direction relative to facing (see `LocomotionInput::heading`).
+    heading: f32,
 }
 
 /// Raised guard: the left upper arm forward and a little across the body, the forearm upright in
@@ -733,6 +770,14 @@ pub fn animate_humanoids(
         if !airborne {
             anim.phase = (anim.phase + anim.speed / stride_length(anim.speed) * TAU * dt) % TAU;
         }
+        // Where we go relative to where we face (forward = -Z at facing 0).
+        if actual > 0.3 {
+            let want = travel_heading(ctrl.facing, ctrl.moved);
+            let d = (want - anim.heading + PI).rem_euclid(TAU) - PI;
+            anim.heading += d * smooth(8.0);
+        } else {
+            anim.heading *= 1.0 - smooth(4.0);
+        }
 
         let loco = locomotion_pose(
             spec,
@@ -745,6 +790,7 @@ pub fn animate_humanoids(
                 blocked: anim.blocked,
                 time: anim.time,
                 weapon: wielded.map_or_else(WeaponClass::default, |w| w.class()),
+                heading: anim.heading,
             },
         );
 
@@ -790,6 +836,28 @@ pub fn animate_humanoids(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strafing_turns_the_hips_and_backs_up() {
+        // Facing north (-Z): moving west is to the left, east to the right, south is backward.
+        assert!((travel_heading(0.0, Vec3::NEG_X) - FRAC_PI_2).abs() < 1e-4);
+        assert!((travel_heading(0.0, Vec3::X) + FRAC_PI_2).abs() < 1e-4);
+        assert!(travel_heading(0.0, Vec3::NEG_Z).abs() < 1e-4);
+        // Facing west (+π/2): moving south is to the left.
+        assert!((travel_heading(FRAC_PI_2, Vec3::Z) - FRAC_PI_2).abs() < 1e-4);
+        let (twist, back) = strafe(FRAC_PI_2);
+        assert!(!back && twist > 1.0 && twist <= MAX_HIP_TWIST, "sideways: hips turned left");
+        let (twist, back) = strafe(PI);
+        assert!(back && twist.abs() < 1e-4, "straight back: hips square, cycle reversed");
+        let (twist, back) = strafe(-2.4);
+        assert!(back && twist > 0.0, "back and to the right: hips turn the other way");
+        // The pose actually turns the pelvis.
+        let spec = HumanoidSpec::human();
+        let input = LocomotionInput { speed: 3.0, phase: 1.0, heading: FRAC_PI_2, ..default() };
+        let p = locomotion_pose(&spec, &input);
+        let yaw = (p.get(Bone::Pelvis) * Vec3::NEG_Z).x;
+        assert!(yaw < -0.5, "the pelvis turns toward -X (left): {yaw}");
+    }
     use crate::humanoid::pose::bone_model_transform;
 
     fn at(kind: ActionKind, elapsed: f32) -> ActiveAction {

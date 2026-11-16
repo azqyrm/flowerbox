@@ -3,6 +3,8 @@
 //! player faces it, strafing around it (`MoveIntent::face`), and attacks aim at it. Pressing
 //! again, the target dying (losing `Targetable`) or getting farther than `LOCK_BREAK_RANGE`
 //! releases the lock. Pressing it with nothing to lock onto recentres the camera behind the player.
+//! While locked, a sharp mouse flick or pushing the right stick sideways switches to the next visible
+//! target on that side ([`next_target`]).
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -19,7 +21,7 @@ pub struct LockOnPlugin;
 
 impl Plugin for LockOnPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (toggle_lock_on, keep_lock_on).chain().after(crate::input::InputSystems::Gather));
+        app.add_systems(Update, (toggle_lock_on, switch_target, keep_lock_on).chain().after(crate::input::InputSystems::Gather));
     }
 }
 
@@ -52,6 +54,72 @@ pub fn pick_target(from: Vec3, view: Vec3, candidates: impl IntoIterator<Item = 
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(e, _)| e)
+}
+
+/// The target to switch to: of `candidates`, the one whose direction from `from` lies on `side`
+/// (+1 = clockwise seen from above = to the right, -1 = left) of `current`'s, at the smallest
+/// angle; within `LOCK_RANGE`. Pure, for tests.
+pub fn next_target(from: Vec3, current: Vec3, side: f32, candidates: impl IntoIterator<Item = (Entity, Vec3)>) -> Option<Entity> {
+    let cur = (current - from).with_y(0.0).normalize_or(Vec3::NEG_Z);
+    candidates
+        .into_iter()
+        .filter_map(|(e, pos)| {
+            let to = (pos - from).with_y(0.0);
+            let dist = to.length();
+            if dist > LOCK_RANGE || dist < 1e-3 {
+                return None;
+            }
+            let to = to / dist;
+            // Signed angle from `cur` to `to` around +Y; right of you is negative there.
+            let signed = cur.cross(to).y.atan2(cur.dot(to));
+            let toward = -signed * side;
+            (toward > 0.05).then_some((e, toward))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(e, _)| e)
+}
+
+/// Mouse flick (pixels in one frame) or stick deflection that switches targets.
+const FLICK_PIXELS: f32 = 35.0;
+const FLICK_STICK: f32 = 0.75;
+const SWITCH_COOLDOWN: f32 = 0.35;
+
+#[allow(clippy::type_complexity)]
+fn switch_target(
+    time: Res<Time<Real>>,
+    blocked: Res<GameplayBlocked>,
+    mut cooldown: Local<f32>,
+    mut player: Query<(&ActionState<Action>, &Transform, &mut LockOn), With<Player>>,
+    targets: Query<(Entity, &Transform, &Targetable), Without<Player>>,
+    spatial: SpatialQuery,
+    characters: Query<(), With<CharacterController>>,
+) {
+    *cooldown -= time.delta_secs();
+    let Ok((actions, tf, mut lock)) = player.single_mut() else { return };
+    let Some(current) = lock.target else { return };
+    if blocked.0 || *cooldown > 0.0 {
+        return;
+    }
+    let mouse = actions.axis_pair(&Action::Look).x;
+    let stick = actions.axis_pair(&Action::LookStick).x;
+    let side = if mouse.abs() > FLICK_PIXELS {
+        mouse.signum()
+    } else if stick.abs() > FLICK_STICK {
+        stick.signum()
+    } else {
+        return;
+    };
+    let Ok((_, ctf, _)) = targets.get(current) else { return };
+    let eye = tf.translation + Vec3::Y * 0.6;
+    let visible = targets.iter().filter(|(target, t, aim)| {
+        let skip = |e: Entity| e != *target && !characters.contains(e);
+        *target != current && crate::level::line_of_sight(&spatial, eye, t.translation + Vec3::Y * aim.height, &skip)
+    });
+    if let Some(next) = next_target(tf.translation, ctf.translation, side, visible.map(|(e, t, _)| (e, t.translation))) {
+        lock.target = Some(next);
+        *cooldown = SWITCH_COOLDOWN;
+        info!("lock-on switched to {next}");
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -112,6 +180,17 @@ fn keep_lock_on(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switching_picks_the_nearest_target_on_that_side() {
+        let e = |i: u32| Entity::from_raw_u32(i).unwrap();
+        // Facing the current target straight north; others to the north-east, east, north-west.
+        let current = Vec3::new(0.0, 0.0, -8.0);
+        let others = [(e(1), Vec3::new(4.0, 0.0, -8.0)), (e(2), Vec3::new(8.0, 0.0, 0.0)), (e(3), Vec3::new(-5.0, 0.0, -6.0))];
+        assert_eq!(next_target(Vec3::ZERO, current, 1.0, others), Some(e(1)), "right: the nearer angle wins");
+        assert_eq!(next_target(Vec3::ZERO, current, -1.0, others), Some(e(3)), "left");
+        assert_eq!(next_target(Vec3::ZERO, current, -1.0, [others[0], others[1]]), None, "nothing on the left");
+    }
 
     #[test]
     fn picks_the_target_nearest_the_view_centre() {
