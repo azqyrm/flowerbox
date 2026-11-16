@@ -2,27 +2,43 @@
 //! player gets no gameplay input while it is open ([`GameplayBlocked`]) and the cursor is free.
 //!
 //! Layout: equipment slots (left) · filter tabs + item grid (middle) · details of the selected
-//! item, Equip/Unequip button and the status summary with a preview of what equipping the
-//! selection would change (right). Keys: arrows/WASD move, Q/E filter, Enter equip/unequip,
-//! Backspace unequip, Tab/I/Esc close. Gamepad: D-pad move, L1/R1 filter, A equip/unequip,
-//! X unequip, Start/B close. Mouse: hover selects, click selects, double-click or the
-//! button equips.
+//! item and the status summary with a preview of what the change would do (right).
+//!
+//! Two ways to equip, as in Souls games:
+//! - **Slot first** ([`Focus::Slots`]): walk the equipment column (W/S, arrows, D-pad), Enter on
+//!   a slot → the grid shows only what fits it ([`InventoryMenu::picking`]); Enter equips the
+//!   item into exactly that slot and returns to the column. Nothing fits → a short notification.
+//!   Backspace on a slot empties it.
+//! - **Item first** ([`Focus::Grid`]): Enter on an item opens its **options** popup
+//!   ([`ItemOption`]): Drink / Eat, Equip (right / left hand for weapons), Unequip, Throw out.
+//!   Throwing out puts the item on the floor in front of you, where anyone can take it
+//!   (`items::pickup::ThrowOutRequest`).
+//!
+//! Left at the grid's first column moves to the slots, Right from a slot to the grid. Q/E filter,
+//! Esc / Backspace go back one step (popup → picking → slots), Tab/I close. Gamepad: D-pad,
+//! L1/R1 filter, A select, B back, X unequip. Mouse: moving over something selects it (movement,
+//! not mere hovering: a rebuild spawns fresh nodes under a resting mouse, and those mustn't snap
+//! the keyboard selection back to it), click a slot to pick for it,
+//! double-click or right-click an item for its options.
 //!
 //! The content is rebuilt whenever something it shows changes (it's small, so this is cheap and
 //! keeps the code simple).
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use leafwing_input_manager::prelude::ActionState;
 
 use super::hud::{FRAME, GOLD_TEXT};
-use super::icons::spawn_icon;
+use super::icons::{NoticeIcon, spawn_icon};
+use super::notifications::Notify;
 use super::{DISPLAY_FONT, strings};
 use crate::character::stats::Health;
 use crate::healing::HealingAle;
 use crate::hearth::DeathSequence;
 use crate::input::{Action, InputSystems, MenuInput};
 use crate::items::inventory::{EquipRequest, EquipSlot, EquipStats, Equipment, Inventory};
-use crate::items::{ItemId, ItemKind};
+use crate::items::pickup::{ThrowOutRequest, throwable};
+use crate::items::{ItemIcon, ItemId, ItemKind};
 use crate::player::Player;
 use crate::pvp::UseItemRequest;
 
@@ -47,15 +63,65 @@ const DIM: Color = Color::srgb(0.55, 0.52, 0.47);
 const BETTER: Color = Color::srgb(0.45, 0.8, 0.45);
 const WORSE: Color = Color::srgb(0.85, 0.4, 0.35);
 
+/// Where the keyboard / pad selection is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Focus {
+    /// The equipment column (`InventoryMenu::slot`).
+    Slots,
+    /// The item grid (`InventoryMenu::cursor`).
+    #[default]
+    Grid,
+}
+
 /// Inventory screen state.
 #[derive(Resource, Default, Debug)]
 pub struct InventoryMenu {
     pub open: bool,
     pub filter: Filter,
-    /// Position of the selection in the filtered list.
+    /// Position of the selection in the shown list.
     pub cursor: usize,
+    pub focus: Focus,
+    /// Selected row of the equipment column (index into `EquipSlot::ALL`).
+    pub slot: usize,
+    /// Choosing an item for this slot: the grid shows only what fits it.
+    pub picking: Option<EquipSlot>,
+    /// The options popup of a bag entry, and its highlighted option.
+    pub popup: Option<(usize, usize)>,
     /// Rebuild the content next frame.
     pub dirty: bool,
+}
+
+impl InventoryMenu {
+    /// One step back: popup → picking → (slots stay). True if there was something to go back from.
+    fn back(&mut self) -> bool {
+        self.dirty = true;
+        if self.popup.take().is_some() {
+            return true;
+        }
+        if self.picking.take().is_some() {
+            self.focus = Focus::Slots;
+            return true;
+        }
+        self.dirty = false;
+        false
+    }
+
+    /// Something open inside the screen that Esc should close first.
+    pub fn nested(&self) -> bool {
+        self.popup.is_some() || self.picking.is_some()
+    }
+
+    fn select_slot(&mut self, i: usize) {
+        if (self.focus, self.slot) != (Focus::Slots, i) {
+            (self.focus, self.slot, self.dirty) = (Focus::Slots, i, true);
+        }
+    }
+
+    fn select_cell(&mut self, pos: usize) {
+        if (self.focus, self.cursor) != (Focus::Grid, pos) {
+            (self.focus, self.cursor, self.dirty) = (Focus::Grid, pos, true);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -105,23 +171,125 @@ pub fn visible(inventory: &Inventory, filter: Filter) -> Vec<usize> {
     (0..inventory.items.len()).filter(|&i| filter.matches(inventory.items[i].def().kind)).collect()
 }
 
-/// Equip if not worn, unequip if worn (and removable).
+/// What the grid shows: the candidates for the slot being picked for, else the filtered bag.
+pub fn shown(menu: &InventoryMenu, inventory: &Inventory) -> Vec<usize> {
+    match menu.picking {
+        Some(slot) => slot.candidates(inventory),
+        None => visible(inventory, menu.filter),
+    }
+}
+
 /// Consumables are used, not equipped: the Healing Ale (drink) and the stacking ones (eat).
 fn usable(item: ItemId) -> bool {
     item == ItemId::HealingAle || item.def().effect.is_some()
 }
 
-/// Into the left hand (weapons for dual wielding, shields): L / right-click / gamepad Y.
-fn left_hand_request(character: Entity, inventory: &Inventory, index: usize) -> Option<EquipRequest> {
-    let kind = inventory.items.get(index)?.def().kind;
-    matches!(kind, ItemKind::Weapon | ItemKind::Shield).then_some(EquipRequest { character, index, equip: true, slot: Some(EquipSlot::LeftHand) })
+/// One entry of an item's options popup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemOption {
+    /// Drink / eat it.
+    Use,
+    /// Into this slot (a weapon: either hand; anything else: its own slot).
+    EquipTo(EquipSlot),
+    /// Into its usual slot (rings: a free ring slot).
+    Equip,
+    Unequip,
+    ThrowOut,
 }
 
-fn toggle_request(character: Entity, equipment: &Equipment, index: usize) -> Option<EquipRequest> {
-    match equipment.slot_of(index) {
-        None => Some(EquipRequest { character, index, equip: true, slot: None }),
-        Some(_) if equipment.can_unequip(index) => Some(EquipRequest { character, index, equip: false, slot: None }),
-        Some(_) => None,
+impl ItemOption {
+    fn label(self, item: ItemId) -> &'static str {
+        match self {
+            ItemOption::Use if item == ItemId::HealingAle => "Drink",
+            ItemOption::Use => "Eat",
+            ItemOption::EquipTo(EquipSlot::RightHand) => "Equip in right hand",
+            ItemOption::EquipTo(EquipSlot::LeftHand) => "Equip in left hand",
+            ItemOption::EquipTo(_) | ItemOption::Equip => "Equip",
+            ItemOption::Unequip => "Unequip",
+            ItemOption::ThrowOut => "Throw out",
+        }
+    }
+}
+
+/// Everything you can do with bag entry `index`, in menu order.
+pub fn item_options(inventory: &Inventory, equipment: &Equipment, index: usize) -> Vec<ItemOption> {
+    let Some(&item) = inventory.items.get(index) else { return vec![] };
+    let mut out = vec![];
+    if usable(item) {
+        out.push(ItemOption::Use);
+    }
+    let slot = equipment.slot_of(index);
+    match item.def().kind {
+        ItemKind::Weapon => {
+            for hand in [EquipSlot::RightHand, EquipSlot::LeftHand] {
+                if slot != Some(hand) {
+                    out.push(ItemOption::EquipTo(hand));
+                }
+            }
+        }
+        ItemKind::Shield | ItemKind::Armor(_) | ItemKind::Ring if slot.is_none() => out.push(ItemOption::Equip),
+        _ => {}
+    }
+    if equipment.can_unequip(index) {
+        out.push(ItemOption::Unequip);
+    }
+    if throwable(item) && inventory.count(item) > 0 {
+        out.push(ItemOption::ThrowOut);
+    }
+    out
+}
+
+/// Everything an inventory action may send.
+#[derive(SystemParam)]
+struct ItemActions<'w> {
+    equip: MessageWriter<'w, EquipRequest>,
+    use_item: MessageWriter<'w, UseItemRequest>,
+    throw: MessageWriter<'w, ThrowOutRequest>,
+    notify: MessageWriter<'w, Notify>,
+}
+
+impl ItemActions<'_> {
+    fn apply(&mut self, character: Entity, inventory: &Inventory, index: usize, option: ItemOption) {
+        let Some(&item) = inventory.items.get(index) else { return };
+        match option {
+            ItemOption::Use => {
+                self.use_item.write(UseItemRequest { item });
+            }
+            ItemOption::EquipTo(slot) => {
+                self.equip.write(EquipRequest { character, index, equip: true, slot: Some(slot) });
+            }
+            ItemOption::Equip => {
+                self.equip.write(EquipRequest { character, index, equip: true, slot: None });
+            }
+            ItemOption::Unequip => {
+                self.equip.write(EquipRequest { character, index, equip: false, slot: None });
+            }
+            ItemOption::ThrowOut => {
+                self.throw.write(ThrowOutRequest { index });
+            }
+        }
+    }
+
+    /// Enter on a slot: pick an item for it, or say that nothing fits.
+    fn start_picking(&mut self, menu: &mut InventoryMenu, inventory: &Inventory, equipment: &Equipment) {
+        let slot = EquipSlot::ALL[menu.slot.min(EquipSlot::ALL.len() - 1)];
+        let candidates = slot.candidates(inventory);
+        if candidates.is_empty() {
+            self.notify.write(Notify::new(NoticeIcon::Item(ItemIcon::Sword), strings::NOTHING_TO_EQUIP));
+            return;
+        }
+        // Start on what's in the slot now, if anything.
+        let current = equipment.get(slot).and_then(|i| candidates.iter().position(|c| *c == i));
+        (menu.picking, menu.focus, menu.cursor, menu.dirty) = (Some(slot), Focus::Grid, current.unwrap_or(0), true);
+    }
+
+    /// Enter on a candidate while picking: into the chosen slot, back to the column.
+    fn pick(&mut self, menu: &mut InventoryMenu, character: Entity, equipment: &Equipment, index: usize) {
+        let Some(slot) = menu.picking.take() else { return };
+        if equipment.get(slot) != Some(index) {
+            self.equip.write(EquipRequest { character, index, equip: true, slot: Some(slot) });
+        }
+        (menu.focus, menu.dirty) = (Focus::Slots, true);
     }
 }
 
@@ -146,6 +314,7 @@ fn spawn_menu_root(mut commands: Commands) {
     ));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn toggle_menu(
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
@@ -157,7 +326,8 @@ fn toggle_menu(
     mut root: Query<&mut Visibility, With<MenuRoot>>,
 ) {
     let Ok((actions, dying)) = player.single() else { return };
-    let back = keys.just_pressed(KeyCode::Escape) || pads.iter().any(|g| g.just_pressed(GamepadButton::East));
+    // Esc / B closes the screen only when nothing inside it is open (`menu_keys` steps back).
+    let back = (keys.just_pressed(KeyCode::Escape) || pads.iter().any(|g| g.just_pressed(GamepadButton::East))) && !menu.nested();
     // Not over another menu (the pause menu or the online panel).
     let others = menus.pause || menus.online;
     // A second toggle within 0.25 s is ignored: a key delivered twice (or a press bouncing through
@@ -173,6 +343,8 @@ fn toggle_menu(
     if want != menu.open {
         menu.open = want;
         menu.dirty = true;
+        menu.popup = None;
+        menu.picking = None;
         for mut v in &mut root {
             *v = if want { Visibility::Inherited } else { Visibility::Hidden };
         }
@@ -183,8 +355,7 @@ fn menu_keys(
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
     mut menu: ResMut<InventoryMenu>,
-    mut equip: MessageWriter<EquipRequest>,
-    mut use_item: MessageWriter<UseItemRequest>,
+    mut actions: ItemActions,
     player: Query<(Entity, &Inventory, &Equipment), With<Player>>,
 ) {
     if !menu.open {
@@ -195,45 +366,86 @@ fn menu_keys(
     let pad = |b: GamepadButton| pads.iter().any(|g| g.just_pressed(b));
     use GamepadButton as G;
     use KeyCode::*;
-    let (prev, next) = (pressed(&[KeyQ]) || pad(G::LeftTrigger), pressed(&[KeyE]) || pad(G::RightTrigger));
-    if prev || next {
-        menu.filter = menu.filter.step(if prev { -1 } else { 1 });
-        menu.cursor = 0;
-        menu.dirty = true;
-    }
-    let list = visible(inventory, menu.filter);
-    let mut c = menu.cursor as i32;
-    if pressed(&[ArrowLeft, KeyA]) || pad(G::DPadLeft) {
-        c -= 1;
-    }
-    if pressed(&[ArrowRight, KeyD]) || pad(G::DPadRight) {
-        c += 1;
-    }
-    if pressed(&[ArrowUp, KeyW]) || pad(G::DPadUp) {
-        c -= COLS as i32;
-    }
-    if pressed(&[ArrowDown, KeyS]) || pad(G::DPadDown) {
-        c += COLS as i32;
-    }
-    let c = c.clamp(0, list.len().saturating_sub(1) as i32) as usize;
-    if c != menu.cursor {
-        menu.cursor = c;
-        menu.dirty = true;
-    }
-    let Some(&index) = list.get(menu.cursor) else { return };
-    if pressed(&[Enter, NumpadEnter, Space, KeyF]) || pad(G::South) {
-        let item = inventory.items[index];
-        if usable(item) {
-            use_item.write(UseItemRequest { item });
-        } else if let Some(req) = toggle_request(entity, equipment, index) {
-            equip.write(req);
+    let up = pressed(&[ArrowUp, KeyW]) || pad(G::DPadUp);
+    let down = pressed(&[ArrowDown, KeyS]) || pad(G::DPadDown);
+    let left = pressed(&[ArrowLeft, KeyA]) || pad(G::DPadLeft);
+    let right = pressed(&[ArrowRight, KeyD]) || pad(G::DPadRight);
+    let confirm = pressed(&[Enter, NumpadEnter, Space, KeyF]) || pad(G::South);
+    let back = pressed(&[Escape, Backspace]) || pad(G::East);
+
+    // The options popup takes every key while open.
+    if let Some((index, choice)) = menu.popup {
+        let options = item_options(inventory, equipment, index);
+        if options.is_empty() || back {
+            menu.back();
+            return;
         }
-    } else if (pressed(&[Backspace, KeyX]) || pad(G::West)) && equipment.can_unequip(index) {
-        equip.write(EquipRequest { character: entity, index, equip: false, slot: None });
-    } else if (pressed(&[KeyL]) || pad(G::North))
-        && let Some(req) = left_hand_request(entity, inventory, index)
-    {
-        equip.write(req);
+        let n = options.len() as i32;
+        let c = (choice as i32 + i32::from(down) - i32::from(up)).rem_euclid(n) as usize;
+        if c != choice {
+            (menu.popup, menu.dirty) = (Some((index, c)), true);
+        }
+        if confirm {
+            actions.apply(entity, inventory, index, options[c]);
+            (menu.popup, menu.dirty) = (None, true);
+        }
+        return;
+    }
+    if back && menu.back() {
+        return;
+    }
+
+    if menu.focus == Focus::Slots {
+        let n = EquipSlot::ALL.len() as i32;
+        let s = (menu.slot as i32 + i32::from(down) - i32::from(up)).clamp(0, n - 1) as usize;
+        menu.select_slot(s);
+        if right {
+            menu.select_cell(0);
+        } else if confirm {
+            actions.start_picking(&mut menu, inventory, equipment);
+        } else if (pressed(&[Backspace, KeyX]) || pad(G::West))
+            && let Some(index) = equipment.get(EquipSlot::ALL[menu.slot])
+            && equipment.can_unequip(index)
+        {
+            actions.apply(entity, inventory, index, ItemOption::Unequip);
+        }
+        return;
+    }
+
+    // The grid.
+    if menu.picking.is_none() {
+        let (prev, next) = (pressed(&[KeyQ]) || pad(G::LeftTrigger), pressed(&[KeyE]) || pad(G::RightTrigger));
+        if prev || next {
+            menu.filter = menu.filter.step(if prev { -1 } else { 1 });
+            menu.cursor = 0;
+            menu.dirty = true;
+        }
+    }
+    let list = shown(&menu, inventory);
+    if left && menu.cursor.is_multiple_of(COLS) {
+        // Off the grid's left edge: back to the equipment column.
+        if menu.picking.take().is_none() {
+            menu.slot = menu.slot.min(EquipSlot::ALL.len() - 1);
+        }
+        (menu.focus, menu.dirty) = (Focus::Slots, true);
+        return;
+    }
+    let mut c = menu.cursor as i32;
+    c += i32::from(right) - i32::from(left);
+    c += (i32::from(down) - i32::from(up)) * COLS as i32;
+    let c = c.clamp(0, list.len().saturating_sub(1) as i32) as usize;
+    menu.select_cell(c);
+    let Some(&index) = list.get(menu.cursor) else { return };
+    if confirm {
+        if menu.picking.is_some() {
+            actions.pick(&mut menu, entity, equipment, index);
+        } else if !item_options(inventory, equipment, index).is_empty() {
+            (menu.popup, menu.dirty) = (Some((index, 0)), true);
+        }
+    } else if (pressed(&[KeyX]) || pad(G::West)) && equipment.can_unequip(index) {
+        actions.apply(entity, inventory, index, ItemOption::Unequip);
+    } else if (pressed(&[KeyL]) || pad(G::North)) && inventory.items[index].def().kind == ItemKind::Weapon {
+        actions.apply(entity, inventory, index, ItemOption::EquipTo(EquipSlot::LeftHand));
     }
 }
 
@@ -250,12 +462,19 @@ fn rebuild_menu(
         return;
     }
     menu.dirty = false;
+    debug!("inventory: focus {:?} slot {} cursor {} picking {:?} popup {:?}", menu.focus, menu.slot, menu.cursor, menu.picking, menu.popup);
     let Ok((entity, inventory, equipment, stats, health, ale)) = player.single() else { return };
-    let list = visible(inventory, menu.filter);
+    let list = shown(&menu, inventory);
     menu.cursor = menu.cursor.min(list.len().saturating_sub(1));
-    let selected = list.get(menu.cursor).copied();
+    if menu.popup.is_some_and(|(i, _)| i >= inventory.items.len()) {
+        menu.popup = None;
+    }
+    let selected = match menu.focus {
+        Focus::Grid => list.get(menu.cursor).copied(),
+        Focus::Slots => equipment.get(EquipSlot::ALL[menu.slot]),
+    };
     let display: Handle<Font> = assets.load(DISPLAY_FONT);
-    let ctx = Ctx { entity, inventory, equipment, ale, display };
+    let ctx = Ctx { entity, inventory, equipment, ale, display, menu: &menu };
 
     let root = *root;
     commands.entity(root).despawn_children();
@@ -282,9 +501,12 @@ fn rebuild_menu(
     ));
     let columns = commands.spawn((Node { column_gap: px(22.0), ..default() }, ChildOf(panel))).id();
     equipment_column(&mut commands, columns, &ctx);
-    grid_column(&mut commands, columns, &ctx, menu.filter, &list, menu.cursor);
+    grid_column(&mut commands, columns, &ctx, &list);
     details_column(&mut commands, columns, &ctx, selected, stats, health);
     commands.spawn((Text::new(strings::INVENTORY_HINTS), TextFont::from_font_size(14.0), TextColor(DIM), ChildOf(panel)));
+    if let Some((index, choice)) = menu.popup {
+        options_popup(&mut commands, root, &ctx, index, choice);
+    }
 }
 
 /// What the builders need to know about the player.
@@ -294,6 +516,7 @@ struct Ctx<'a> {
     equipment: &'a Equipment,
     ale: Option<&'a HealingAle>,
     display: Handle<Font>,
+    menu: &'a InventoryMenu,
 }
 
 fn px(v: f32) -> Val {
@@ -315,29 +538,45 @@ fn column(commands: &mut Commands, parent: Entity, width: f32) -> Entity {
     commands.spawn((Node { width: px(width), flex_direction: FlexDirection::Column, row_gap: px(5.0), ..default() }, ChildOf(parent))).id()
 }
 
-/// Selects bag entry `index` (switching to the "All" filter, where position = index).
-fn select_in_all(menu: &mut InventoryMenu, index: usize) {
-    menu.filter = Filter::All;
-    menu.cursor = index;
-    menu.dirty = true;
-}
-
 fn equipment_column(commands: &mut Commands, parent: Entity, ctx: &Ctx) {
     let col = column(commands, parent, 250.0);
     header(commands, col, "Equipment");
-    for slot in EquipSlot::ALL {
-        let index = ctx.equipment.get(slot);
+    let menu = ctx.menu;
+    for (i, slot) in EquipSlot::ALL.into_iter().enumerate() {
         let item = ctx.equipment.item(slot, ctx.inventory);
+        let focused = menu.focus == Focus::Slots && menu.slot == i;
+        let picking = menu.picking == Some(slot);
         let row = commands
             .spawn((
-                Node { align_items: AlignItems::Center, column_gap: px(8.0), padding: UiRect::all(px(2.0)), border_radius: BorderRadius::all(px(4.0)), ..default() },
-                BackgroundColor(Color::NONE),
+                Node {
+                    align_items: AlignItems::Center,
+                    column_gap: px(8.0),
+                    padding: UiRect::all(px(2.0)),
+                    border: UiRect::all(px(1.0)),
+                    border_radius: BorderRadius::all(px(4.0)),
+                    ..default()
+                },
+                BackgroundColor(if focused || picking { SELECTED_BG } else { Color::NONE }),
+                BorderColor::all(if picking { GOLD_TEXT } else if focused { FRAME } else { Color::NONE }),
                 ChildOf(col),
             ))
+            .observe(move |_: On<PointerMove>, mut menu: ResMut<InventoryMenu>| {
+                if menu.popup.is_none() && menu.picking.is_none() {
+                    menu.select_slot(i);
+                }
+            })
+            .observe(
+                move |_: On<PointerClick>,
+                      mut menu: ResMut<InventoryMenu>,
+                      mut actions: ItemActions,
+                      player: Query<(&Inventory, &Equipment), With<Player>>| {
+                    let Ok((inventory, equipment)) = player.single() else { return };
+                    (menu.popup, menu.picking) = (None, None);
+                    menu.select_slot(i);
+                    actions.start_picking(&mut menu, inventory, equipment);
+                },
+            )
             .id();
-        if let Some(index) = index {
-            commands.entity(row).observe(move |_: On<PointerClick>, mut menu: ResMut<InventoryMenu>| select_in_all(&mut menu, index));
-        }
         let icon_box = commands
             .spawn((
                 Node { width: px(40.0), height: px(40.0), border: UiRect::all(px(1.0)), border_radius: BorderRadius::all(px(4.0)), justify_content: JustifyContent::Center, align_items: AlignItems::Center, overflow: Overflow::clip(), ..default() },
@@ -350,33 +589,37 @@ fn equipment_column(commands: &mut Commands, parent: Entity, ctx: &Ctx) {
             spawn_icon(commands, icon_box, item.def().icon, 0.68);
         }
         let label = commands.spawn((Node { flex_direction: FlexDirection::Column, ..default() }, ChildOf(row))).id();
-        text(commands, label, slot.label(), 11.0, DIM);
+        text(commands, label, slot.label(), 11.0, if picking { GOLD_TEXT } else { DIM });
         text(commands, label, item.map_or("Empty", |i| i.def().name), 15.0, if item.is_some() { TEXT } else { DIM });
     }
 }
 
-fn grid_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, filter: Filter, list: &[usize], cursor: usize) {
+fn grid_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, list: &[usize]) {
+    let menu = ctx.menu;
     let col = column(commands, parent, COLS as f32 * (CELL + 6.0));
-    // Filter tabs.
     let tabs = commands.spawn((Node { column_gap: px(4.0), margin: UiRect::bottom(px(6.0)), ..default() }, ChildOf(col))).id();
-    for f in Filter::ALL {
-        let active = f == filter;
-        let tab = commands
-            .spawn((
-                Node { padding: UiRect::axes(px(8.0), px(4.0)), border: UiRect::bottom(px(2.0)), ..default() },
-                BackgroundColor(if active { SELECTED_BG } else { Color::NONE }),
-                BorderColor::all(if active { GOLD_TEXT } else { Color::NONE }),
-                ChildOf(tabs),
-            ))
-            .observe(move |_: On<PointerClick>, mut menu: ResMut<InventoryMenu>| {
-                if menu.filter != f {
-                    menu.filter = f;
-                    menu.cursor = 0;
-                    menu.dirty = true;
-                }
-            })
-            .id();
-        text(commands, tab, f.label(), 14.0, if active { GOLD_TEXT } else { DIM });
+    if let Some(slot) = menu.picking {
+        // Picking for a slot: a title instead of the filter tabs.
+        let t = commands.spawn((Node { padding: UiRect::axes(px(8.0), px(4.0)), border: UiRect::bottom(px(2.0)), ..default() }, BorderColor::all(GOLD_TEXT), ChildOf(tabs))).id();
+        text(commands, t, format!("Equip: {}   [Esc] back", slot.label()), 14.0, GOLD_TEXT);
+    } else {
+        for f in Filter::ALL {
+            let active = f == menu.filter;
+            let tab = commands
+                .spawn((
+                    Node { padding: UiRect::axes(px(8.0), px(4.0)), border: UiRect::bottom(px(2.0)), ..default() },
+                    BackgroundColor(if active { SELECTED_BG } else { Color::NONE }),
+                    BorderColor::all(if active { GOLD_TEXT } else { Color::NONE }),
+                    ChildOf(tabs),
+                ))
+                .observe(move |_: On<PointerClick>, mut menu: ResMut<InventoryMenu>| {
+                    if menu.filter != f {
+                        (menu.filter, menu.cursor, menu.focus, menu.dirty) = (f, 0, Focus::Grid, true);
+                    }
+                })
+                .id();
+            text(commands, tab, f.label(), 14.0, if active { GOLD_TEXT } else { DIM });
+        }
     }
     let grid = commands
         .spawn((Node { flex_wrap: FlexWrap::Wrap, column_gap: px(6.0), row_gap: px(6.0), min_height: px(CELL * 3.0 + 12.0), ..default() }, ChildOf(col)))
@@ -386,7 +629,7 @@ fn grid_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, filter: Filte
     }
     for (pos, &index) in list.iter().enumerate() {
         let item = ctx.inventory.items[index];
-        let selected = pos == cursor;
+        let selected = menu.focus == Focus::Grid && pos == menu.cursor;
         let character = ctx.entity;
         let cell = commands
             .spawn((
@@ -404,34 +647,25 @@ fn grid_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, filter: Filte
                 BorderColor::all(if selected { GOLD_TEXT } else { FRAME }),
                 ChildOf(grid),
             ))
-            .observe(move |_: On<PointerOver>, mut menu: ResMut<InventoryMenu>| {
-                if menu.cursor != pos {
-                    menu.cursor = pos;
-                    menu.dirty = true;
+            .observe(move |_: On<PointerMove>, mut menu: ResMut<InventoryMenu>| {
+                if menu.popup.is_none() {
+                    menu.select_cell(pos);
                 }
             })
             .observe(
                 move |click: On<PointerClick>,
                       mut menu: ResMut<InventoryMenu>,
-                      mut equip: MessageWriter<EquipRequest>,
-                      mut use_item: MessageWriter<UseItemRequest>,
+                      mut actions: ItemActions,
                       player: Query<(&Equipment, &Inventory), With<Player>>| {
-                    menu.cursor = pos;
-                    menu.dirty = true;
-                    if click.button == PointerButton::Secondary {
-                        if let Ok((_, inventory)) = player.single()
-                            && let Some(req) = left_hand_request(character, inventory, index)
-                        {
-                            equip.write(req);
-                        }
-                    } else if click.count >= 2 {
-                        if usable(item) {
-                            use_item.write(UseItemRequest { item });
-                        } else if let Ok((equipment, _)) = player.single()
-                            && let Some(req) = toggle_request(character, equipment, index)
-                        {
-                            equip.write(req);
-                        }
+                    let Ok((equipment, inventory)) = player.single() else { return };
+                    menu.popup = None;
+                    menu.select_cell(pos);
+                    if menu.picking.is_some() {
+                        actions.pick(&mut menu, character, equipment, index);
+                    } else if (click.button == PointerButton::Secondary || click.count >= 2)
+                        && !item_options(inventory, equipment, index).is_empty()
+                    {
+                        (menu.popup, menu.dirty) = (Some((index, 0)), true);
                     }
                 },
             )
@@ -459,6 +693,82 @@ fn grid_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, filter: Filte
                 .id();
             text(commands, badge, n.to_string(), 14.0, if n == 0 { DIM } else { TEXT });
         }
+    }
+}
+
+/// The small options window over the screen: one row per [`ItemOption`]. Clicking outside closes it.
+fn options_popup(commands: &mut Commands, root: Entity, ctx: &Ctx, index: usize, choice: usize) {
+    let item = ctx.inventory.items[index];
+    let options = item_options(ctx.inventory, ctx.equipment, index);
+    let overlay = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
+            ChildOf(root),
+        ))
+        .observe(|_: On<PointerClick>, mut menu: ResMut<InventoryMenu>| {
+            menu.back();
+        })
+        .id();
+    let window = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                min_width: px(240.0),
+                padding: UiRect::all(px(12.0)),
+                row_gap: px(3.0),
+                border: UiRect::all(px(2.0)),
+                border_radius: BorderRadius::all(px(6.0)),
+                ..default()
+            },
+            BackgroundColor(PANEL_BG),
+            BorderColor::all(GOLD_TEXT),
+            ChildOf(overlay),
+        ))
+        .observe(|mut click: On<PointerClick>| click.propagate(false))
+        .id();
+    let top = commands.spawn((Node { column_gap: px(8.0), align_items: AlignItems::Center, margin: UiRect::bottom(px(6.0)), ..default() }, ChildOf(window))).id();
+    let icon = commands.spawn((Node { width: px(36.0), height: px(36.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, ChildOf(top))).id();
+    spawn_icon(commands, icon, item.def().icon, 0.6);
+    commands.spawn((
+        Text::new(item.def().name),
+        TextFont { font: ctx.display.clone().into(), font_size: FontSize::Px(20.0), ..default() },
+        TextColor(TEXT),
+        ChildOf(top),
+    ));
+    let character = ctx.entity;
+    for (n, option) in options.into_iter().enumerate() {
+        let selected = n == choice;
+        let row = commands
+            .spawn((
+                Node { padding: UiRect::axes(px(10.0), px(5.0)), border_radius: BorderRadius::all(px(4.0)), ..default() },
+                BackgroundColor(if selected { SELECTED_BG } else { Color::NONE }),
+                ChildOf(window),
+            ))
+            .observe(move |_: On<PointerMove>, mut menu: ResMut<InventoryMenu>| {
+                if menu.popup != Some((index, n)) {
+                    (menu.popup, menu.dirty) = (Some((index, n)), true);
+                }
+            })
+            .observe(
+                move |mut click: On<PointerClick>, mut menu: ResMut<InventoryMenu>, mut actions: ItemActions, player: Query<&Inventory, With<Player>>| {
+                    click.propagate(false);
+                    if let Ok(inventory) = player.single() {
+                        actions.apply(character, inventory, index, option);
+                    }
+                    (menu.popup, menu.dirty) = (None, true);
+                },
+            )
+            .id();
+        let color = if selected { GOLD_TEXT } else if option == ItemOption::ThrowOut { Color::srgb(0.8, 0.55, 0.45) } else { TEXT };
+        text(commands, row, option.label(item), 16.0, color);
     }
 }
 
@@ -523,30 +833,27 @@ fn details_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, selected: 
             line(commands, "Weight", format!("{:.1}", def.weight));
         }
 
-        // Use button (consumables), or Equip / Unequip and the preview of that change.
-        if usable(item) {
-            let button = commands
-                .spawn((
-                    Node { padding: UiRect::axes(px(14.0), px(6.0)), border: UiRect::all(px(1.0)), border_radius: BorderRadius::all(px(4.0)), align_self: AlignSelf::FlexStart, ..default() },
-                    BackgroundColor(SELECTED_BG),
-                    BorderColor::all(GOLD_TEXT),
-                    ChildOf(col),
-                ))
-                .observe(move |_: On<PointerClick>, mut use_item: MessageWriter<UseItemRequest>| {
-                    use_item.write(UseItemRequest { item });
-                })
-                .id();
-            text(commands, button, if item == ItemId::HealingAle { "Drink  [Enter]" } else { "Eat  [Enter]" }, 15.0, GOLD_TEXT);
-        }
-        let request = if usable(item) { None } else { toggle_request(ctx.entity, ctx.equipment, index) };
-        if let Some(req) = request {
-            let mut next = ctx.equipment.clone();
-            if req.equip {
-                next.equip(ctx.inventory, index);
-            } else {
-                next.unequip(index);
-            }
+        // The preview: what equipping it into the slot being picked for would change, else
+        // what its first equip / unequip option would.
+        let mut next = ctx.equipment.clone();
+        let changes = match ctx.menu.picking {
+            Some(slot) => next.equip_to(ctx.inventory, index, slot).is_some(),
+            None => match item_options(ctx.inventory, ctx.equipment, index)
+                .into_iter()
+                .filter(|o| !matches!(o, ItemOption::Use | ItemOption::ThrowOut))
+                // Worn: show what taking it off does (not moving it to the other hand).
+                .min_by_key(|o| if ctx.equipment.slot_of(index).is_some() { u8::from(*o != ItemOption::Unequip) } else { 0 })
+            {
+                Some(ItemOption::EquipTo(slot)) => next.equip_to(ctx.inventory, index, slot).is_some(),
+                Some(ItemOption::Equip) => next.equip(ctx.inventory, index).is_some(),
+                Some(ItemOption::Unequip) => next.unequip(index),
+                _ => false,
+            },
+        };
+        if changes {
             preview = Some(EquipStats::compute(ctx.inventory, &next));
+        }
+        if ctx.menu.picking.is_none() && !item_options(ctx.inventory, ctx.equipment, index).is_empty() {
             let button = commands
                 .spawn((
                     Node { padding: UiRect::axes(px(14.0), px(6.0)), border: UiRect::all(px(1.0)), border_radius: BorderRadius::all(px(4.0)), align_self: AlignSelf::FlexStart, ..default() },
@@ -554,11 +861,11 @@ fn details_column(commands: &mut Commands, parent: Entity, ctx: &Ctx, selected: 
                     BorderColor::all(GOLD_TEXT),
                     ChildOf(col),
                 ))
-                .observe(move |_: On<PointerClick>, mut equip: MessageWriter<EquipRequest>| {
-                    equip.write(req);
+                .observe(move |_: On<PointerClick>, mut menu: ResMut<InventoryMenu>| {
+                    (menu.popup, menu.dirty) = (Some((index, 0)), true);
                 })
                 .id();
-            text(commands, button, if req.equip { "Equip  [Enter]" } else { "Unequip  [Enter]" }, 15.0, GOLD_TEXT);
+            text(commands, button, "Options  [Enter]", 15.0, GOLD_TEXT);
         }
     } else {
         text(commands, col, "Nothing selected.", 14.0, DIM);
@@ -612,6 +919,22 @@ mod tests {
         assert_eq!(visible(&inv, Filter::Armor), vec![4]);
         assert_eq!(visible(&inv, Filter::Rings), vec![5]);
         assert_eq!(visible(&inv, Filter::Consumables), vec![1]);
+        let menu = InventoryMenu { picking: Some(EquipSlot::LeftHand), ..default() };
+        assert_eq!(shown(&menu, &inv), vec![0, 2, 3], "picking for the left hand: weapons and shields");
         assert_eq!(Filter::All.step(-1), Filter::Consumables);
+    }
+
+    #[test]
+    fn options_fit_the_item() {
+        let inv = Inventory::from_items(&[ItemId::Longsword, ItemId::HealingAle, ItemId::WoodenShield, ItemId::Poppy, ItemId::ForgeKey]);
+        let mut eq = Equipment::default();
+        eq.equip(&inv, 0);
+        eq.equip(&inv, 1);
+        use ItemOption::*;
+        assert_eq!(item_options(&inv, &eq, 0), vec![EquipTo(EquipSlot::LeftHand), Unequip, ThrowOut], "sword in the right hand");
+        assert_eq!(item_options(&inv, &eq, 1), vec![Use], "the flask: drink only");
+        assert_eq!(item_options(&inv, &eq, 2), vec![Equip, ThrowOut]);
+        assert_eq!(item_options(&inv, &eq, 3), vec![Use, ThrowOut]);
+        assert_eq!(item_options(&inv, &eq, 4), vec![ThrowOut], "a key can only be thrown out");
     }
 }

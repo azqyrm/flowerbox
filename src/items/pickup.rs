@@ -5,7 +5,9 @@
 use bevy::prelude::*;
 
 use super::ItemId;
-use super::inventory::Inventory;
+use super::inventory::{Equipment, Inventory};
+use crate::ui::icons::NoticeIcon;
+use crate::ui::notifications::Notify;
 use crate::character::action::CharacterAction;
 use crate::hearth::DeathSequence;
 use crate::input::{GameplayBlocked, PlayerInput};
@@ -26,8 +28,11 @@ impl Plugin for PickupPlugin {
             .init_resource::<UniqueDrops>()
             .init_resource::<ClaimedDrops>()
             .add_message::<ItemDropped>()
+            .add_message::<ThrowOutRequest>()
+            .add_message::<ThrowToWorld>()
+            .init_resource::<DropIds>()
             .add_systems(Startup, (load_pickup_assets, spawn_pickups).chain())
-            .add_systems(Update, (pickup_interaction.in_set(InteractSystems::Pickups), grant_pickups, animate_pickups));
+            .add_systems(Update, (pickup_interaction.in_set(InteractSystems::Pickups), grant_pickups, throw_out, animate_pickups));
     }
 }
 
@@ -69,12 +74,50 @@ pub struct UniqueDrops(pub Vec<u32>);
 #[derive(Resource, Debug, Default, Clone, PartialEq)]
 pub struct ClaimedDrops(pub Vec<u32>);
 
-/// An enemy dropped an item here (offline / host; online the host tells the guests).
+/// An item landed on the floor here: an enemy's drop, or (`thrown`) one the local player threw
+/// out (offline / host; online the host tells the guests).
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ItemDropped {
     pub id: u32,
     pub item: ItemId,
     pub pos: Vec3,
+    pub thrown: bool,
+}
+
+/// Pickup ids for items that appear during play (enemy drops, thrown-out items), handed out by
+/// whoever owns the world. Above every layout id; unique drops use their own ids from the level.
+#[derive(Resource, Debug)]
+pub struct DropIds(u32);
+
+impl Default for DropIds {
+    fn default() -> Self {
+        Self(50_000)
+    }
+}
+
+impl DropIds {
+    pub fn next(&mut self) -> u32 {
+        self.0 += 1;
+        self.0
+    }
+}
+
+/// The local player throws one of bag entry `index` out onto the floor in front of them.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct ThrowOutRequest {
+    pub index: usize,
+}
+
+/// A guest threw `item` out at `pos`: the host should put it into the world (`crate::net::world`).
+#[derive(Message, Debug, Clone, Copy)]
+pub struct ThrowToWorld {
+    pub item: ItemId,
+    pub pos: Vec3,
+}
+
+/// Whether an item can be thrown out (the Healing Ale is your flask, not loot).
+pub fn throwable(item: ItemId) -> bool {
+    item != ItemId::HealingAle
 }
 
 /// An item waiting on the floor. `id` is stable across machines (layout index, or a host id for
@@ -232,6 +275,47 @@ fn grant_pickups(
         claim(&unique, &mut claimed, pickup.id);
         commands.entity(entity).despawn();
         info!("picked up {}", pickup.item.def().name);
+    }
+}
+
+/// Throwing out: the item leaves the bag (and its slot) and lands in front of the player, where
+/// anyone can take it. Offline / host: it's spawned here (the host tells the guests through
+/// [`ItemDropped`]); a guest asks the host ([`ThrowToWorld`]), whose world it lands in.
+#[allow(clippy::too_many_arguments)]
+fn throw_out(
+    mut commands: Commands,
+    assets: Option<Res<PickupAssets>>,
+    authority: Res<PickupAuthority>,
+    mut ids: ResMut<DropIds>,
+    mut requests: MessageReader<ThrowOutRequest>,
+    mut dropped: MessageWriter<ItemDropped>,
+    mut to_world: MessageWriter<ThrowToWorld>,
+    mut notify: MessageWriter<Notify>,
+    mut player: Query<(&Transform, &crate::character::controller::CharacterController, &mut Inventory, &mut Equipment), With<Player>>,
+) {
+    let Some(assets) = assets else { return };
+    for req in requests.read() {
+        let Ok((tf, ctrl, mut inventory, mut equipment)) = player.single_mut() else { continue };
+        if inventory.items.get(req.index).is_none_or(|i| !throwable(*i)) {
+            continue;
+        }
+        let Some((item, entry_gone)) = inventory.take_one(req.index) else { continue };
+        if entry_gone {
+            let inv = inventory.clone();
+            equipment.forget(req.index, &inv);
+        }
+        // On the floor, a step ahead (facing angle 0 looks along -Z).
+        let ahead = Vec3::new(-ctrl.facing.sin(), 0.0, -ctrl.facing.cos()) * THROW_OUT_DISTANCE;
+        let pos = tf.translation - Vec3::Y * (PLAYER_HALF_HEIGHT + GROUND_SKIN) + ahead;
+        notify.write(Notify::new(NoticeIcon::Item(item.def().icon), strings::threw_out(item.def().name)));
+        info!("threw out {}", item.def().name);
+        if authority.0 {
+            let id = ids.next();
+            spawn_pickup(&mut commands, &assets, id, item, pos);
+            dropped.write(ItemDropped { id, item, pos, thrown: true });
+        } else {
+            to_world.write(ThrowToWorld { item, pos });
+        }
     }
 }
 

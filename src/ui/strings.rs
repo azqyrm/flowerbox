@@ -77,6 +77,13 @@ pub fn ale_up(max: u32) -> String {
 /// Toast after picking something up ("Picked up: Rusted Shortsword").
 pub const PICKED_UP: &str = "Picked up";
 /// Inventory screen title and key hints.
+pub fn threw_out(item: &str) -> String {
+    format!("Threw out: {item}")
+}
+pub fn other_threw_out(who: &str, item: &str) -> String {
+    format!("{who} threw out {item}")
+}
+pub const NOTHING_TO_EQUIP: &str = "Nothing in the bag fits this slot";
 pub const INVENTORY_TITLE: &str = "Inventory";
 pub const INVENTORY_HINTS: &str =
-    "[Enter / A] Equip / Use    [L / right-click / Y] To left hand    [Backspace / X] Unequip    [Q] [E] / L1 R1 Filter    [Tab / B] Close";
+    "[Enter] Options / choose   [Left / Right] Slots / bag   [X] Unequip   [L] To left hand   [Q] [E] Filter   [Esc] Back   [Tab] Close";

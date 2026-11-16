@@ -13,7 +13,7 @@ use crate::items::ItemId;
 use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 9;
+pub const PROTOCOL_VERSION: u16 = 10;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -117,6 +117,8 @@ pub enum Reliable {
     World { suns: Vec<u32>, doors: Vec<u32>, pickups: Vec<PickupState>, dummy_hp: f32 },
     /// Guest → host: I'd like to take this item.
     RequestPickup { pickup: u32 },
+    /// Guest → host: I threw `item` out at `pos` (put it into your world).
+    RequestThrow { item: ItemId, pos: [f32; 3] },
     /// Guest → host: I'd like to open this door.
     RequestDoor { id: u32 },
     /// Guest → host: something happened to me / I did something (the host checks and relays).
@@ -146,8 +148,8 @@ pub enum WorldEvent {
     DoorOpened { by: NetId, id: u32 },
     /// `who` tried a door from the side it doesn't open from.
     DoorTried { who: NetId },
-    /// An enemy dropped `item` (pickup `id`) at `pos`.
-    Dropped { id: u32, item: ItemId, pos: [f32; 3] },
+    /// `item` (pickup `id`) landed at `pos`: an enemy's drop (`by: None`) or thrown out by a player.
+    Dropped { id: u32, item: ItemId, pos: [f32; 3], by: Option<NetId> },
     /// `by` took pickup `pickup` (`item`).
     PickedUp { by: NetId, pickup: u32, item: ItemId },
     Died { who: NetId },

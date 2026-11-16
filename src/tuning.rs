@@ -269,3 +269,6 @@ pub const PLAYER_MAX_LOAD: f32 = 30.0;
 /// Load ratio up to which the load class is Light / Medium (above Medium: Heavy, over 1: Overloaded).
 pub const LOAD_LIGHT: f32 = 0.3;
 pub const LOAD_MEDIUM: f32 = 0.7;
+
+/// Thrown-out items land this far in front of the player (m).
+pub const THROW_OUT_DISTANCE: f32 = 0.9;

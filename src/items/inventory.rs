@@ -37,8 +37,9 @@ impl Plugin for InventoryPlugin {
     }
 }
 
-/// Everything a character carries, equipped or not. Entries are never removed (no dropping yet),
-/// so indices are stable and [`Equipment`] can point at them.
+/// Everything a character carries, equipped or not. [`Equipment`] points at entries by index;
+/// removing one (throwing it out, [`Inventory::take_one`]) must be followed by
+/// [`Equipment::forget`] so those indices shift with it.
 #[derive(Component, Debug, Clone, Default)]
 pub struct Inventory {
     pub items: Vec<ItemId>,
@@ -76,6 +77,26 @@ impl Inventory {
         } else {
             self.items.iter().filter(|i| **i == item).count() as u32
         }
+    }
+
+    /// Removes one of entry `index` (one of a stack; the entry goes when it was the last).
+    /// Returns the item, or `None` if there's nothing to take (an empty stack). The caller must
+    /// call [`Equipment::forget`] when the entry went (`true` in the result).
+    pub fn take_one(&mut self, index: usize) -> Option<(ItemId, bool)> {
+        let item = *self.items.get(index)?;
+        if item.def().effect.is_some() {
+            let n = self.counts.get_mut(&item)?;
+            if *n == 0 {
+                return None;
+            }
+            *n -= 1;
+            if *n > 0 {
+                return Some((item, false));
+            }
+            self.counts.remove(&item);
+        }
+        self.items.remove(index);
+        Some((item, true))
     }
 
     /// Uses one of a stacking consumable; false if none are left.
@@ -132,6 +153,26 @@ impl EquipSlot {
 
     fn index(self) -> usize {
         self as usize
+    }
+
+    /// Whether `item` can go into this slot (choosing a slot first, then an item for it).
+    pub fn accepts(self, item: ItemId) -> bool {
+        let kind = item.def().kind;
+        match self {
+            EquipSlot::RightHand => kind == ItemKind::Weapon,
+            EquipSlot::LeftHand => matches!(kind, ItemKind::Weapon | ItemKind::Shield),
+            EquipSlot::Head => kind == ItemKind::Armor(ArmorSlot::Head),
+            EquipSlot::Chest => kind == ItemKind::Armor(ArmorSlot::Chest),
+            EquipSlot::Hands => kind == ItemKind::Armor(ArmorSlot::Hands),
+            EquipSlot::Legs => kind == ItemKind::Armor(ArmorSlot::Legs),
+            EquipSlot::Ring1 | EquipSlot::Ring2 => kind == ItemKind::Ring,
+            EquipSlot::Quick => item == ItemId::HealingAle,
+        }
+    }
+
+    /// Bag entries that fit this slot, in bag order.
+    pub fn candidates(self, inventory: &Inventory) -> Vec<usize> {
+        (0..inventory.items.len()).filter(|&i| self.accepts(inventory.items[i])).collect()
     }
 }
 
@@ -190,17 +231,12 @@ impl Equipment {
         Some(slot)
     }
 
-    /// Puts entry `index` into a chosen hand: weapons into either hand (dual wielding), shields
-    /// only into the left. Moves it if it's in the other hand already. Other slots: as [`Self::equip`].
+    /// Puts entry `index` into a chosen slot: weapons into either hand (dual wielding), shields
+    /// only into the left, a ring into the ring slot you picked. Moves it if it sits in another
+    /// slot already (the other hand, the other ring). `None` if it doesn't fit there.
     pub fn equip_to(&mut self, inventory: &Inventory, index: usize, slot: EquipSlot) -> Option<EquipSlot> {
         let item = *inventory.items.get(index)?;
-        let fits = match (slot, item.def().kind) {
-            (EquipSlot::RightHand, ItemKind::Weapon) => true,
-            (EquipSlot::LeftHand, ItemKind::Weapon | ItemKind::Shield) => true,
-            (EquipSlot::RightHand | EquipSlot::LeftHand, _) => false,
-            _ => return self.equip(inventory, index),
-        };
-        if !fits {
+        if !slot.accepts(item) {
             return None;
         }
         if let Some(old) = self.slot_of(index) {
@@ -259,6 +295,19 @@ impl Equipment {
                 true
             }
         }
+    }
+
+    /// Bag entry `index` was removed: whatever slot held it is empty now, and every index above it
+    /// moves down by one.
+    pub fn forget(&mut self, index: usize, inventory: &Inventory) {
+        for s in &mut self.slots {
+            *s = match *s {
+                Some(i) if i == index => None,
+                Some(i) if i > index => Some(i - 1),
+                other => other,
+            };
+        }
+        self.settle(inventory);
     }
 
     pub fn can_unequip(&self, index: usize) -> bool {
@@ -544,6 +593,40 @@ mod tests {
         assert_eq!(inv.items.len(), 3, "the entry stays (indices don't shift)");
         let mut eq = Equipment::default();
         assert_eq!(eq.equip(&inv, 1), None, "a Poppy isn't equipped, it's eaten");
+    }
+
+    #[test]
+    fn slots_accept_their_kinds_and_pick_a_ring() {
+        let inv = Inventory::from_items(&[ItemId::Longsword, ItemId::WoodenShield, ItemId::SunseedRing, ItemId::LeatherHood, ItemId::HealingAle]);
+        assert_eq!(EquipSlot::RightHand.candidates(&inv), vec![0]);
+        assert_eq!(EquipSlot::LeftHand.candidates(&inv), vec![0, 1]);
+        assert_eq!(EquipSlot::Ring2.candidates(&inv), vec![2]);
+        assert_eq!(EquipSlot::Legs.candidates(&inv), Vec::<usize>::new());
+        let mut eq = Equipment::default();
+        assert_eq!(eq.equip_to(&inv, 2, EquipSlot::Ring2), Some(EquipSlot::Ring2), "the ring goes where you chose");
+        assert_eq!(eq.equip_to(&inv, 2, EquipSlot::Ring1), Some(EquipSlot::Ring1), "and moves");
+        assert_eq!(eq.get(EquipSlot::Ring2), None);
+        assert_eq!(eq.equip_to(&inv, 3, EquipSlot::Chest), None, "a hood isn't chest armour");
+    }
+
+    #[test]
+    fn throwing_out_shifts_equipment() {
+        let mut inv = Inventory::from_items(&[ItemId::Longsword, ItemId::Poppy, ItemId::Poppy, ItemId::WoodenShield, ItemId::LeatherHood]);
+        let mut eq = Equipment::default();
+        eq.equip(&inv, 0);
+        eq.equip(&inv, 2); // shield (index 2: the Poppies share entry 1)
+        eq.equip(&inv, 3); // hood
+        assert_eq!(inv.take_one(1), Some((ItemId::Poppy, false)), "one of two Poppies");
+        assert_eq!(inv.take_one(1), Some((ItemId::Poppy, true)), "the last one takes the entry");
+        eq.forget(1, &inv);
+        assert_eq!(eq.item(EquipSlot::LeftHand, &inv), Some(ItemId::WoodenShield), "indices moved down");
+        assert_eq!(eq.item(EquipSlot::Head, &inv), Some(ItemId::LeatherHood));
+        eq.toggle_two_hand(&inv, Hand::Right).unwrap();
+        assert_eq!(inv.take_one(0), Some((ItemId::Longsword, true)));
+        eq.forget(0, &inv);
+        assert_eq!(eq.get(EquipSlot::RightHand), None, "the thrown sword is gone from the hand");
+        assert_eq!(eq.two_hand, None);
+        assert_eq!(eq.item(EquipSlot::LeftHand, &inv), Some(ItemId::WoodenShield));
     }
 
     #[test]

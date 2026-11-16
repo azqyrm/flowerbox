@@ -1640,7 +1640,19 @@ fn key_by_name(name: &str) -> Option<KeyCode> {
         "KeyA" => KeyA,
         "KeyS" => KeyS,
         "KeyD" => KeyD,
-        _ => return None,
+        "KeyF" => KeyF,
+        "KeyL" => KeyL,
+        "KeyX" => KeyX,
+        "KeyO" => KeyO,
+        "Backspace" => Backspace,
+        "ArrowUp" => ArrowUp,
+        "ArrowDown" => ArrowDown,
+        "ArrowLeft" => ArrowLeft,
+        "ArrowRight" => ArrowRight,
+        _ => {
+            warn!("FLOWERBOX_KEYS: unknown key {name}");
+            return None;
+        }
     })
 }
 

@@ -28,7 +28,7 @@ use crate::tuning::*;
 use crate::weapon::{EquipWeapon, WeaponSystems, hollow_blade};
 use crate::character::{Remote, SolidExt};
 use crate::items::ItemId;
-use crate::items::pickup::{ClaimedDrops, ItemDropped, Pickup, PickupAssets, spawn_pickup};
+use crate::items::pickup::{ClaimedDrops, DropIds, ItemDropped, Pickup, PickupAssets, spawn_pickup};
 
 pub mod beast;
 pub mod warg;
@@ -421,16 +421,13 @@ fn enemy_death(
     }
 }
 
-/// First pickup id for chance drops (unique drops use their own ids from the level).
-const DROP_ID_BASE: u32 = 50_000;
-
 /// A freshly killed enemy (owned here, not a remote puppet) drops its loot by its body.
 #[allow(clippy::too_many_arguments)]
 fn drop_loot(
     mut commands: Commands,
     assets: Option<Res<PickupAssets>>,
     claimed: Res<ClaimedDrops>,
-    mut next_id: Local<u32>,
+    mut ids: ResMut<DropIds>,
     mut rng: Local<u32>,
     mut dropped: MessageWriter<ItemDropped>,
     dead: Query<(&Transform, &Drops), (Added<Corpse>, Without<Remote>)>,
@@ -453,13 +450,10 @@ fn drop_loot(
             if (*rng & 0xFFFF) as f32 / 65536.0 >= drop.chance {
                 continue;
             }
-            let id = drop.unique.unwrap_or_else(|| {
-                *next_id += 1;
-                DROP_ID_BASE + *next_id
-            });
+            let id = drop.unique.unwrap_or_else(|| ids.next());
             let pos = floor + Vec3::new(0.3 * n as f32, 0.0, 0.25);
             spawn_pickup(&mut commands, &assets, id, drop.item, pos);
-            dropped.write(ItemDropped { id, item: drop.item, pos });
+            dropped.write(ItemDropped { id, item: drop.item, pos, thrown: false });
             info!("an enemy dropped {}", drop.item.def().name);
         }
     }

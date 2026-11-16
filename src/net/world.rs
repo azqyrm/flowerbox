@@ -24,7 +24,7 @@ use crate::tuning::REST_STARTUP;
 use super::sync::Puppet;
 use crate::items::inventory::Inventory;
 use crate::items::pickup::{
-    ClaimedDrops, ItemDropped, ItemPickedUp, Pickup, PickupAssets, PickupAuthority, PickupLayout, PickupRequest, PickupTaken, UniqueDrops, claim,
+    ClaimedDrops, DropIds, ItemDropped, ItemPickedUp, Pickup, PickupAssets, PickupAuthority, PickupLayout, PickupRequest, PickupTaken, ThrowToWorld, UniqueDrops, claim,
     spawn_layout, spawn_pickup,
 };
 use crate::level::door::{Door, DoorOpened, DoorRefused, DoorRequest};
@@ -83,7 +83,10 @@ fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
         WorldEvent::RestComplete => Notify::new(NoticeIcon::Sunflower, strings::REST_COMPLETE),
         WorldEvent::DoorTried { who } => Notify::new(NoticeIcon::Door, strings::door_tried(&player_name(who))),
         WorldEvent::DoorOpened { by, .. } => Notify::new(NoticeIcon::Door, strings::opened_door(&player_name(by))),
-        WorldEvent::DummyHit { .. } | WorldEvent::Dropped { .. } => return,
+        WorldEvent::Dropped { by: Some(by), item, .. } => {
+            Notify::new(NoticeIcon::Item(item.def().icon), strings::other_threw_out(&player_name(by), item.def().name))
+        }
+        WorldEvent::DummyHit { .. } | WorldEvent::Dropped { by: None, .. } => return,
     };
     info!("world event: {}", n.text);
     notify.write(n);
@@ -96,7 +99,7 @@ fn world_inbox(
     link: Res<NetLink>,
     session: Res<NetSession>,
     assets: Option<Res<PickupAssets>>,
-    (layout, unique, mut claimed): (Res<PickupLayout>, Res<UniqueDrops>, ResMut<ClaimedDrops>),
+    (layout, unique, mut claimed, mut drop_ids): (Res<PickupLayout>, Res<UniqueDrops>, ResMut<ClaimedDrops>, ResMut<DropIds>),
     mut stash: Local<Option<Stash>>,
     mut authority: ResMut<PickupAuthority>,
     mut notify: MessageWriter<Notify>,
@@ -172,6 +175,14 @@ fn world_inbox(
                 broadcast(event);
                 notice(&mut notify, &event);
             }
+            NetInbox::Reliable(peer, Reliable::RequestThrow { item, pos }) if session.is_host() => {
+                let Some(&by) = session.peers.get(peer) else { continue };
+                let id = drop_ids.next();
+                spawn_pickup(&mut commands, &assets, id, *item, Vec3::from_array(*pos));
+                let event = WorldEvent::Dropped { id, item: *item, pos: *pos, by: Some(by) };
+                broadcast(event);
+                notice(&mut notify, &event);
+            }
             NetInbox::Reliable(peer, Reliable::RequestDoor { id }) if session.is_host() => {
                 let Some(&by) = session.peers.get(peer) else { continue };
                 let Some(mut door) = doors.iter_mut().find(|d| d.id == *id && !d.open) else { continue };
@@ -233,10 +244,12 @@ fn world_inbox(
                             continue; // we already saw the banner
                         }
                     }
-                    WorldEvent::Dropped { id, item, pos } => {
-                        info!("world event: an enemy dropped {}", item.def().name);
+                    WorldEvent::Dropped { id, item, pos, by } => {
+                        info!("world event: {} dropped at {pos:?}", item.def().name);
                         spawn_pickup(&mut commands, &assets, *id, *item, Vec3::from_array(*pos));
-                        continue;
+                        if by.is_none_or(|b| mine(&b)) {
+                            continue; // an enemy's drop, or our own throw (we saw our notice)
+                        }
                     }
                     WorldEvent::DoorOpened { id, by } => {
                         for mut d in doors.iter_mut().filter(|d| d.id == *id) {
@@ -287,7 +300,7 @@ fn local_events(
     mut revived: MessageReader<SunRevived>,
     mut door_requests: MessageReader<DoorRequest>,
     mut doors_opened: MessageReader<DoorOpened>,
-    (mut doors_refused, mut drops): (MessageReader<DoorRefused>, MessageReader<ItemDropped>),
+    (mut doors_refused, mut drops, mut thrown): (MessageReader<DoorRefused>, MessageReader<ItemDropped>, MessageReader<ThrowToWorld>),
     mut pvp: MessageReader<PvpChanged>,
     mut struck: MessageReader<DummyStruck>,
     dummy: Query<&Health, With<Dummy>>,
@@ -320,7 +333,8 @@ fn local_events(
                 send(None, Reliable::Event(WorldEvent::DoorTried { who: me }));
             }
             for d in drops.read() {
-                send(None, Reliable::Event(WorldEvent::Dropped { id: d.id, item: d.item, pos: d.pos.to_array() }));
+                let by = d.thrown.then_some(me);
+                send(None, Reliable::Event(WorldEvent::Dropped { id: d.id, item: d.item, pos: d.pos.to_array(), by }));
             }
             if !died.is_empty() {
                 send(None, Reliable::Event(WorldEvent::Died { who: me }));
@@ -339,6 +353,9 @@ fn local_events(
             }
             doors_opened.clear();
             drops.clear(); // guests have no real enemies
+            for t in thrown.read() {
+                send(Some(HOST_PEER), Reliable::RequestThrow { item: t.item, pos: t.pos.to_array() });
+            }
             for d in door_requests.read() {
                 send(Some(HOST_PEER), Reliable::RequestDoor { id: d.id });
             }
@@ -360,6 +377,7 @@ fn local_events(
             doors_opened.clear();
             doors_refused.clear();
             drops.clear();
+            thrown.clear();
         }
     }
 }
