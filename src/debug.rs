@@ -189,7 +189,8 @@ impl Plugin for DebugPlugin {
             }
             Ok("inventory") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: None })
-                    .add_systems(Update, (inventory_script, log_ale))
+                    // Before the menus: the script opens the screen the way Tab would, same frame.
+                    .add_systems(Update, (inventory_script.before(crate::input::InputSystems::Menus), log_ale))
                     .add_systems(PostUpdate, check_menu_block);
             }
             Ok("guard") => {
@@ -1516,9 +1517,10 @@ const fn px(x: f32, y: f32) -> (f32, f32) {
     ((x - 409.5) / 14.0, -18.0 + (y - 1228.0) / 14.0)
 }
 
-const LEVEL_ROUTE: [((f32, f32), At); 59] = [
-    ((2.8, 7.6), At::Go), // around the rubble…
-    ((2.5, 3.0), At::Go), // …and the training dummy
+const LEVEL_ROUTE: [((f32, f32), At); 60] = [
+    ((2.0, 7.6), At::Go), // between the rubble blocks at (0.65, 6.8) and (2.9, 5.0)…
+    ((1.8, 5.0), At::Go),
+    ((2.5, 3.0), At::Go), // …and past the training dummy
     ((1.5, -12.0), At::Go),
     ((0.0, -16.6), At::Interact(1.8)), // door 1, from the arena
     (px(409.5, 1180.0), At::Go),
