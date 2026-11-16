@@ -21,6 +21,10 @@ pub struct DormancyPlugin;
 
 impl Plugin for DormancyPlugin {
     fn build(&self, app: &mut App) {
+        // For measuring what dormancy saves (ROADMAP N31).
+        if std::env::var("FLOWERBOX_NO_DORMANCY").is_ok() {
+            return;
+        }
         app.add_systems(Update, update_dormancy);
     }
 }

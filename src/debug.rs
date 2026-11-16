@@ -104,6 +104,9 @@ impl Plugin for DebugPlugin {
         if std::env::var("FLOWERBOX_KEYS").is_ok() {
             app.add_systems(PreUpdate, inject_keys.before(bevy::input::InputSystems)).add_systems(PostUpdate, log_input_state);
         }
+        if std::env::var("FLOWERBOX_FPS_LOG").is_ok() {
+            app.add_systems(Update, log_fps);
+        }
         if std::env::var("FLOWERBOX_POS").is_ok() {
             app.add_systems(PostStartup, place_player);
         }
@@ -586,6 +589,31 @@ fn boss_script(
     if t > 170.0 {
         info!("boss test: timed out; Saint HP {:.0}", bhp.current);
         exit.write(AppExit::Success);
+    }
+}
+
+/// `FLOWERBOX_FPS_LOG`: frames per second every 3 s (after a 3 s warm-up), and how many enemies
+/// exist / sleep (for the dormancy comparison, ROADMAP N31).
+fn log_fps(
+    time: Res<Time<Real>>,
+    mut acc: Local<(f32, u32, Vec<f32>)>,
+    enemies: Query<Has<crate::character::Dormant>, With<Enemy>>,
+    lights: Query<(), With<PointLight>>,
+) {
+    let t = time.elapsed_secs();
+    if t < 3.0 {
+        return;
+    }
+    acc.0 += time.delta_secs();
+    acc.1 += 1;
+    if acc.0 >= 3.0 {
+        let fps = acc.1 as f32 / acc.0;
+        acc.2.push(fps);
+        let asleep = enemies.iter().filter(|d| *d).count();
+        let mean = acc.2.iter().sum::<f32>() / acc.2.len() as f32;
+        info!("fps: {fps:.0} (mean {mean:.0}); enemies {} ({asleep} asleep); point lights {}", enemies.iter().count(), lights.iter().count());
+        acc.0 = 0.0;
+        acc.1 = 0;
     }
 }
 
