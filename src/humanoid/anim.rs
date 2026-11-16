@@ -61,6 +61,13 @@ pub struct LocomotionInput {
     /// backward). Strafing (locked on) turns the hips toward it; walking backward plays the cycle
     /// in reverse. Smoothed by the animator.
     pub heading: f32,
+    /// 0..1 skidding to a stop or into a reversal (the controller's `brake`, eased): lean back
+    /// against the slide, lead leg braced, arms out.
+    pub brake: f32,
+    /// The slide's direction relative to facing (x = right, y = forward), for which way to lean.
+    pub slide: Vec2,
+    /// -1..1 pivoting round (+ = to the left): the hips swing into the turn ahead of the chest.
+    pub turn: f32,
 }
 
 /// Hips turned toward the direction of travel, and whether the cycle runs backward: a sideways or
@@ -342,6 +349,32 @@ pub fn locomotion_pose(spec: &HumanoidSpec, input: &LocomotionInput) -> Humanoid
         }
         p.add(Bone::Chest, rx(-0.22 * k));
     }
+    // Skid: lean back against the slide (whichever way it goes relative to the body), the lead
+    // leg braced out in front, the trailing knee bent, arms thrown forward for balance.
+    if input.brake > 1e-3 {
+        let b = input.brake;
+        let travel = Vec3::new(input.slide.x, 0.0, -input.slide.y);
+        let axis = travel.cross(Vec3::Y).normalize_or_zero();
+        if axis != Vec3::ZERO {
+            p.add(Bone::Pelvis, Quat::from_axis_angle(axis, 0.24 * b)).add(Bone::Chest, Quat::from_axis_angle(axis, 0.12 * b));
+        }
+        // Bracing only makes sense while sliding forward (a pivot's slide ends up sideways / behind).
+        let brace = b * input.slide.y.max(0.0);
+        for (thigh, shin, foot, t, k) in [(Bone::ThighL, Bone::ShinL, Bone::FootL, 0.45, 0.1), (Bone::ThighR, Bone::ShinR, Bone::FootR, -0.3, 0.75)] {
+            let (pt, ps, pf) = (p.get(thigh), p.get(shin), p.get(foot));
+            p.set(thigh, pt.slerp(rx(t), brace)).set(shin, ps.slerp(rx(-k), brace)).set(foot, pf.slerp(rx(k - t - 0.24), brace));
+        }
+        p.add(Bone::UpperArmL, rx(0.35 * b) * rz(-0.2 * b)).add(Bone::UpperArmR, rx(0.25 * b) * rz(0.15 * b));
+        p.add(Bone::Head, rx(-0.12 * b));
+    }
+    // Pivot: the hips lead the turn, the chest and head follow (they're already looking round).
+    if input.turn.abs() > 1e-3 {
+        p.add(Bone::Pelvis, ry(input.turn * 0.4)).add(Bone::Chest, ry(input.turn * 0.25)).add(Bone::Head, ry(input.turn * 0.3));
+        for (thigh, shin) in [(Bone::ThighL, Bone::ShinL), (Bone::ThighR, Bone::ShinR)] {
+            p.add(thigh, rx(0.3 * input.turn.abs())).add(shin, rx(-0.5 * input.turn.abs()));
+        }
+    }
+
     // Idle life (fades out while moving): a slow look around, the shoulders rising with each breath.
     let still = 1.0 - moving;
     if still > 0.0 {
@@ -662,6 +695,10 @@ pub struct HumanoidAnimator {
     guard: f32,
     /// Smoothed travel direction relative to facing (see `LocomotionInput::heading`).
     heading: f32,
+    /// Eased skid / pivot weights and the slide direction (see `LocomotionInput`).
+    brake: f32,
+    turn: f32,
+    slide: Vec2,
 }
 
 /// Raised guard: the left upper arm forward and a little across the body, the forearm upright in
@@ -794,6 +831,16 @@ pub fn animate_humanoids(
             anim.heading *= 1.0 - smooth(4.0);
         }
 
+        // Skid and pivot: in fast (the stop happens at once), out a little slower (settling).
+        let brake = if airborne { 0.0 } else { ctrl.brake };
+        anim.brake += (brake - anim.brake) * smooth(if brake > anim.brake { 22.0 } else { 7.0 });
+        anim.turn += (ctrl.pivot - anim.turn) * smooth(if ctrl.pivot != 0.0 { 18.0 } else { 6.0 });
+        let flat = Vec3::new(ctrl.moved.x, 0.0, ctrl.moved.z);
+        if flat.length_squared() > 0.04 {
+            let local = Quat::from_rotation_y(-ctrl.facing) * flat.normalize();
+            anim.slide = anim.slide.lerp(Vec2::new(local.x, -local.z), smooth(20.0));
+        }
+
         let loco = locomotion_pose(
             spec,
             &LocomotionInput {
@@ -806,6 +853,9 @@ pub fn animate_humanoids(
                 time: anim.time,
                 weapon: wielded.map_or_else(WeaponClass::default, |w| w.class()),
                 heading: anim.heading,
+                brake: anim.brake,
+                slide: anim.slide,
+                turn: anim.turn,
             },
         );
 
@@ -851,6 +901,24 @@ pub fn animate_humanoids(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_skid_leans_back_against_the_slide_and_a_pivot_leads_with_the_hips() {
+        use crate::humanoid::pose::bone_model_transform;
+        let spec = HumanoidSpec::human();
+        let still = LocomotionInput::default();
+        let head = |i: &LocomotionInput| bone_model_transform(&spec, &locomotion_pose(&spec, i), Bone::Head).translation;
+        // Sliding forward (-Z): the head goes back (+Z).
+        let skid = LocomotionInput { brake: 1.0, slide: Vec2::new(0.0, 1.0), ..still };
+        assert!(head(&skid).z > head(&still).z + 0.1, "{} vs {}", head(&skid), head(&still));
+        // Sliding to the right (+X): leans left.
+        let side = LocomotionInput { brake: 1.0, slide: Vec2::new(1.0, 0.0), ..still };
+        assert!(head(&side).x < head(&still).x - 0.1);
+        // Pivoting left (+, like facing): the pelvis turns left, so the right hip comes forward.
+        let pivot = LocomotionInput { turn: 1.0, ..still };
+        let hip = bone_model_transform(&spec, &locomotion_pose(&spec, &pivot), Bone::ThighR).translation;
+        assert!(hip.z < -0.02, "right hip swings forward: {hip}");
+    }
 
     #[test]
     fn strafing_turns_the_hips_and_backs_up() {

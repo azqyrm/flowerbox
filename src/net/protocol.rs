@@ -15,7 +15,7 @@ use crate::items::ItemId;
 use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 14;
+pub const PROTOCOL_VERSION: u16 = 15;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -67,6 +67,9 @@ pub struct BodyState {
     pub pvp: bool,
     /// Which hand's weapon is held in both hands.
     pub two_hand: Option<Hand>,
+    /// Skidding (0..1) and pivoting (-1, 0, +1): the controller's `brake` / `pivot`, so puppets
+    /// skid and pivot too.
+    pub skid: (f32, i8),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -221,6 +224,7 @@ mod tests {
             head: None,
             pvp: false,
             two_hand: None,
+            skid: (0.0, 0),
         }
     }
 

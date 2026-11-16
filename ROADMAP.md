@@ -534,6 +534,24 @@ Steps:
 - [x] Optional humanoid tail (`HumanoidLook::tail`): a chain of joints off the pelvis swinging in a travelling sine wave (`sway_tails`); Tabby (long, curled) and Bruin (stub)
 - [ ] Ears twitching (still rigid)
 
+### Phase 8.16 — Skids, pivots, momentum (user request, 2026-11-16)
+Request, cleaned up:
+1. **Hard stop:** running, then letting go, the body leans back against the direction it was going, as if braking hard.
+2. **Pivot:** reversing the direction brakes first and turns the body round 180° with a turn animation.
+3. **Momentum fades:** speed runs out over a short slide ("schlittern") instead of stopping dead — but **not clunky**.
+4. Investigate how Souls games do it and pick a fitting implementation (N32).
+
+Decisions (see N32):
+- **Asymmetric speed change:** gaining speed stays quick (`GROUND_ACCEL` 45 m/s²), shedding it — letting go or reversing by more than ~110° — is gentler (`GROUND_DECEL` 30): a jog stop slides ~0.3 m in 0.15 s, a sprint stop ~0.8 m in 0.23 s. Sharp turns (< 110°) steer as before.
+- **Never locks input:** skids and pivots are a state of normal movement, not actions: a roll, attack or jump takes over on the same frame (their actions drive movement), and steering out of a skid works at once.
+- **Pivot** (reversing faster than `PIVOT_MIN_SPEED` 3 m/s, not while strafing locked on): brakes at `GROUND_DECEL` while the facing swings round (180° in ~0.2 s at `TURN_SPEED`), then runs off — ~0.25 s in all. Pose: the hips lead the turn, chest and head follow, knees dip.
+- **Skid pose** (weight from the speed being shed, eased in fast, out slowly so it settles): lean back against the slide in whatever direction it goes relative to the body, the lead leg braced, the trailing knee bent, arms thrown forward, head up. The controller exposes `brake` and `pivot`; online they're replicated (`BodyState::skid`, protocol v15) so puppets skid too. Enemies share it (same controller).
+
+Steps:
+- [x] `ground_rate` (accel vs decel), `brake` / `pivot` on the controller, skid and pivot poses; tests (stop distances, reversal rate, pose directions)
+- [x] `FLOWERBOX_AUTOPILOT=skid` (sprint → let go → sprint → reverse → jog → let go, logged); screenshots; level walk still completes
+- [ ] Turn-in-place animation when standing still and turning a lot (the body just rotates)
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
@@ -585,6 +603,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Inventory: slot-first and item-first equipping; throwing out removes the entry (indices shift) and puts a pickup into the host's world. |
 | 2026-11-16 | Level 2 "The Cathedral of Ashes" south of the arena; several levels load side by side. Bell riddle unseals the crypt; a one-way gallery door is the loop. |
 | 2026-11-16 | Enemy dormancy by distance to every player (30 / 36 m), not by opened doors (N31). |
+| 2026-11-16 | Movement: quick to speed up, gentler to slow down (short skid), pivots on hard reversals with a lean / hip-turn pose; never locks input (N32). |
 | 2026-11-16 | Player skins change only the look on the human skeleton (same animation, reach, feet, capsule); six skins; armour fitted to at least a human build. |
 | 2026-11-16 | Player names (settings; Host / GuestN / Player1 without one), made unique by the host with a German noun; chat on T through the host into the notification feed (face + name). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
@@ -853,3 +872,8 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Cathedral walk** (`FLOWERBOX_AUTOPILOT=level FLOWERBOX_ROUTE=cathedral`): 43 waypoints, doors 11–15, three bells in order → "riddle 1 solved", the shortcut, the lectern, the crypt, sunflowers 11–13, the fog gate. Found on the way: the fog gate didn't work in enemy-less autopilots (`BossPlugin` lived behind `EnemyPlugin`'s autopilot early-return) — it now always loads. Online (host idle, guest walks): the guest's rings solve the rite on the host and the door opens for the guest.
   - **Performance** (release, uncapped, RX 6800 XT, `FLOWERBOX_FPS_LOG=1`, `FLOWERBOX_NO_DORMANCY=1` to compare): arena 146 → 168 FPS with dormancy (44 of 46 enemies asleep), cathedral narthex 126 → 143 (41 asleep). Both levels load at once (46 enemies, 158 point lights). The user's idea (render only behind opened doors or within 20 m) was considered: a door/room graph would need room membership for every enemy and break for open halls; the nave is 40 m long, so a 20 m cut-off makes enemies pop in where you can see them. Distance with hysteresis needs no level knowledge, works for any number of co-op players (the host decides by every player, a guest only draws/animates near itself) and costs nothing when asleep (no brain, controller, animator or draw). Lights aren't culled; at 158 lights the frame is still ~6 ms.
   - **Not done / known:** puppet spins on guests step at 30 Hz; one ceiling per level (crypts are tall); no pathfinding (enemies sidestep obstacles); the player has no poise; chest/hand/leg armour isn't replicated to puppets (only hands + head); thrown items vanish on restart.
+- **N32 (2026-11-16) — stops, pivots and momentum, Souls-style (Phase 8.16):**
+  - **What Souls games do** (player accounts and modding notes, no official frame data): Dark Souls (since the first) and its successors have a short **skid-to-stop** when you stop or change direction while sprinting, and a turn when reversing; rolls stay available, and an Elden Ring mod widens the roll cancel during turn animations, which suggests even that is felt as too sticky. At a jog there's barely any slide. The lesson matches general locomotion design: a good stop *absorbs momentum* (a lean that corrects back to neutral), a pivot plants a foot instead of snapping, and every bit of realism costs responsiveness ("floaty", the Witcher 3 complaint).
+  - **So:** small, physical slides (≤ 0.8 m), asymmetric rates (only slowing down is softened), a pivot that's over in ~0.25 s, and *nothing* that blocks input — the animation sells the weight, the controller stays responsive. Rejected: root-motion stop / turn animations as actions (they'd lock input like the criticised turn animations), and global momentum (slow acceleration too — sluggish dodging into position).
+  - **Measured** (`FLOWERBOX_AUTOPILOT=skid`, 60 Hz): sprint stop 7 → 0 m/s in 0.23 s over 0.8 m; jog stop 0.3 m; sprint reversal: facing 90° → 270° in 0.2 s, 0.7 m of slide, back at full speed 0.15 s later. The level route still walks through.
+  - Sources: [Steam: DS3 sprint skid](https://steamcommunity.com/app/374320/discussions/0/1290691937720311197), [Nexus: Elden Ring turn-roll mod](https://www.nexusmods.com/eldenring/mods/3049), [Game Developer: analyzing core character movement](https://gamedeveloper.com/design/analyzing-core-character-movement-in-3d), [responsiveness vs realistic animation](https://engineered.at/articles/striking-the-balance-exploring-the-challenges-of-responsive-movement-and-realistic-animations-in-video-games), [UE forums: starts, stops, pivots with inertia](https://forums.unrealengine.com/t/how-to-implement-realistic-acceleration-starts-stops-and-pivot-animations-with-inertia-in-ue5/2744897).

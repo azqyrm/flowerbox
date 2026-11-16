@@ -47,6 +47,8 @@
 //! - `FLOWERBOX_AUTOPILOT=boss` (with `FLOWERBOX_POS=0,138,3.14`) → fights the Thorned Saint with
 //!   5000 HP: attacks when close, rolls from its specials, adds 25 scripted damage every 0.5 s;
 //!   logs its moves, waves, enrage, death, the drop and the fog lifting.
+//! - `FLOWERBOX_AUTOPILOT=skid` → sprint, let go, sprint, reverse, jog, let go; logs speed / brake / pivot
+//!   (stops and pivots, N32).
 //! - `FLOWERBOX_AUTOPILOT=skins` → every player skin on a mannequin in a row (`FLOWERBOX_SKIN_MOVE=secs`:
 //!   then they walk in circles and swing; `FLOWERBOX_SKIN_ARMOR=1`: all wear every armour piece;
 //!   `FLOWERBOX_FACES=1`: a chat line per skin, for their faces).
@@ -146,6 +148,19 @@ impl Plugin for DebugPlugin {
             Ok("weapons") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
                     .add_systems(Update, weapons_script);
+            }
+            Ok("skid") => {
+                // Sprint ahead, let go (skid), sprint again, reverse (pivot), jog, let go.
+                // Across the arena (±X), clear of the dummy; the default camera films it side on.
+                let movement: fn(f32, f32) -> (Vec3, bool, bool) = |t, _| match t {
+                    t if (1.0..2.0).contains(&t) => (Vec3::X, true, false),
+                    t if (3.2..4.4).contains(&t) => (Vec3::NEG_X, true, false),
+                    t if (4.4..5.6).contains(&t) => (Vec3::X, true, false),
+                    t if (6.4..7.6).contains(&t) => (Vec3::NEG_X, false, false),
+                    _ => (Vec3::ZERO, false, false),
+                };
+                app.insert_resource(Autopilot { movement: Some(movement), attack_button: None, guard_button: None })
+                    .add_systems(Update, log_skid.run_if(on_timer(std::time::Duration::from_millis(50))));
             }
             Ok("still") => {
                 // `FLOWERBOX_WALK="x,z"`: walk that way (world direction), logging the position.
@@ -758,6 +773,23 @@ fn skins_script(
         if crossed(t, dt, start + 2.0 + 0.2 * i as f32) {
             intent.buffer(ActionRequest::LightAttack(crate::weapon::AttackHand::Right));
         }
+    }
+}
+
+/// `skid` autopilot: speed, brake and pivot while something is happening.
+fn log_skid(time: Res<Time>, player: Query<(&Transform, &CharacterController), With<Player>>) {
+    let Ok((tf, c)) = player.single() else { return };
+    let speed = Vec2::new(c.moved.x, c.moved.z).length();
+    if speed > 0.05 || c.brake > 0.0 {
+        info!(
+            "skid t {:.2} x {:.2} speed {:.2} brake {:.2} pivot {:+.0} facing {:.0}°",
+            time.elapsed_secs(),
+            tf.translation.x,
+            speed,
+            c.brake,
+            c.pivot,
+            c.facing.to_degrees().rem_euclid(360.0)
+        );
     }
 }
 

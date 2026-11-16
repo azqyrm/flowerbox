@@ -106,6 +106,7 @@ fn body_state(
         head: gear[2],
         pvp,
         two_hand,
+        skid: (ctrl.brake, ctrl.pivot as i8),
     }
 }
 
@@ -383,6 +384,7 @@ fn drive_puppets(
         tf.rotation = Quat::from_rotation_y(ctrl.facing);
         ctrl.moved = moved;
         ctrl.wish_speed = moved.with_y(0.0).length();
+        (ctrl.brake, ctrl.pivot) = (s.skid.0, s.skid.1 as f32);
         ctrl.velocity.y = s.vertical;
         ctrl.grounded = s.grounded;
 

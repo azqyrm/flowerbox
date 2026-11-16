@@ -26,6 +26,11 @@ pub struct CharacterController {
     pub moved: Vec3,
     /// Horizontal speed the character is trying to move at (0 while an action drives movement).
     pub wish_speed: f32,
+    /// Skidding to a stop or into a reversal: 0..1, how hard (from the speed it's shedding).
+    /// Animation leans against the slide.
+    pub brake: f32,
+    /// Pivoting round (a reversal at speed): +1 turning left, -1 right, 0 not pivoting.
+    pub pivot: f32,
 }
 
 impl Default for CharacterController {
@@ -38,6 +43,8 @@ impl Default for CharacterController {
             sprinting: false,
             moved: Vec3::ZERO,
             wish_speed: 0.0,
+            brake: 0.0,
+            pivot: 0.0,
         }
     }
 }
@@ -46,6 +53,19 @@ impl Default for CharacterController {
 fn approach(current: Vec3, target: Vec3, max_delta: f32) -> Vec3 {
     let diff = target - current;
     if diff.length() <= max_delta { target } else { current + diff.normalize() * max_delta }
+}
+
+/// How a grounded, free character's horizontal velocity changes this tick, Souls-style: speeding
+/// up is quick (`GROUND_ACCEL`), shedding speed — letting go of the stick, or reversing — is a
+/// little gentler (`GROUND_DECEL`): a short skid instead of a dead stop. Returns the rate (m/s²)
+/// and whether this is a brake (stop or reversal at speed). Rolls and attacks don't come here:
+/// their actions drive movement, so they cancel a skid at once.
+pub fn ground_rate(horizontal: Vec3, target: Vec3) -> (f32, bool) {
+    let speed = horizontal.length();
+    let stopping = target.length_squared() < 0.01 && speed > 0.05;
+    // Against the current travel by more than ~110°.
+    let reversing = speed > 0.5 && target.length_squared() > 0.01 && horizontal.normalize().dot(target.normalize()) < -0.35;
+    if stopping || reversing { (GROUND_DECEL, speed > 0.5) } else { (GROUND_ACCEL, false) }
 }
 
 /// Shortest signed angle difference `to - from`, in (-π, π].
@@ -100,18 +120,30 @@ pub(super) fn move_character(
                     // In the air: keep the momentum you jumped with (a running jump stays fast).
                     intent.dir * speed.max(horizontal.length())
                 };
-                let accel = if ctrl.grounded { GROUND_ACCEL } else { AIR_ACCEL };
+                let (accel, braking) = if ctrl.grounded { ground_rate(horizontal, target) } else { (AIR_ACCEL, false) };
                 ctrl.wish_speed = intent.dir.length() * speed;
+                // How hard it skids: by the speed it still carries (a jog stop leans less than a sprint's).
+                ctrl.brake = if braking { (horizontal.length() / SPRINT_SPEED).min(1.0) } else { 0.0 };
+                let reversing = braking && moving;
+                // A pivot starts at speed and lasts until the reversal is through.
+                let was_pivoting = ctrl.pivot != 0.0;
+                ctrl.pivot = 0.0;
+                if reversing && (horizontal.length() > PIVOT_MIN_SPEED || was_pivoting) && (intent.face.is_none() || ctrl.sprinting) {
+                    let d = angle_diff(ctrl.facing, f32::atan2(-intent.dir.x, -intent.dir.z));
+                    ctrl.pivot = d.signum();
+                }
                 (intent.dir, approach(horizontal, target, accel * dt))
             }
             ActionMovement::Locked => {
                 ctrl.sprinting = false;
+                (ctrl.brake, ctrl.pivot) = (0.0, 0.0);
                 ctrl.wish_speed = 0.0;
                 (Vec3::ZERO, approach(horizontal, Vec3::ZERO, GROUND_ACCEL * dt))
             }
             ActionMovement::Scripted(curve) => {
                 ctrl.sprinting = false;
                 ctrl.wish_speed = 0.0;
+                (ctrl.brake, ctrl.pivot) = (0.0, 0.0);
                 let a = action.current.expect("scripted movement needs an action");
                 (Vec3::ZERO, a.dir * curve.speed(a.elapsed))
             }
@@ -119,6 +151,7 @@ pub(super) fn move_character(
                 // Plunge: keep the jump's horizontal momentum (a moving jump attack dives forward).
                 // Held: whoever holds us set the velocity (`crate::grab`).
                 ctrl.sprinting = false;
+                (ctrl.brake, ctrl.pivot) = (0.0, 0.0);
                 ctrl.wish_speed = 0.0;
                 (Vec3::ZERO, horizontal)
             }
@@ -227,6 +260,32 @@ mod tests {
     fn angle_diff_takes_short_way() {
         assert!((angle_diff(0.1, -0.1) + 0.2).abs() < 1e-5);
         assert!((angle_diff(PI - 0.1, -PI + 0.1) - 0.2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn stops_skid_a_little_and_reversals_brake_first() {
+        // Integrate a stop at 60 Hz: how far does it slide?
+        let slide = |v0: f32| {
+            let (mut v, mut x, dt) = (Vec3::new(0.0, 0.0, -v0), 0.0, 1.0 / 60.0);
+            let mut ticks = 0;
+            while v.length() > 0.0 {
+                let (rate, braking) = ground_rate(v, Vec3::ZERO);
+                assert!(braking || v.length() <= 0.5);
+                v = approach(v, Vec3::ZERO, rate * dt);
+                x += v.length() * dt;
+                ticks += 1;
+            }
+            (x, ticks as f32 / 60.0)
+        };
+        let (jog, jog_t) = slide(WALK_SPEED);
+        let (sprint, sprint_t) = slide(SPRINT_SPEED);
+        assert!((0.2..0.45).contains(&jog) && jog_t < 0.2, "jog stop: {jog} m in {jog_t} s");
+        assert!((0.5..1.0).contains(&sprint) && sprint_t < 0.3, "sprint stop: {sprint} m in {sprint_t} s");
+        // Reversing brakes at the gentler rate; speeding up (or steering) stays quick.
+        let v = Vec3::new(0.0, 0.0, -SPRINT_SPEED);
+        assert_eq!(ground_rate(v, Vec3::new(0.0, 0.0, 7.0)), (GROUND_DECEL, true));
+        assert_eq!(ground_rate(v, Vec3::new(7.0, 0.0, -1.0)), (GROUND_ACCEL, false), "a sharp turn isn't a reversal");
+        assert_eq!(ground_rate(Vec3::ZERO, Vec3::new(0.0, 0.0, -4.5)), (GROUND_ACCEL, false));
     }
 
     #[test]

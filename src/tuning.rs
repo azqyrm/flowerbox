@@ -62,6 +62,11 @@ pub const SPRINT_SPEED: f32 = 7.0;
 /// Shift must be held this long before sprint kicks in (a shorter tap = roll, Phase 4).
 pub const SPRINT_HOLD_THRESHOLD: f32 = 0.25;
 pub const GROUND_ACCEL: f32 = 45.0;
+/// Shedding speed (letting go, reversing) is gentler than gaining it: a short skid — about a third
+/// of a metre from a jog, under a metre from a sprint (Souls stops; see ROADMAP N32).
+pub const GROUND_DECEL: f32 = 30.0;
+/// Reversing faster than this is a pivot: the body brakes and swings round with a turn pose.
+pub const PIVOT_MIN_SPEED: f32 = 3.0;
 pub const AIR_ACCEL: f32 = 6.0;
 /// How fast the character turns toward the move direction (rad/s).
 pub const TURN_SPEED: f32 = 14.0;
