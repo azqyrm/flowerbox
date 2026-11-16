@@ -18,7 +18,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use super::layout::DoorPlan;
-use crate::character::action::CharacterAction;
+use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
 use crate::character::controller::CharacterController;
 use crate::hearth::DeathSequence;
 use crate::input::{GameplayBlocked, PlayerInput};
@@ -39,7 +39,7 @@ impl Plugin for DoorPlugin {
         app.add_message::<DoorRequest>()
             .add_message::<DoorOpened>()
             .add_message::<DoorRefused>()
-            .add_systems(Update, (door_interaction.in_set(InteractSystems::Doors), grant_doors, swing_doors).chain());
+            .add_systems(Update, (door_interaction.in_set(InteractSystems::Doors), push_doors, grant_doors, swing_doors).chain());
     }
 }
 
@@ -175,13 +175,16 @@ pub fn spawn_door(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials:
 fn door_interaction(
     mut prompt: ResMut<InteractPrompt>,
     blocked: Res<GameplayBlocked>,
-    mut requests: MessageWriter<DoorRequest>,
     mut refused: MessageWriter<DoorRefused>,
     mut notify: MessageWriter<Notify>,
     doors: Query<&Door>,
-    mut player: Query<(&Transform, &CharacterAction, &CharacterController, &mut PlayerInput, &Inventory, Has<DeathSequence>), With<Player>>,
+    mut commands: Commands,
+    mut player: Query<
+        (Entity, &Transform, &mut CharacterAction, &mut CharacterController, &mut PlayerInput, &Inventory, Has<DeathSequence>),
+        With<Player>,
+    >,
 ) {
-    let Ok((tf, action, ctrl, mut input, inventory, dying)) = player.single_mut() else { return };
+    let Ok((entity, tf, mut action, mut ctrl, mut input, inventory, dying)) = player.single_mut() else { return };
     if prompt.0.is_some() || blocked.0 || dying || action.current.is_some() || !ctrl.grounded {
         return;
     }
@@ -206,7 +209,36 @@ fn door_interaction(
         if let Some(key) = door.key {
             notify.write(Notify::new(NoticeIcon::Item(key.def().icon), strings::door_unlocked(key.def().name)));
         }
-        requests.write(DoorRequest { id: door.id });
+        // Face the door and push it: it opens at the push (`push_doors`).
+        let to = (door.centre() - feet).with_y(0.0).normalize_or(Vec3::NEG_Z);
+        ctrl.facing = f32::atan2(-to.x, -to.z);
+        let weapon = action.current.map_or_else(Default::default, |a| a.weapon);
+        action.start(ActiveAction::new(ActionKind::OpenDoor, to, weapon));
+        commands.entity(entity).insert(PushingDoor { id: door.id, serial: action.serial });
+    }
+}
+
+/// The player is pushing door `id` open (the push of action `serial`).
+#[derive(Component, Debug)]
+struct PushingDoor {
+    id: u32,
+    serial: u32,
+}
+
+/// The push lands: ask for the door to open. Interrupted (hit, …): nothing opens.
+fn push_doors(
+    mut commands: Commands,
+    mut requests: MessageWriter<DoorRequest>,
+    player: Query<(Entity, &PushingDoor, &CharacterAction), With<Player>>,
+) {
+    for (entity, push, action) in &player {
+        let pushing = action.serial == push.serial && action.current.is_some_and(|a| a.kind == ActionKind::OpenDoor);
+        if !pushing {
+            commands.entity(entity).remove::<PushingDoor>();
+        } else if action.current.is_some_and(|a| a.phase() != ActionPhase::Startup) {
+            requests.write(DoorRequest { id: push.id });
+            commands.entity(entity).remove::<PushingDoor>();
+        }
     }
 }
 

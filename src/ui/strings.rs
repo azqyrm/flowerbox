@@ -55,6 +55,9 @@ pub const DOOR_OTHER_SIDE: &str = "This door only opens from the other side";
 pub fn door_tried(who: &str) -> String {
     format!("{who} tried a door: it only opens from the other side")
 }
+pub fn opened_door(who: &str) -> String {
+    format!("{who} opened a door")
+}
 pub fn door_locked(key: &str) -> String {
     format!("Locked: it needs the {key}")
 }

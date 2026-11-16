@@ -30,6 +30,10 @@ pub const DOOR_HEIGHT: f32 = 3.2;
 /// How close (m, horizontally, from the door's middle) the player must be to open it.
 pub const DOOR_RANGE: f32 = 1.9;
 pub const DOOR_OPEN_TIME: f32 = 1.4;
+/// The player's push: reach for the door, push (the door starts swinging), step back into stance.
+pub const DOOR_PUSH_STARTUP: f32 = 0.4;
+pub const DOOR_PUSH_ACTIVE: f32 = 0.15;
+pub const DOOR_PUSH_RECOVERY: f32 = 0.5;
 
 // ── Lighting ─────────────────────────────────────────────────────────────
 pub const TORCH_INTENSITY: f32 = 600_000.0; // lumens

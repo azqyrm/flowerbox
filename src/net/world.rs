@@ -82,7 +82,8 @@ fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
         WorldEvent::RestWaiting { who, resting, total } => Notify::new(NoticeIcon::Sunflower, strings::rest_waiting(&player_name(who), resting, total)),
         WorldEvent::RestComplete => Notify::new(NoticeIcon::Sunflower, strings::REST_COMPLETE),
         WorldEvent::DoorTried { who } => Notify::new(NoticeIcon::Door, strings::door_tried(&player_name(who))),
-        WorldEvent::DummyHit { .. } | WorldEvent::DoorOpened { .. } | WorldEvent::Dropped { .. } => return,
+        WorldEvent::DoorOpened { by, .. } => Notify::new(NoticeIcon::Door, strings::opened_door(&player_name(by))),
+        WorldEvent::DummyHit { .. } | WorldEvent::Dropped { .. } => return,
     };
     info!("world event: {}", n.text);
     notify.write(n);
@@ -175,8 +176,9 @@ fn world_inbox(
                 let Some(&by) = session.peers.get(peer) else { continue };
                 let Some(mut door) = doors.iter_mut().find(|d| d.id == *id && !d.open) else { continue };
                 door.open = true;
-                broadcast(WorldEvent::DoorOpened { by, id: *id });
-                info!("world event: {} opened door {id}", player_name(by));
+                let event = WorldEvent::DoorOpened { by, id: *id };
+                broadcast(event);
+                notice(&mut notify, &event);
             }
             NetInbox::Reliable(peer, Reliable::Report(report)) if session.is_host() => {
                 let Some(&by) = session.peers.get(peer) else { continue };
@@ -236,11 +238,13 @@ fn world_inbox(
                         spawn_pickup(&mut commands, &assets, *id, *item, Vec3::from_array(*pos));
                         continue;
                     }
-                    WorldEvent::DoorOpened { id, .. } => {
+                    WorldEvent::DoorOpened { id, by } => {
                         for mut d in doors.iter_mut().filter(|d| d.id == *id) {
                             d.open = true;
                         }
-                        continue;
+                        if mine(by) {
+                            continue; // we pushed it open ourselves
+                        }
                     }
                     WorldEvent::RestComplete => {
                         rest_done.write(RestComplete);

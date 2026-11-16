@@ -523,6 +523,21 @@ pub fn action_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
             p.pelvis_offset.y = -0.1 * k;
             Some((p, PoseMask::Full))
         }
+        ActionKind::OpenDoor => {
+            // The free (left) palm against the door and the left shoulder leaning in, the right foot
+            // pushing off; the weapon arm keeps its guard. Then back.
+            let reach = match a.phase() {
+                ActionPhase::Startup => ease(a.elapsed / d.startup),
+                ActionPhase::Active => 1.0,
+                _ => 1.0 - ease((a.elapsed - d.startup - d.active) / d.recovery),
+            };
+            let push = if a.phase() == ActionPhase::Startup { 0.0 } else { reach };
+            p.set(Bone::UpperArmL, Quat::IDENTITY.slerp(rx(1.4 + 0.15 * push) * rz(0.25), reach)).set(Bone::ForearmL, rx(0.75 * reach - 0.5 * push));
+            p.add(Bone::Chest, ry(-0.35 * reach) * rx(-0.2 * reach - 0.15 * push));
+            p.set(Bone::ThighL, rx(0.35 * reach)).set(Bone::ShinL, rx(-0.3 * reach));
+            p.set(Bone::ThighR, rx(-0.35 * push)).set(Bone::ShinR, rx(-0.2 * push)).set(Bone::FootR, rx(0.3 * push));
+            Some((p, PoseMask::Full))
+        }
         // Creatures only (`crate::quadruped`).
         ActionKind::Pounce => None,
         ActionKind::Dead => {

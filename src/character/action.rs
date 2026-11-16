@@ -55,6 +55,8 @@ pub enum ActionKind {
     Rest,
     /// Getting up from a rest.
     StandUp,
+    /// Pushing a door open (it swings at the start of the active phase, `level::door`).
+    OpenDoor,
     Hurt,
     /// Parried: reeling, open to a riposte.
     Stunned,
@@ -272,6 +274,21 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             stamina_cost: 0.0,
             iframes: None,
             movement: ActionMovement::Locked,
+            ground: GroundRule::Ground,
+            hop: 0.0,
+        },
+        OpenDoor => ActionDef {
+            startup: DOOR_PUSH_STARTUP,
+            active: DOOR_PUSH_ACTIVE,
+            recovery: DOOR_PUSH_RECOVERY,
+            cancel: DOOR_PUSH_STARTUP + DOOR_PUSH_ACTIVE + DOOR_PUSH_RECOVERY * 0.5,
+            stamina_cost: 0.0,
+            iframes: None,
+            movement: ActionMovement::Scripted(MotionCurve::Lunge {
+                start: DOOR_PUSH_STARTUP * 0.6,
+                end: DOOR_PUSH_STARTUP + DOOR_PUSH_ACTIVE,
+                distance: 0.25,
+            }),
             ground: GroundRule::Ground,
             hop: 0.0,
         },
