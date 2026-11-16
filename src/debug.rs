@@ -41,6 +41,9 @@
 //!   living enemy (within 25 m) and keep attacking it.
 //! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
 //!   `FLOWERBOX_WALK="x,z"` walks that way instead (collision checks), logging the position.
+//! - `FLOWERBOX_KEYS="1.0:ShiftLeft+ 1.1:Tab+ 1.2:Tab- 1.4:ShiftLeft-"` → injects real key / mouse
+//!   events (`Name+` press, `Name-` release; `MouseLeft`, `MouseRight`, `MouseMiddle` for buttons) at
+//!   those game times, and logs menu / input-block / cursor changes. For input bugs.
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
 use bevy::prelude::*;
@@ -86,6 +89,9 @@ impl Plugin for DebugPlugin {
             let at_time = std::env::var("FLOWERBOX_SHOT_TIME").ok().and_then(|s| s.parse().ok());
             app.insert_resource(AutoScreenshot { path, frame: 0, at, at_time, taken_frame: None })
                 .add_systems(Update, auto_screenshot);
+        }
+        if std::env::var("FLOWERBOX_KEYS").is_ok() {
+            app.add_systems(PreUpdate, inject_keys.before(bevy::input::InputSystems)).add_systems(PostUpdate, log_input_state);
         }
         if std::env::var("FLOWERBOX_POS").is_ok() {
             app.add_systems(PostStartup, place_player);
@@ -1583,5 +1589,89 @@ fn mp_fight(
     } else if *swing <= 0.0 {
         *swing = 0.7;
         intent.buffer(ActionRequest::LightAttack);
+    }
+}
+
+// ── Scripted input ───────────────────────────────────────────────────────
+
+fn key_by_name(name: &str) -> Option<KeyCode> {
+    use KeyCode::*;
+    Some(match name {
+        "ShiftLeft" => ShiftLeft,
+        "ShiftRight" => ShiftRight,
+        "ControlLeft" => ControlLeft,
+        "AltLeft" => AltLeft,
+        "Tab" => Tab,
+        "Escape" => Escape,
+        "Enter" => Enter,
+        "Space" => Space,
+        "KeyI" => KeyI,
+        "KeyE" => KeyE,
+        "KeyQ" => KeyQ,
+        "KeyR" => KeyR,
+        "KeyW" => KeyW,
+        "KeyA" => KeyA,
+        "KeyS" => KeyS,
+        "KeyD" => KeyD,
+        _ => return None,
+    })
+}
+
+/// Injects the `FLOWERBOX_KEYS` script as real input events.
+fn inject_keys(
+    time: Res<Time<Real>>,
+    window: Query<Entity, With<bevy::window::PrimaryWindow>>,
+    mut keys: MessageWriter<bevy::input::keyboard::KeyboardInput>,
+    mut mouse: MessageWriter<bevy::input::mouse::MouseButtonInput>,
+) {
+    use bevy::input::ButtonState;
+    let Ok(window) = window.single() else { return };
+    let script = std::env::var("FLOWERBOX_KEYS").unwrap_or_default();
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    for step in script.split_whitespace() {
+        let Some((at, what)) = step.split_once(':') else { continue };
+        let Ok(at) = at.parse::<f32>() else { continue };
+        if !(t - dt < at && at <= t) {
+            continue;
+        }
+        let (name, state) = match what.strip_suffix('+') {
+            Some(n) => (n, ButtonState::Pressed),
+            None => (what.trim_end_matches('-'), ButtonState::Released),
+        };
+        let button = match name {
+            "MouseLeft" => Some(MouseButton::Left),
+            "MouseRight" => Some(MouseButton::Right),
+            "MouseMiddle" => Some(MouseButton::Middle),
+            _ => None,
+        };
+        info!("input script: {name} {state:?}");
+        if let Some(button) = button {
+            mouse.write(bevy::input::mouse::MouseButtonInput { button, state, window });
+        } else if let Some(key_code) = key_by_name(name) {
+            keys.write(bevy::input::keyboard::KeyboardInput {
+                key_code,
+                logical_key: bevy::input::keyboard::Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+                state,
+                text: None,
+                repeat: false,
+                window,
+            });
+        }
+    }
+}
+
+/// Logs menu / block / cursor state whenever it changes.
+fn log_input_state(
+    inventory: Res<InventoryMenu>,
+    pause: Res<crate::ui::pause_menu::PauseMenu>,
+    blocked: Res<GameplayBlocked>,
+    cursor: Query<&bevy::window::CursorOptions, With<bevy::window::PrimaryWindow>>,
+    mut last: Local<String>,
+) {
+    let Ok(c) = cursor.single() else { return };
+    let now = format!("inventory {} pause {} blocked {} cursor {:?} visible {}", inventory.open, pause.open, blocked.0, c.grab_mode, c.visible);
+    if *last != now {
+        info!("input state: {now}");
+        *last = now;
     }
 }

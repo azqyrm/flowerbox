@@ -408,6 +408,40 @@ Report: with 4 players enemies didn't appear for everyone, spawning was weird, r
 - [x] `mp` autopilot (+ `FLOWERBOX_MP_FIGHT`, `FLOWERBOX_MP_DIE_AT`), 5-instance tests through the relay
 - [ ] Test across real networks (different homes, NAT) with 4–5 players; consider a self-hosted iroh relay if n0's public relays throttle
 
+### Phase 8.12 — Axe moveset, two-handing, dual wielding, weapon abilities, door animation, feral warg (user request, 2026-11-16)
+Request, cleaned up:
+1. **Bug:** with Shift+Tab, the inventory's mouse cursor isn't visible, or the game goes back to gameplay.
+2. **Axe class:** its own animations and combo — slower, more vertical, like natural axe swings.
+3. **Two-handing:** hold the mouse wheel button and press the button of the item you want to hold in both hands.
+4. **Dual wielding:** a weapon in each hand, each attacking with its own button and animations (mirrored for the left). Never both at once — except: if both weapons are of the **same class** (two axes, two light swords), the left button does a **dual attack** with both weapons at the same time for 1.5× the stamina. Jump attacks too.
+5. **Modular:** done for the sword and axe classes, but so a new weapon class only needs its moveset file. Also the possibility of an **activated ability**.
+6. **Feral warg:** jagged, uneven fur/plate edges sticking out of the body.
+7. **Door opening animation** for the player.
+8. **Notifications** when a player opens a door or dies (reported as not showing — recheck).
+
+Decisions:
+- **Buttons (Souls convention):** left mouse = right hand, right mouse = left hand (the shield arm). The left-hand item decides what the right button does: shield → block/parry (as now); weapon → left-hand attacks (tap light, hold heavy, airborne jump attack); same class as the right weapon → the **dual** attack instead. Two-handing: **wheel + left button** two-hands the right weapon, **wheel + right button** the left one (again to return to one hand). The wheel alone (released without a combo) still locks on, so lock-on now triggers on *release*; Q still locks on at once. If you meant left button = left hand, it's a binding swap.
+- **Two-handed:** the other hand's item is put away (hidden), the free hand grips the handle (IK); +20 % damage; the right button guards with the weapon (`WeaponDef::guard_block`, weaker than a shield). Two-handing a shield isn't allowed.
+- **Dual attack:** both arms swing (the right swing + its mirror), each blade can hit once; 1.5 × stamina (`DUAL_STAMINA_MULT`). Light, heavy, running and jump variants.
+- **Data over objects:** weapon classes stay data (a `Moveset` per class file); hands and two-handing are generic (`Hand`, `AttackHand`, the `Wielded` component replacing the single `EquippedWeapon`); poses for the left hand / dual are derived by **mirroring** the right-hand pose, so new classes get left and dual animations for free.
+- **Abilities:** per weapon class (`Moveset::ability`), key **F** (gamepad L2). Data-driven `AbilityDef` with effects: a strike (its own swing) or a buff. Sword: *Lunging Thrust* (a long, hard thrust). Axe: *Warcry* (+25 % damage for 10 s).
+- **Inventory:** Enter / double-click equips weapons to the right hand as before; **L / right-click** equips a weapon to the left hand.
+- **A second axe** (Woodcutter's Hatchet, axe class) lies in the arena, so dual axes are possible.
+- **Gamepad:** dual attacks and the ability work (L1 / L2). Two-handing isn't mapped on the gamepad yet (Souls uses Y, which is interact here).
+- **Shift+Tab:** can't be reproduced with injected input (`FLOWERBOX_KEYS`); the game logic is correct. Likely the desktop/compositor (GNOME Wayland) and the locked pointer. Fix attempt: the cursor follows the menu state every frame and after the window regains focus; a toggle can't fire twice within 0.25 s. Needs your confirmation.
+- **Notifications:** door opened by another player → "Guest 1 opened a door"; deaths already notify others — recheck on screen.
+
+Steps:
+- [ ] Shift+Tab robustness (cursor follows the menu state, focus, debounce) + input harness `FLOWERBOX_KEYS`
+- [ ] Notifications: door opened by others; recheck deaths on screen
+- [ ] Player door opening animation (`ActionKind::OpenDoor`, the door opens at the push)
+- [ ] Feral warg (jagged plates)
+- [ ] Hands: `Hand` / `AttackHand`, `Wielded`, left-hand weapon equip + models, two-handing (state, IK grip, damage, weapon guard), inventory UI, save, net
+- [ ] Per-hand attacks: requests / actions with a hand, left attacks (mirrored poses), dual attacks (1.5× stamina), jump/heavy/running variants, hit detection per blade
+- [ ] Axe class: vertical, slower combo + heavy / running / jump; Woodcutter's Hatchet
+- [ ] Abilities: `AbilityDef`, F / L2, Lunging Thrust, Warcry
+- [ ] Tests, autopilot, screenshots, notes
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
