@@ -17,6 +17,7 @@
 
 pub mod anim;
 pub mod pose;
+pub mod skins;
 
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
@@ -140,6 +141,59 @@ pub struct HumanoidLook {
     /// Decorative shapes on bones: pauldrons, spikes, horns, robes, crowns… They follow the
     /// bones like the body, but gameplay ignores them (hits use the capsule).
     pub extras: Vec<Part>,
+    /// Round (spheres and capsules) or blocky (boxes) body parts.
+    pub form: Form,
+    pub eyes: Eyes,
+    /// Which body parts the clothes (top, bottom, boots) cover; the rest shows skin (or fur, or
+    /// bone). Lighter clothes (shorts, sleeves, loincloths) are extras on top.
+    pub covered: Covered,
+}
+
+/// How the body's own parts are shaped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Form {
+    #[default]
+    Round,
+    /// Cube head, box limbs and hands.
+    Blocky,
+}
+
+/// The face's eyes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Eyes {
+    /// One dark band across the face (the monobrow).
+    #[default]
+    Bar,
+    /// Two small round eyes.
+    Dots,
+    /// Two square eyes: white with a dark pupil.
+    Squares,
+    /// Two big dark hollows (skulls), with the glow as pupils.
+    Sockets,
+}
+
+/// Which parts the clothing colours cover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Covered {
+    /// The chest box wears `top`.
+    pub chest: bool,
+    /// The arms wear `top` (long sleeves).
+    pub arms: bool,
+    /// Hips and legs wear `bottom` (and a belt).
+    pub legs: bool,
+    /// The feet wear `boots`.
+    pub feet: bool,
+}
+
+impl Covered {
+    pub const ALL: Covered = Covered { chest: true, arms: true, legs: true, feet: true };
+    pub const NOTHING: Covered = Covered { chest: false, arms: false, legs: false, feet: false };
+}
+
+impl Default for Covered {
+    fn default() -> Self {
+        Self::ALL
+    }
 }
 
 impl Default for HumanoidLook {
@@ -339,6 +393,9 @@ impl HumanoidSpec {
                 bottom_tex: Some(Tex::Cloth),
                 bald: false,
                 extras: Self::wanderer_gear(),
+                form: Form::Round,
+                eyes: Eyes::Bar,
+                covered: Covered::ALL,
             },
         }
     }
@@ -388,6 +445,9 @@ impl HumanoidSpec {
                 bald: false,
                 // Rags, no gear.
                 extras: vec![],
+                form: Form::Round,
+                eyes: Eyes::Bar,
+                covered: Covered::ALL,
             },
             ..Self::human()
         }
@@ -417,6 +477,19 @@ impl HumanoidSpec {
         self.scale *= f;
         self.look.extras = self.look.extras.iter().map(|p| p.scaled(f)).collect();
         self
+    }
+
+    /// The body armour is fitted to: at least a human build (so a skeleton's mail hangs like on
+    /// a person instead of shrinking onto the spine), broader where the body is (the bear).
+    pub fn armour_fit(&self) -> HumanoidSpec {
+        let human = HumanoidSpec::human();
+        let f = self.scale;
+        let mut fit = self.clone();
+        fit.torso = self.torso.max(human.torso * f);
+        fit.head_radius = self.head_radius.max(human.head_radius * f);
+        fit.arm_radius = self.arm_radius.max(human.arm_radius * f);
+        fit.leg_radius = self.leg_radius.max(human.leg_radius * f);
+        fit
     }
 
     /// Height of the ankle (the foot bone's origin) above the floor in the rest pose.
@@ -525,33 +598,90 @@ pub fn spawn_humanoid(
     };
     let t = Transform::from_xyz;
     let s = spec;
+    let cover = look.covered;
+    let blocky = look.form == Form::Blocky;
+    let (chest_m, arm_m, leg_m, foot_m) = (
+        if cover.chest { &top } else { &skin },
+        if cover.arms { &top } else { &skin },
+        if cover.legs { &bottom } else { &skin },
+        if cover.feet { &boots } else { &skin },
+    );
     // Torso
-    part(Bone::Pelvis, Cuboid::new(s.torso.x * 0.85, 0.2, s.torso.z * 0.9).into(), &bottom, t(0.0, 0.02, 0.0));
-    part(Bone::Pelvis, Cuboid::new(s.torso.x * 0.9, 0.07, s.torso.z * 0.95).into(), &boots, t(0.0, 0.1, 0.0));
-    part(Bone::Chest, Cuboid::from_size(s.torso).into(), &top, t(0.0, s.torso.y * 0.5 + 0.02, 0.0));
-    part(Bone::Chest, Cylinder::new(0.055 * s.scale, 0.1 * s.scale).into(), &skin, t(0.0, s.neck_height - 0.03 * s.scale, 0.0));
+    part(Bone::Pelvis, Cuboid::new(s.torso.x * 0.85, 0.2 * s.scale, s.torso.z * 0.9).into(), leg_m, t(0.0, 0.02 * s.scale, 0.0));
+    if cover.legs {
+        part(Bone::Pelvis, Cuboid::new(s.torso.x * 0.9, 0.07 * s.scale, s.torso.z * 0.95).into(), &boots, t(0.0, 0.1 * s.scale, 0.0));
+    }
+    part(Bone::Chest, Cuboid::from_size(s.torso).into(), chest_m, t(0.0, s.torso.y * 0.5 + 0.02 * s.scale, 0.0));
+    if !blocky {
+        part(Bone::Chest, Cylinder::new(0.055 * s.scale, 0.1 * s.scale).into(), &skin, t(0.0, s.neck_height - 0.03 * s.scale, 0.0));
+    }
     // Head
     let hr = s.head_radius;
-    part(Bone::Head, Sphere::new(hr).into(), &skin, t(0.0, hr, 0.0));
-    if !s.look.bald {
-        part(Bone::Head, Sphere::new(hr * 1.04).into(), &hair, t(0.0, hr * 1.2, hr * 0.2));
+    if blocky {
+        part(Bone::Head, Cuboid::from_length(hr * 2.0).into(), &skin, t(0.0, hr, 0.0));
+        if !look.bald {
+            // A cap of hair on top and down the back.
+            part(Bone::Head, Cuboid::new(hr * 2.08, hr * 0.5, hr * 2.08).into(), &hair, t(0.0, hr * 1.8, 0.0));
+            part(Bone::Head, Cuboid::new(hr * 2.08, hr * 1.2, hr * 0.4).into(), &hair, t(0.0, hr * 1.4, hr * 0.86));
+        }
+    } else {
+        part(Bone::Head, Sphere::new(hr).into(), &skin, t(0.0, hr, 0.0));
+        if !look.bald {
+            part(Bone::Head, Sphere::new(hr * 1.04).into(), &hair, t(0.0, hr * 1.2, hr * 0.2));
+        }
     }
-    part(Bone::Head, Cuboid::new(hr, 0.025 * s.scale, 0.02 * s.scale).into(), &dark, t(0.0, hr * 1.1, -hr * 0.95));
+    let front = if blocky { -hr * 1.01 } else { -hr * 0.95 };
+    match look.eyes {
+        Eyes::Bar => part(Bone::Head, Cuboid::new(hr, 0.025 * s.scale, 0.02 * s.scale).into(), &dark, t(0.0, hr * 1.1, front)),
+        Eyes::Dots => {
+            for x in [-0.36, 0.36] {
+                part(Bone::Head, Sphere::new(hr * 0.13).into(), &dark, t(x * hr, hr * 1.1, front + hr * 0.04));
+            }
+        }
+        Eyes::Squares => {
+            let white = mat(materials, Color::srgb(0.95, 0.95, 0.93), None);
+            for x in [-0.45, 0.45] {
+                part(Bone::Head, Cuboid::new(hr * 0.4, hr * 0.2, 0.02 * s.scale).into(), &white, t(x * hr, hr * 1.05, front));
+                // The pupil on the inner half (a friendly, slightly cross-eyed look).
+                part(Bone::Head, Cuboid::new(hr * 0.2, hr * 0.2, 0.024 * s.scale).into(), &dark, t(x * hr * 0.78, hr * 1.05, front - 0.002));
+            }
+        }
+        Eyes::Sockets => {
+            let hollow = mat(materials, Color::srgb(0.02, 0.015, 0.01), None);
+            for x in [-0.38, 0.38] {
+                part(Bone::Head, Sphere::new(hr * 0.26).into(), &hollow, t(x * hr, hr * 1.08, front + hr * 0.12));
+                part(Bone::Head, Sphere::new(hr * 0.08).into(), &dark, t(x * hr, hr * 1.08, front - hr * 0.08));
+            }
+        }
+    }
     // Arms
     for (upper, fore, hand) in [(Bone::UpperArmL, Bone::ForearmL, Bone::HandL), (Bone::UpperArmR, Bone::ForearmR, Bone::HandR)] {
-        part(upper, Sphere::new(s.arm_radius * 1.3).into(), &top, Transform::IDENTITY);
-        part(upper, Capsule3d::new(s.arm_radius * 1.1, s.upper_arm - s.arm_radius).into(), &top, t(0.0, -s.upper_arm * 0.5, 0.0));
-        part(fore, Capsule3d::new(s.arm_radius, s.forearm - s.arm_radius).into(), &top, t(0.0, -s.forearm * 0.5, 0.0));
-        part(hand, Sphere::new(s.arm_radius * 1.15).into(), &skin, t(0.0, -0.03, 0.0));
+        let r = s.arm_radius;
+        if blocky {
+            part(upper, Cuboid::new(r * 2.2, s.upper_arm + r, r * 2.2).into(), arm_m, t(0.0, -s.upper_arm * 0.5 + r * 0.5, 0.0));
+            part(fore, Cuboid::new(r * 2.1, s.forearm, r * 2.1).into(), arm_m, t(0.0, -s.forearm * 0.5, 0.0));
+            part(hand, Cuboid::from_length(r * 2.2).into(), &skin, t(0.0, -0.03 * s.scale, 0.0));
+        } else {
+            part(upper, Sphere::new(r * 1.3).into(), arm_m, Transform::IDENTITY);
+            part(upper, Capsule3d::new(r * 1.1, s.upper_arm - r).into(), arm_m, t(0.0, -s.upper_arm * 0.5, 0.0));
+            part(fore, Capsule3d::new(r, s.forearm - r).into(), arm_m, t(0.0, -s.forearm * 0.5, 0.0));
+            part(hand, Sphere::new(r * 1.15).into(), &skin, t(0.0, -0.03 * s.scale, 0.0));
+        }
     }
     // Legs
     for (thigh, shin, foot) in [(Bone::ThighL, Bone::ShinL, Bone::FootL), (Bone::ThighR, Bone::ShinR, Bone::FootR)] {
-        part(thigh, Capsule3d::new(s.leg_radius * 1.1, s.thigh - s.leg_radius).into(), &bottom, t(0.0, -s.thigh * 0.5, 0.0));
-        part(shin, Capsule3d::new(s.leg_radius, s.shin - s.leg_radius).into(), &bottom, t(0.0, -s.shin * 0.5, 0.0));
+        let r = s.leg_radius;
+        if blocky {
+            part(thigh, Cuboid::new(r * 2.2, s.thigh + r, r * 2.2).into(), leg_m, t(0.0, -s.thigh * 0.5 + r * 0.5, 0.0));
+            part(shin, Cuboid::new(r * 2.1, s.shin, r * 2.1).into(), leg_m, t(0.0, -s.shin * 0.5, 0.0));
+        } else {
+            part(thigh, Capsule3d::new(r * 1.1, s.thigh - r).into(), leg_m, t(0.0, -s.thigh * 0.5, 0.0));
+            part(shin, Capsule3d::new(r, s.shin - r).into(), leg_m, t(0.0, -s.shin * 0.5, 0.0));
+        }
         part(
             foot,
-            Cuboid::new(s.leg_radius * 2.0, 0.1 * s.scale, FOOT_LENGTH * s.scale).into(),
-            &boots,
+            Cuboid::new(r * 2.0, 0.1 * s.scale, FOOT_LENGTH * s.scale).into(),
+            foot_m,
             t(0.0, -s.ankle_height() + 0.05 * s.scale, FOOT_OFFSET * s.scale),
         );
     }

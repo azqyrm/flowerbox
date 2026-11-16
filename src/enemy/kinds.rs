@@ -262,6 +262,7 @@ fn mourner() -> HumanoidSpec {
             bottom_tex: Some(Tex::Cloth),
             bald: true,
             extras,
+            ..HumanoidSpec::human().look
         },
     }
     .scaled(1.12)
@@ -451,6 +452,7 @@ fn saint() -> HumanoidSpec {
             bottom_tex: Some(Tex::Chainmail),
             bald: true,
             extras,
+            ..HumanoidSpec::human().look
         },
         ..HumanoidSpec::human()
     }

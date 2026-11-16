@@ -47,6 +47,8 @@
 //! - `FLOWERBOX_AUTOPILOT=boss` (with `FLOWERBOX_POS=0,138,3.14`) → fights the Thorned Saint with
 //!   5000 HP: attacks when close, rolls from its specials, adds 25 scripted damage every 0.5 s;
 //!   logs its moves, waves, enrage, death, the drop and the fog lifting.
+//! - `FLOWERBOX_AUTOPILOT=skins` → every player skin on a mannequin in a row (`FLOWERBOX_SKIN_MOVE=secs`:
+//!   then they walk in circles and swing; `FLOWERBOX_SKIN_ARMOR=1`: all wear every armour piece).
 //! - `FLOWERBOX_AUTOPILOT=bestiary` → every enemy kind stands in a row in the arena (brains off),
 //!   for screenshots. `FLOWERBOX_SPECIAL="Saint:Whirlwind@2.0"` makes one of them perform an
 //!   ability at that time (several, comma-separated).
@@ -136,6 +138,9 @@ impl Plugin for DebugPlugin {
             }
             Ok("bestiary") => {
                 app.add_systems(Update, bestiary_script);
+            }
+            Ok("skins") => {
+                app.add_systems(Update, skins_script.before(crate::weapon::WeaponSystems::Equip));
             }
             Ok("weapons") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
@@ -685,6 +690,62 @@ fn bestiary_script(
                 info!("bestiary: {who} uses {what}");
                 intent.buffer(ActionRequest::Special(ability));
             }
+        }
+    }
+}
+
+/// Every skin on a sword-holding mannequin in a row north of the player. `FLOWERBOX_SKIN_MOVE`:
+/// from that time they walk in a circle and swing (the shared animations on every body).
+#[allow(clippy::too_many_arguments)]
+fn skins_script(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut equip: MessageWriter<crate::weapon::EquipWeapon>,
+    mut row: Local<Vec<Entity>>,
+    mut bodies: Query<(&mut ActionIntent, &mut MoveIntent)>,
+) {
+    use crate::humanoid::skins::Skin;
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    if crossed(t, dt, 0.3) {
+        for (i, skin) in Skin::ALL.into_iter().enumerate() {
+            // Three each side of the player (who stands in the middle of the picture).
+            let x = [-5.4, -3.6, -1.8, 1.8, 3.6, 5.4][i];
+            let tf = Transform::from_xyz(x, PLAYER_HALF_HEIGHT + 0.05, 5.0);
+            let e = commands.spawn((Name::new(skin.name()), crate::character::character_bundle(tf, 100.0, 100.0), skin)).id();
+            // Facing the camera (+Z).
+            commands.entity(e).insert(CharacterController { facing: std::f32::consts::PI, ..default() });
+            let spec = skin.spec();
+            let rig = crate::humanoid::spawn_humanoid(&mut commands, &mut meshes, &mut materials, e, &spec, PLAYER_HALF_HEIGHT);
+            commands.entity(e).insert((spec, rig, crate::humanoid::anim::HumanoidAnimator::default()));
+            equip.write(crate::weapon::EquipWeapon::right(e, &crate::weapon::light_sword::LONGSWORD));
+            if std::env::var("FLOWERBOX_SKIN_ARMOR").is_ok() {
+                // Every armour piece on top of every skin (fit check).
+                use crate::items::inventory::{EquipStats, EquipVisuals, Equipment, Inventory};
+                let inv = Inventory::from_items(&[ItemId::LeatherHood, ItemId::PenitentHauberk, ItemId::AshenGauntlets, ItemId::GraveGreaves]);
+                let mut eq = Equipment::default();
+                for i in 0..4 {
+                    eq.equip(&inv, i);
+                }
+                commands.entity(e).insert((inv, eq, EquipStats::default(), EquipVisuals::default()));
+            }
+            row.push(e);
+        }
+        commands.spawn((PointLight { intensity: 900_000.0, range: 14.0, shadow_maps_enabled: true, ..default() }, Transform::from_xyz(0.0, 3.5, 6.0)));
+        info!("skins: {} mannequins", row.len());
+    }
+    let start = std::env::var("FLOWERBOX_SKIN_MOVE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(f32::MAX);
+    for (i, e) in row.iter().enumerate() {
+        let Ok((mut intent, mut movement)) = bodies.get_mut(*e) else { continue };
+        if t < start {
+            *movement = MoveIntent::default();
+            continue;
+        }
+        let a = (t - start) * 1.2 + i as f32;
+        movement.dir = Vec3::new(a.cos(), 0.0, a.sin()) * 0.5;
+        if crossed(t, dt, start + 2.0 + 0.2 * i as f32) {
+            intent.buffer(ActionRequest::LightAttack(crate::weapon::AttackHand::Right));
         }
     }
 }
@@ -1833,7 +1894,7 @@ fn log_puppets(
         return;
     }
     *timer = 0.0;
-    let players = puppets.iter().filter(|p| p.state.kind == crate::net::protocol::BodyKind::Player).count();
+    let players = puppets.iter().filter(|p| matches!(p.state.kind, crate::net::protocol::BodyKind::Player(_))).count();
     let enemies = puppets.iter().count() - players;
     info!(
         "mp: {:?} id {}: {players} other players, {enemies} enemy puppets, {} own enemies, {} puppets appeared so far",

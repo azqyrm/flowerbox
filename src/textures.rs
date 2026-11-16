@@ -48,11 +48,25 @@ pub enum Tex {
     Leather,
     /// Veined marble.
     Marble,
+    /// Soft fur: fine wavy strands and darker patches (cat and bear people).
+    Fur,
 }
 
 impl Tex {
-    pub const ALL: [Tex; 11] =
-        [Tex::Bricks, Tex::Flagstones, Tex::Chainmail, Tex::Cloth, Tex::Runes, Tex::Flesh, Tex::Bone, Tex::StainedGlass, Tex::Rust, Tex::Leather, Tex::Marble];
+    pub const ALL: [Tex; 12] = [
+        Tex::Bricks,
+        Tex::Flagstones,
+        Tex::Chainmail,
+        Tex::Cloth,
+        Tex::Runes,
+        Tex::Flesh,
+        Tex::Bone,
+        Tex::StainedGlass,
+        Tex::Rust,
+        Tex::Leather,
+        Tex::Marble,
+        Tex::Fur,
+    ];
 }
 
 static REGISTRY: OnceLock<Vec<(Tex, Handle<Image>)>> = OnceLock::new();
@@ -257,6 +271,14 @@ fn sample(t: Tex, u: f32, v: f32) -> [f32; 3] {
             let grain = fbm(u, v, 32, 3, 81);
             let cracks = smooth(0.0, 0.03, (fbm(u, v, 10, 3, 83) - 0.5).abs());
             grey((0.65 + 0.3 * grain) * (0.6 + 0.4 * cracks))
+        }
+        Tex::Fur => {
+            // Strands: stripes along v, wiggled by noise (whole periods, so it still tiles).
+            let wiggle = fbm(u, v, 4, 3, 5) * 5.0;
+            let strand = ((u * 72.0 + wiggle) * std::f32::consts::TAU).sin() * 0.5 + 0.5;
+            let fine = value(u, v, 128, 17);
+            let patches = fbm(u, v, 6, 4, 11);
+            grey((0.62 + 0.22 * strand * fine + 0.1 * fine) * (0.72 + 0.4 * patches))
         }
         Tex::Marble => {
             let turb = fbm(u, v, 4, 5, 91);

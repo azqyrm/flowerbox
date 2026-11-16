@@ -11,7 +11,7 @@ use crate::pvp::Pvp;
 use crate::character::stats::HitImmunity;
 use crate::healing::HealingAle;
 use crate::humanoid::anim::HumanoidAnimator;
-use crate::humanoid::{HumanoidSpec, spawn_humanoid};
+use crate::humanoid::spawn_humanoid;
 use crate::input::{PlayerInput, input_map};
 use crate::settings::Settings;
 use crate::tuning::*;
@@ -19,11 +19,13 @@ use crate::character::stats::DamageAbsorption;
 use crate::items::ItemId;
 use crate::items::inventory::{EquipStats, EquipVisuals, Equipment, Inventory};
 
+pub mod skin;
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player);
+        app.add_systems(Startup, spawn_player).add_plugins(skin::SkinPlugin);
     }
 }
 
@@ -42,7 +44,7 @@ fn spawn_player(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let (sx, sy, sz) = PLAYER_SPAWN;
-    let spec = HumanoidSpec::human();
+    let spec = settings.skin.spec();
     let player = commands
         .spawn((
             Name::new("Player"),
@@ -55,7 +57,7 @@ fn spawn_player(
         .id();
     let rig = spawn_humanoid(&mut commands, &mut meshes, &mut materials, player, &spec, PLAYER_HALF_HEIGHT);
 
-    commands.entity(player).insert((spec, rig, HumanoidAnimator::default(), Hurtbox, Team::Player, LockOn::default(), Pvp(false), HitImmunity::default()));
+    commands.entity(player).insert((spec, rig, settings.skin, HumanoidAnimator::default(), Hurtbox, Team::Player, LockOn::default(), Pvp(false), HitImmunity::default()));
 
     // Starting gear: Longsword in the right hand and the Healing Ale in the quick slot; a shield,
     // an axe and a hood in the bag. Equipment changes swap the weapon model (see `items`).

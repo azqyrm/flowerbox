@@ -499,6 +499,7 @@ fn sync_models(
     mut q: Query<(&Inventory, &Equipment, &HumanoidRig, &HumanoidSpec, &mut EquipVisuals), Changed<Equipment>>,
 ) {
     for (inventory, equipment, rig, spec, mut visuals) in &mut q {
+        let spec = &spec.armour_fit();
         // Drop models whose slot no longer holds the same item.
         // A shield is put away while something is held in both hands.
         let stowed = |slot: EquipSlot| slot == EquipSlot::LeftHand && equipment.two_hand.is_some();

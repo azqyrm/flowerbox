@@ -10,11 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::character::action::ActionKind;
 use crate::enemy::EnemyKind;
+use crate::humanoid::skins::Skin;
 use crate::items::ItemId;
 use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 13;
+pub const PROTOCOL_VERSION: u16 = 14;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -26,7 +27,8 @@ pub const DUMMY_ID: NetId = 999;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyKind {
-    Player,
+    /// A player, wearing this skin.
+    Player(Skin),
     /// Any enemy: its body, weapon and size come from its `EnemyDef`.
     Enemy(EnemyKind),
 }
@@ -197,7 +199,7 @@ mod tests {
     fn body(id: NetId) -> BodyState {
         BodyState {
             id,
-            kind: BodyKind::Player,
+            kind: BodyKind::Player(Skin::Bruin),
             pos: [1.0, 2.0, 3.0],
             facing: 0.5,
             moved: [0.0; 3],

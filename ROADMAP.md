@@ -51,7 +51,7 @@
 | Online co-op | **O** | Online panel: **H** host (code copied to the clipboard), **J** join with the code in the clipboard, **C** copy code, **L** leave. Command line: `--host`, `--join <code>` |
 | Use an item | Inventory: the item's options → Drink / Eat | Healing Ale = drink, Poppy = PvP on, Camomile = PvP off, Hop Cone = +1 Ale (short eating action) |
 | Chat | **T** (rebindable) | A line opens at the bottom left (gameplay input blocked while typing); **Enter** sends, **Esc** throws it away. Messages appear in the notification feed: the speaker's little face (their tunic colour) and "Name: text", fading after 5–12 s by length. Online everyone sees them |
-| Menu | **Esc** (gamepad: Select) | Resume / Settings (**name**: Enter, type, Enter; sensitivity, invert Y, stick speed, volume, notification corner) / Controls (rebind) / Delete save / Quit. The world keeps running |
+| Menu | **Esc** (gamepad: Select) | Resume / Settings (**name**: Enter, type, Enter; **skin**: Left / Right, the body changes at once; sensitivity, invert Y, stick speed, volume, notification corner) / Controls (rebind) / Delete save / Quit. The world keeps running |
 
 All tuning values (timings, costs, damage) live in one `tuning.rs` constants module, or in a RON file later, so it's easy to adjust game feel.
 
@@ -515,6 +515,23 @@ Steps:
 - [x] Tests (names, twins, text input, chat cleaning); offline + host/two-guest runs (both named gordelius → `Gordelius_Hammer`; every message on all three screens)
 - [ ] Name tags over other players' heads (only the feed shows names so far)
 
+### Phase 8.15 — Player skins (user request, 2026-11-16)
+Request, cleaned up: skins chosen in the settings, worn by your character; the default **Monobrow** is the current look. Several forms and sizes that stay humanoid — a cat person, a bear, a human, a skeleton, a cube-headed builder — in light cloth clothes or underwear (no armour: that's equipment, on top). Every skin shares the animations, the humanoid features and the hitboxes: plug and play.
+
+Decisions:
+- **A skin changes only the look; the skeleton is the human one.** Joint positions and bone lengths decide the animation, the weapon's FK hitbox (reach) and where the feet stand; the capsule decides being hit. So they stay identical — bulk is visual (the bear is broad, the skeleton thin, both reach as far and are hit the same). Test: `skins_change_only_the_look` (every bone, the soles, scale 1, fits the capsule). Sizes *taller/shorter* would change reach and the capsule: not done on purpose (fairness in PvP; a giant player would also need a bigger capsule through doors).
+- **Body building blocks** (`HumanoidLook`, reused by enemies too): `Form::Round | Blocky` (cube head, box limbs), `Eyes::Bar | Dots | Squares | Sockets`, `Covered { chest, arms, legs, feet }` (what the clothes cover; the rest is skin / fur / bone), plus extras (ears, tails, snouts, caps, ribs, shorts, braces, sleeves). New texture: `Tex::Fur`.
+- **Six skins** (`humanoid/skins.rs`): Monobrow (as before), Blockhead (cube head, teal shirt, blue trousers), Tabby (cat: ears, whiskers, curled tail, sleeveless linen shirt, trousers, sash, bare paws), Bruin (bear: broad, snout, belly patch, red shorts with braces, claws), Rattlebones (skeleton: ribs, collarbones, jaw, glowing sockets, loincloth, rope belt), Toadstool (mushroom: red spotted cap, mossy smock, short trousers).
+- **Live swap** (`player/skin.rs`): the old model (with weapon / armour models and the tankard on its bones) is despawned, the new body spawned on the same character, gear re-attached the next frame. Gameplay state stays.
+- **Armour fits** the body but at least a human build (`HumanoidSpec::armour_fit`): mail hangs on a skeleton like on a person, and grows for the bear.
+- **Online:** the skin travels in `BodyKind::Player(skin)` (protocol v14); puppets rebuild when it changes. Monobrows keep the slot's tunic colour; other skins keep their own clothes.
+
+Steps:
+- [x] Look building blocks (form, eyes, coverage), fur texture, six skins, settings row, live swap with gear
+- [x] Armour fit check (`FLOWERBOX_AUTOPILOT=skins FLOWERBOX_SKIN_ARMOR=1`), animation check (`FLOWERBOX_SKIN_MOVE`), host/guest run (host cycles Blockhead → Tabby → Bruin, the guest's puppet follows; the guest's Rattlebones on the host)
+- [ ] The chat face could show the skin (it shows the slot colour)
+- [ ] Animated tails / ears (they're rigid on the pelvis / head)
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
@@ -566,6 +583,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Inventory: slot-first and item-first equipping; throwing out removes the entry (indices shift) and puts a pickup into the host's world. |
 | 2026-11-16 | Level 2 "The Cathedral of Ashes" south of the arena; several levels load side by side. Bell riddle unseals the crypt; a one-way gallery door is the loop. |
 | 2026-11-16 | Enemy dormancy by distance to every player (30 / 36 m), not by opened doors (N31). |
+| 2026-11-16 | Player skins change only the look on the human skeleton (same animation, reach, feet, capsule); six skins; armour fitted to at least a human build. |
 | 2026-11-16 | Player names (settings; Host / GuestN / Player1 without one), made unique by the host with a German noun; chat on T through the host into the notification feed (face + name). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 

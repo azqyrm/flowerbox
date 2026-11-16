@@ -31,6 +31,7 @@ use crate::character::BodySize;
 use crate::enemy::{self, Enemy, EnemiesSuppressed};
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
+use crate::humanoid::skins::Skin;
 use crate::items::inventory::{EquipSlot, EquipStats, EquipVisuals, Equipment, Inventory};
 use crate::lockon::Targetable;
 use crate::player::Player;
@@ -42,7 +43,7 @@ pub struct SyncPlugin;
 
 impl Plugin for SyncPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (role_changed, receive, drive_puppets, place_guest, send_states, forward_hits).chain().before(WeaponSystems::Equip));
+        app.add_systems(Update, (role_changed, receive, reskin_puppets, drive_puppets, place_guest, send_states, forward_hits).chain().before(WeaponSystems::Equip));
     }
 }
 
@@ -169,7 +170,7 @@ fn receive(
         match msg {
             NetInbox::Datagram(peer, Datagram::State(body)) if session.is_host() => {
                 // A guest's own body (only accept the id we gave them).
-                if session.peers.get(peer) == Some(&body.id) && body.kind == BodyKind::Player {
+                if session.peers.get(peer) == Some(&body.id) && matches!(body.kind, BodyKind::Player(_)) {
                     fresh.push(body.clone());
                 }
             }
@@ -247,11 +248,32 @@ fn receive(
     }
 }
 
-/// Other players wear coloured tunics so you can tell them apart (by player slot).
-fn guest_look(id: NetId) -> HumanoidSpec {
-    let mut spec = HumanoidSpec::human();
-    spec.look.top = tunic(id);
+/// Another player's body in their skin. Monobrows wear their slot's tunic colour so you can tell
+/// them apart; the other skins have their own clothes.
+fn guest_look(id: NetId, skin: Skin) -> HumanoidSpec {
+    let mut spec = skin.spec();
+    if skin == Skin::Monobrow {
+        spec.look.top = tunic(id);
+    }
     spec
+}
+
+/// A player changed skin: rebuild their puppet's body.
+fn reskin_puppets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    puppets: Query<(Entity, &Puppet, &Skin, &crate::humanoid::HumanoidRig)>,
+) {
+    for (e, p, worn, rig) in &puppets {
+        if let BodyKind::Player(skin) = p.state.kind
+            && skin != *worn
+        {
+            info!("player {} now wears {}", p.id, skin.name());
+            crate::player::skin::reskin(&mut commands, &mut meshes, &mut materials, e, rig, guest_look(p.id, skin));
+            commands.entity(e).insert(skin);
+        }
+    }
 }
 
 /// Each player slot's tunic colour (puppets wear it; chat faces show it).
@@ -275,11 +297,11 @@ fn spawn_puppet(
 ) {
     let pos = Vec3::from_array(body.pos);
     let name = match body.kind {
-        BodyKind::Player => format!("Player {}", body.id),
+        BodyKind::Player(_) => format!("Player {}", body.id),
         BodyKind::Enemy(kind) => format!("{} (remote)", kind.def().name),
     };
     let size = match body.kind {
-        BodyKind::Player => BodySize::default(),
+        BodyKind::Player(_) => BodySize::default(),
         BodyKind::Enemy(kind) => kind.def().size,
     };
     let e = commands
@@ -303,9 +325,10 @@ fn spawn_puppet(
         commands.entity(e).insert((spec, rig, HumanoidAnimator::default()));
     };
     match body.kind {
-        BodyKind::Player => {
-            humanoid(commands, meshes, materials, guest_look(body.id));
+        BodyKind::Player(skin) => {
+            humanoid(commands, meshes, materials, guest_look(body.id, skin));
             commands.entity(e).insert((
+                skin,
                 Team::Player,
                 Pvp(body.pvp),
                 Inventory::default(),
@@ -438,7 +461,7 @@ fn send_states(
     mut sent: Local<SentEnemies>,
     link: Res<NetLink>,
     session: Res<NetSession>,
-    player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment, &Pvp), With<Player>>,
+    player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment, &Pvp, &Skin), With<Player>>,
     puppets: Query<&Puppet>,
     enemies: Query<(Entity, &Enemy, &Transform, &CharacterController, &CharacterAction, &Health), Without<Remote>>,
 ) {
@@ -452,12 +475,12 @@ fn send_states(
     }
     let tick = *timer;
     *timer = 0.0;
-    let Ok((tf, ctrl, action, guard, health, inv, eq, pvp)) = player.single() else { return };
+    let Ok((tf, ctrl, action, guard, health, inv, eq, pvp, skin)) = player.single() else { return };
     let gear = [EquipSlot::RightHand, EquipSlot::LeftHand, EquipSlot::Head].map(|s| eq.item(s, inv));
-    let me = body_state(session.my_id, BodyKind::Player, tf, ctrl, action, Some(guard), health, gear, pvp.0, eq.two_hand);
+    let me = body_state(session.my_id, BodyKind::Player(*skin), tf, ctrl, action, Some(guard), health, gear, pvp.0, eq.two_hand);
     if session.is_host() {
         let mut bodies = vec![me];
-        bodies.extend(puppets.iter().filter(|p| p.state.kind == BodyKind::Player).map(|p| p.state.clone()));
+        bodies.extend(puppets.iter().filter(|p| matches!(p.state.kind, BodyKind::Player(_))).map(|p| p.state.clone()));
         let mut ids: Vec<NetId> = bodies.iter().map(|b| b.id).collect();
         let mut live = HashSet::new();
         for (e, enemy, tf, ctrl, action, health) in &enemies {

@@ -308,6 +308,11 @@ pub struct Wielded {
 }
 
 impl Wielded {
+    /// Its models are gone (the body they hung on was replaced): don't despawn them again.
+    pub fn forget_models(&mut self) {
+        self.models = [None; 2];
+    }
+
     /// A weapon that is part of the body (a beast's jaws): no model to attach.
     pub fn natural(def: &'static WeaponDef) -> Self {
         Self { right: def, left: None, two_hand: None, models: [None; 2] }

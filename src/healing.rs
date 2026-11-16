@@ -93,7 +93,7 @@ fn drink_ale(time: Res<Time>, mut q: Query<(&CharacterAction, &mut HealingAle, &
 
 /// The tankard entity in a character's left hand.
 #[derive(Component)]
-struct Tankard(Entity);
+pub struct Tankard(Entity);
 
 fn spawn_tankards(
     mut commands: Commands,

@@ -2,7 +2,7 @@
 //! Soulslike), but the player gets no gameplay input and the cursor is free.
 //!
 //! Pages: **main** (Resume, Settings, Controls, Delete save, Quit), **settings** (your name —
-//! Enter, type, Enter —, mouse sensitivity, invert Y, stick speed, volume, notification corner) and **controls** (rebind:
+//! Enter, type, Enter —, skin, mouse sensitivity, invert Y, stick speed, volume, notification corner) and **controls** (rebind:
 //! select an action, press the new key or mouse button; Esc cancels; a key already in use swaps).
 //! Keys: Up/Down (W/S, D-pad) select, Left/Right (A/D) change, Enter/Space (A) activate,
 //! Esc (B) back / close. Mouse: hover selects, click activates, `<` `>` change values.
@@ -73,6 +73,7 @@ enum Row {
     Quit,
     Back,
     PlayerName,
+    Skin,
     Sensitivity,
     InvertY,
     StickSpeed,
@@ -85,7 +86,7 @@ enum Row {
 fn rows(page: Page) -> Vec<Row> {
     match page {
         Page::Main => vec![Row::Resume, Row::OpenSettings, Row::OpenControls, Row::DeleteSave, Row::Quit],
-        Page::Settings => vec![Row::PlayerName, Row::Sensitivity, Row::InvertY, Row::StickSpeed, Row::Volume, Row::NoticeCorner, Row::Back],
+        Page::Settings => vec![Row::PlayerName, Row::Skin, Row::Sensitivity, Row::InvertY, Row::StickSpeed, Row::Volume, Row::NoticeCorner, Row::Back],
         Page::Controls => {
             let mut r: Vec<Row> = Bind::ALL.iter().map(|b| Row::Rebind(*b)).collect();
             r.push(Row::ResetBindings);
@@ -130,6 +131,7 @@ fn row_text(row: Row, s: &Settings, capturing: Option<Bind>, editing: Option<&st
             };
             (strings::NAME_LABEL.into(), Some(value))
         }
+        Row::Skin => ("Skin".into(), Some(s.skin.name().into())),
         Row::Sensitivity => ("Mouse sensitivity".into(), Some(pct(s.mouse_sensitivity))),
         Row::InvertY => ("Invert camera Y".into(), Some(if s.invert_y { "On" } else { "Off" }.into())),
         Row::StickSpeed => ("Gamepad camera speed".into(), Some(pct(s.stick_speed))),
@@ -334,6 +336,7 @@ fn menu_input(
         Row::StickSpeed => settings.stick_speed = step(settings.stick_speed, dir, 0.2, 3.0),
         Row::Volume => settings.volume = step(settings.volume, if dir == 0 { 1 } else { dir }, 0.0, 1.0),
         Row::InvertY => settings.invert_y = !settings.invert_y,
+        Row::Skin => settings.skin = settings.skin.cycle(if dir == 0 { 1 } else { dir }),
         Row::NoticeCorner => settings.notification_corner = next_corner(settings.notification_corner, if dir == 0 { 1 } else { dir }),
         Row::Rebind(b) if dir == 0 => menu.capturing = Some((b, false)),
         Row::PlayerName if dir == 0 => menu.editing_name = Some(settings.name.clone()),

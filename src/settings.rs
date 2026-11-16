@@ -1,4 +1,4 @@
-//! Player settings: your name, camera feel, volume, notification corner and key bindings. Saved as RON in
+//! Player settings: your name and skin, camera feel, volume, notification corner and key bindings. Saved as RON in
 //! the OS config folder (`~/.config/flowerbox/settings.ron` on Linux) whenever they change, and
 //! loaded at start. Edited in the pause menu (`ui/pause_menu.rs`).
 //!
@@ -11,6 +11,7 @@ use bevy::audio::{GlobalVolume, Volume};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::humanoid::skins::Skin;
 use crate::ui::notifications::{Corner, NotificationSettings};
 
 pub struct SettingsPlugin;
@@ -180,6 +181,8 @@ pub struct Settings {
     pub bindings: Bindings,
     /// The name others see (empty: Host / GuestN / Player1; see `net/names.rs`).
     pub name: String,
+    /// What your character looks like (`humanoid/skins.rs`).
+    pub skin: Skin,
 }
 
 impl Default for Settings {
@@ -192,6 +195,7 @@ impl Default for Settings {
             notification_corner: Corner::BottomRight,
             bindings: Bindings::default(),
             name: String::new(),
+            skin: Skin::Monobrow,
         }
     }
 }
