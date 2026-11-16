@@ -571,3 +571,42 @@ mod tests {
         assert_eq!(bosses, vec![&EnemyKind::Saint]);
     }
 }
+
+#[cfg(test)]
+mod reach_tests {
+    use super::*;
+    use crate::character::action::{ActionKind, ActiveAction};
+    use crate::humanoid::HumanoidRig;
+
+    /// Where a fighter's blade tip goes during its first light swing, relative to its feet
+    /// (forward = -Z).
+    fn sweep(kind: EnemyKind) -> Vec<Vec3> {
+        let d = kind.def();
+        let Body::Humanoid(spec) = d.body else { panic!() };
+        let spec = spec();
+        let rig = HumanoidRig { model: Entity::PLACEHOLDER, bones: [Entity::PLACEHOLDER; crate::humanoid::Bone::COUNT], root_height: d.size.half_height() };
+        let tf = Transform::from_xyz(0.0, d.size.half_height(), 0.0);
+        let mut a = ActiveAction::new(ActionKind::LightAttack(0), Vec3::NEG_Z, d.weapon.class);
+        let (start, end) = (a.def.startup, a.def.startup + a.def.active);
+        (0..=8)
+            .filter_map(|i| {
+                a.elapsed = start + (end - start) * i as f32 / 8.0;
+                crate::combat::blade_world(&tf, &spec, &rig, d.weapon, crate::humanoid::Bone::HandR, &a).map(|(_, tip)| tip)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn big_blades_reach_a_player_in_front() {
+        for kind in [EnemyKind::Hollow, EnemyKind::Acolyte, EnemyKind::Saint] {
+            let tips = sweep(kind);
+            assert!(!tips.is_empty(), "{kind:?}: no blade pose");
+            let reach = tips.iter().map(|t| -t.z).fold(f32::MIN, f32::max);
+            println!("{kind:?}: tips {tips:?}");
+            assert!(reach > 1.0, "{kind:?}: the swing reaches only {reach:.2} m forward");
+            // Somewhere in front the tip passes through where a person stands (below 1.7 m).
+            let through = tips.iter().any(|t| (0.8..reach + 0.01).contains(&-t.z) && (0.2..1.7).contains(&t.y));
+            assert!(through, "{kind:?}: the swing never passes through a person in front (tips {tips:?})");
+        }
+    }
+}

@@ -44,6 +44,9 @@
 //!   every hit (hand, damage) and the stamina each attack cost.
 //! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
 //!   `FLOWERBOX_WALK="x,z"` walks that way instead (collision checks), logging the position.
+//! - `FLOWERBOX_AUTOPILOT=boss` (with `FLOWERBOX_POS=0,138,3.14`) → fights the Thorned Saint with
+//!   5000 HP: attacks when close, rolls from its specials, adds 25 scripted damage every 0.5 s;
+//!   logs its moves, waves, enrage, death, the drop and the fog lifting.
 //! - `FLOWERBOX_AUTOPILOT=bestiary` → every enemy kind stands in a row in the arena (brains off),
 //!   for screenshots. `FLOWERBOX_SPECIAL="Saint:Whirlwind@2.0"` makes one of them perform an
 //!   ability at that time (several, comma-separated).
@@ -119,6 +122,9 @@ impl Plugin for DebugPlugin {
             }
             Ok("wargkill") => {
                 app.add_systems(Update, wargkill_script);
+            }
+            Ok("boss") => {
+                app.init_resource::<BossRun>().add_systems(Update, boss_script);
             }
             Ok("bestiary") => {
                 app.add_systems(Update, bestiary_script);
@@ -502,6 +508,87 @@ fn auto_screenshot(
 // ── Default autopilot (FLOWERBOX_AUTOPILOT=1) ────────────────────────────
 
 /// True on the frame where time `at` is crossed.
+#[derive(Resource, Default)]
+struct BossRun {
+    tick: f32,
+    log: f32,
+    died_at: Option<f32>,
+    rolls: u32,
+}
+
+/// The boss fight (see the module docs).
+#[allow(clippy::type_complexity)]
+fn boss_script(
+    time: Res<Time>,
+    mut run: ResMut<BossRun>,
+    mut exit: MessageWriter<AppExit>,
+    mut damage: MessageWriter<DamageMessage>,
+    defeated: Res<crate::enemy::boss::DefeatedBosses>,
+    gates: Query<(), With<crate::enemy::boss::FogGate>>,
+    pickups: Query<&crate::items::pickup::Pickup>,
+    mut player: Query<(Entity, &Transform, &CharacterAction, &mut ActionIntent, &mut MoveIntent, &mut Health, &mut LockOn), With<Player>>,
+    boss: Query<(Entity, &Transform, &CharacterAction, &Health, &FighterAi), (With<crate::enemy::kinds::Boss>, Without<Player>)>,
+) {
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let Ok((pe, ptf, paction, mut intent, mut movement, mut hp, mut lock)) = player.single_mut() else { return };
+    if crossed(t, dt, 0.2) {
+        hp.max = 5000.0;
+        hp.current = 5000.0;
+    }
+    run.log += dt;
+    let Ok((be, btf, baction, bhp, ai)) = boss.single() else {
+        if let Some(d) = run.died_at
+            && t > d + 4.0
+        {
+            let drop = pickups.iter().any(|p| p.item == ItemId::Penitence);
+            info!("boss test: defeated {:?}; fog gates left {}; Penitence on the floor: {drop}; player HP {:.0}, rolls {}", defeated.0, gates.iter().count(), hp.current, run.rolls);
+            exit.write(AppExit::Success);
+        }
+        return;
+    };
+    if bhp.is_dead() {
+        if run.died_at.is_none() {
+            run.died_at = Some(t);
+            info!("boss test: the Saint falls at {t:.1}s");
+        }
+        // Linger by the body (the drop lies there).
+        return;
+    }
+    if run.log > 2.0 {
+        run.log = 0.0;
+        info!("boss test: Saint HP {:.0}/{:.0} state {:?} enraged {} action {:?}; player HP {:.0}", bhp.current, bhp.max, ai.state, ai.enraged, baction.current.map(|a| a.kind), hp.current);
+    }
+    if lock.target.is_none() {
+        lock.target = Some(be);
+    }
+    let to = (btf.translation - ptf.translation).with_y(0.0);
+    let dist = to.length();
+    movement.dir = Vec3::ZERO;
+    movement.face = Some(to.normalize_or_zero());
+    // Its special wind-ups are the moment to roll (sideways, away).
+    let special_windup = baction.current.is_some_and(|a| matches!(a.kind, ActionKind::Ability(_)) && a.phase() == ActionPhase::Startup && a.elapsed > a.def.startup - 0.35);
+    if paction.current.is_none() && intent.buffered.is_none() {
+        if special_windup {
+            movement.dir = (-to.normalize_or_zero() + Vec3::new(-to.z, 0.0, to.x).normalize_or_zero()).normalize_or_zero();
+            intent.buffer(ActionRequest::Roll);
+            run.rolls += 1;
+        } else if dist < 3.2 {
+            intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
+        } else {
+            movement.dir = to.normalize_or_zero();
+        }
+    }
+    run.tick += dt;
+    if run.tick > 0.5 {
+        run.tick = 0.0;
+        damage.write(DamageMessage { target: be, amount: 12.0, from: Some(ptf.translation), attacker: Some(pe) });
+    }
+    if t > 170.0 {
+        info!("boss test: timed out; Saint HP {:.0}", bhp.current);
+        exit.write(AppExit::Success);
+    }
+}
+
 /// Every enemy kind in a row north of the player, brains removed (`FLOWERBOX_SPECIAL` cues).
 #[allow(clippy::too_many_arguments)]
 fn bestiary_script(

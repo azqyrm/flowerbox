@@ -13,10 +13,11 @@ const fn sweep(startup: f32, recovery: f32, damage: f32, windup: SwingKey, strik
     AttackSpec { startup, active: 0.22, recovery, cancel: startup + 0.22 + recovery * 0.7, stamina_cost: 24.0, lunge: 0.9, damage_mult: damage, windup, strike, stance: Stance::Lunge }
 }
 
-/// Wide right → left, back-hand left → right, then a crushing overhead.
+/// Wide right → left, back-hand left → right (both sweeping down through the target: a greatsword
+/// held out flat by a giant passes over a person's head), then a crushing overhead.
 const COMBO: [AttackSpec; 3] = [
-    sweep(0.62, 0.62, 1.0, SwingKey::new(-0.9, 0.15, -1.5, 1.55), SwingKey::new(0.75, 0.05, 1.0, 1.35)),
-    sweep(0.5, 0.6, 1.05, SwingKey::new(0.8, 0.1, 1.1, 1.6), SwingKey::new(-0.8, 0.0, -1.2, 1.3)),
+    sweep(0.62, 0.62, 1.0, SwingKey::new(-0.9, 0.2, -1.5, 1.25), SwingKey::new(0.75, 0.3, 1.0, 1.0)),
+    sweep(0.5, 0.6, 1.05, SwingKey::new(0.8, 0.2, 1.1, 1.25), SwingKey::new(-0.8, 0.3, -1.2, 1.0)),
     sweep(0.75, 0.8, 1.35, SwingKey::new(0.1, -0.35, 0.0, 3.1), SwingKey::new(0.0, 0.5, 0.0, 0.6)),
 ];
 
