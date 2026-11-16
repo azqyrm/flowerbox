@@ -145,6 +145,8 @@ fn toggle_menu(
     pads: Query<&Gamepad>,
     mut menu: ResMut<InventoryMenu>,
     mut menus: ResMut<MenuInput>,
+    real: Res<Time<Real>>,
+    mut last_toggle: Local<f32>,
     player: Query<(&ActionState<Action>, Has<DeathSequence>), With<Player>>,
     mut root: Query<&mut Visibility, With<MenuRoot>>,
 ) {
@@ -152,7 +154,14 @@ fn toggle_menu(
     let back = keys.just_pressed(KeyCode::Escape) || pads.iter().any(|g| g.just_pressed(GamepadButton::East));
     // Not over another menu (the pause menu or the online panel).
     let others = menus.pause || menus.online;
-    let toggle = (actions.just_pressed(&Action::Inventory) && (menu.open || !others)) || (menu.open && back);
+    // A second toggle within 0.25 s is ignored: a key delivered twice (or a press bouncing through
+    // the desktop's shortcut handling) mustn't open and close the screen in one go.
+    let now = real.elapsed_secs();
+    let settled = now - *last_toggle > 0.25;
+    let toggle = settled && ((actions.just_pressed(&Action::Inventory) && (menu.open || !others)) || (menu.open && back));
+    if toggle {
+        *last_toggle = now;
+    }
     let want = !dying && (menu.open != toggle);
     menus.inventory = want;
     if want != menu.open {

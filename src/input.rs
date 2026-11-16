@@ -20,7 +20,7 @@ impl Plugin for InputPlugin {
         app.add_plugins(InputManagerPlugin::<Action>::default())
             .init_resource::<GameplayBlocked>()
             .init_resource::<MenuInput>()
-            .configure_sets(Update, (InputSystems::Cursor, InputSystems::Menus, InputSystems::Apply, InputSystems::Gather).chain())
+            .configure_sets(Update, (InputSystems::Menus, InputSystems::Apply, InputSystems::Cursor, InputSystems::Gather).chain())
             .add_systems(Startup, grab_cursor)
             .add_systems(
                 Update,
@@ -151,11 +151,12 @@ pub enum InputSystems {
     Gather,
 }
 
-fn apply_menu_block(menus: Res<MenuInput>, mut blocked: ResMut<GameplayBlocked>, mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
+/// Derives the block from the menus; the cursor follows in [`toggle_cursor`] (next frame's
+/// `Cursor` set — the frame a menu closes still counts as blocked anyway).
+fn apply_menu_block(menus: Res<MenuInput>, mut blocked: ResMut<GameplayBlocked>) {
     let want = menus.any();
     if blocked.0 != want {
         blocked.0 = want;
-        set_grab(&mut cursor, !want);
     }
 }
 
@@ -315,20 +316,27 @@ fn grab_cursor(mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
     set_grab(&mut cursor, true);
 }
 
-/// Esc releases the cursor, a left click grabs it again.
+/// The cursor follows the game's state: free and visible in menus, captured during play — but only
+/// while the window has focus (alt-tabbing away leaves it alone; coming back captures it again).
+/// Checked every frame, not only when a menu opens or closes: the desktop can drop or restore a
+/// pointer lock behind our back (GNOME Wayland, Shift+Tab report, ROADMAP N30), and a stale lock
+/// left the inventory without a visible cursor.
 pub fn toggle_cursor(
     blocked: Res<GameplayBlocked>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
+    window: Single<&Window, With<PrimaryWindow>>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
+    mut was_focused: Local<bool>,
 ) {
-    if blocked.0 {
-        return; // the menu owns the cursor
+    let focused = window.focused;
+    let regained = focused && !*was_focused;
+    *was_focused = focused;
+    if !focused {
+        return;
     }
-    if keys.just_pressed(KeyCode::Escape) {
-        set_grab(&mut cursor, false);
-    } else if mouse.just_pressed(MouseButton::Left) && cursor.grab_mode == CursorGrabMode::None {
-        set_grab(&mut cursor, true);
+    let want_grab = !blocked.0;
+    let grabbed = cursor.grab_mode != CursorGrabMode::None;
+    if regained || grabbed != want_grab || cursor.visible == want_grab {
+        set_grab(&mut cursor, want_grab);
     }
 }
 
