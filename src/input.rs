@@ -64,6 +64,8 @@ pub enum Action {
     TwoHand,
     /// The main weapon's ability.
     Ability,
+    /// Gamepad Y: held + R1 / L1 two-hands that hand's weapon (Souls); tapped alone it interacts.
+    PadY,
 }
 
 /// The player's input map: the rebindable keyboard/mouse bindings from the settings, plus fixed
@@ -103,8 +105,8 @@ pub fn input_map(bindings: &Bindings) -> InputMap<Action> {
         .with_dual_axis(Action::Move, dpad)
         .with_dual_axis(Action::Look, MouseMove::default())
     // Gamepad (Souls-like layout): left stick move, right stick camera, R1 attack (tap/hold),
-    // L1 block, B/Circle roll/sprint, A/Cross jump, X/Square drink, Y/Triangle interact,
-    // R3 lock-on, Start inventory.
+    // L1 block, B/Circle roll/sprint, A/Cross jump, X/Square drink, Y/Triangle interact (held +
+    // R1 / L1: two-hand that weapon), R3 lock-on, Start inventory.
     .with_dual_axis(Action::Move, GamepadStick::LEFT)
     .with_dual_axis(Action::LookStick, GamepadStick::RIGHT)
     .with(Action::Attack, GamepadButton::RightTrigger)
@@ -112,7 +114,7 @@ pub fn input_map(bindings: &Bindings) -> InputMap<Action> {
     .with(Action::DodgeSprint, GamepadButton::East)
     .with(Action::Jump, GamepadButton::South)
     .with(Action::DrinkAle, GamepadButton::West)
-    .with(Action::Interact, GamepadButton::North)
+    .with(Action::PadY, GamepadButton::North)
     .with(Action::LockOn, GamepadButton::RightThumb)
     .with(Action::Inventory, GamepadButton::Start)
     .with(Action::Ability, GamepadButton::LeftTrigger2)
@@ -185,6 +187,8 @@ pub struct PlayerInput {
     two_hand_combo: bool,
     /// The two-hand button was tapped alone: lock on (`crate::lockon` consumes it).
     pub lock_on_tap: bool,
+    /// Gamepad Y was used as the two-hand modifier this press (so its release doesn't interact).
+    pub pad_combo: bool,
 }
 
 /// What the right (left-hand) button does, from what the hands hold.
@@ -313,12 +317,17 @@ fn gather_player_input(
         if actions.just_pressed(&Action::TwoHand) {
             input.two_hand_combo = false;
         }
-        let modifier = actions.pressed(&Action::TwoHand);
+        // Gamepad Y does the same with R1 / L1; tapped alone it interacts (on release).
+        if actions.just_pressed(&Action::PadY) {
+            input.pad_combo = false;
+        }
+        let modifier = actions.pressed(&Action::TwoHand) || actions.pressed(&Action::PadY);
         if modifier {
             for (button, hand) in [(Action::Attack, Hand::Right), (Action::Block, Hand::Left)] {
                 if actions.just_pressed(&button) {
                     two_hand.write(TwoHandRequest { character: entity, hand });
                     input.two_hand_combo = true;
+                    input.pad_combo = true;
                 }
             }
             input.attack = AttackTracker::default(); // swallowed: no attack on release
@@ -370,7 +379,7 @@ fn gather_player_input(
         if actions.just_pressed(&Action::DrinkAle) {
             intent.buffer(ActionRequest::DrinkAle);
         }
-        if actions.just_pressed(&Action::Interact) {
+        if actions.just_pressed(&Action::Interact) || (actions.just_released(&Action::PadY) && !input.pad_combo) {
             input.interact = true;
         }
     }
