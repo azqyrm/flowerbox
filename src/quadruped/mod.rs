@@ -21,6 +21,9 @@ pub mod pose;
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
 
+use crate::humanoid::Part;
+use crate::textures::{self, Tex};
+
 pub struct QuadrupedPlugin;
 
 impl Plugin for QuadrupedPlugin {
@@ -134,6 +137,12 @@ pub struct QuadrupedLook {
     /// per metre of body, and how long the longest are. 0 = smooth.
     pub shag: f32,
     pub shag_length: f32,
+    /// Procedural texture on the body (tinted by `fur`).
+    pub fur_tex: Option<Tex>,
+    /// The wolf's mane over the shoulders and its ears (off for things that aren't wolves).
+    pub mane: bool,
+    /// Decorative shapes on bones (hair, faces, bone spurs…).
+    pub extras: Vec<Part<QBone>>,
 }
 
 /// Proportions (metres) and look of a quadruped. Swap this to get a different beast.
@@ -189,6 +198,9 @@ impl QuadrupedSpec {
                 eye_glow: LinearRgba::rgb(7.0, 3.0, 0.3),
                 shag: 1.0,
                 shag_length: 0.34,
+                fur_tex: None,
+                mane: true,
+                extras: vec![],
             },
         }
     }
@@ -252,8 +264,13 @@ pub fn spawn_quadruped(
     spec: &QuadrupedSpec,
     root_height: f32,
 ) -> QuadrupedRig {
+    let fur = materials.add(StandardMaterial {
+        base_color: spec.look.fur,
+        base_color_texture: spec.look.fur_tex.and_then(textures::get),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
     let mut mat = |c: Color| materials.add(StandardMaterial { base_color: c, perceptual_roughness: 0.95, ..default() });
-    let fur = mat(spec.look.fur);
     let dark = mat(spec.look.dark);
     let belly = mat(spec.look.belly);
     let claws = mat(spec.look.claws);
@@ -290,15 +307,19 @@ pub fn spawn_quadruped(
     part(QBone::Hips, Cuboid::new(0.12, 0.08, s.body_length * 0.9).into(), &dark, t(0.0, barrel * 0.95, mid.z));
     part(QBone::Chest, Sphere::new(s.chest_radius).into(), &fur, t(0.0, 0.0, 0.0));
     // Shaggy mane over the shoulders and neck.
+    if s.look.mane {
     part(QBone::Chest, Sphere::new(1.0).into(), &dark, t(0.0, s.chest_radius * 0.45, -0.06).with_scale(Vec3::new(s.chest_radius * 0.95, s.chest_radius * 0.8, s.chest_radius * 1.1)));
-    part(QBone::Neck, Capsule3d::new(0.13, s.neck.length() * 0.7).into(), &dark, Transform::from_translation(Vec3::new(0.0, s.neck.y * 0.5, -s.neck.x * 0.5)).with_rotation(Quat::from_rotation_x(-(s.neck.x.atan2(s.neck.y)))));
+    }
+    part(QBone::Neck, Capsule3d::new(0.13, s.neck.length() * 0.7).into(), if s.look.mane { &dark } else { &fur }, Transform::from_translation(Vec3::new(0.0, s.neck.y * 0.5, -s.neck.x * 0.5)).with_rotation(Quat::from_rotation_x(-(s.neck.x.atan2(s.neck.y)))));
     // Head: skull, snout, ears, eyes; the lower jaw on its own bone.
     let hr = s.head_radius;
     part(QBone::Head, Sphere::new(hr).into(), &fur, t(0.0, 0.0, 0.0));
     part(QBone::Head, Cuboid::new(hr * 0.95, hr * 0.7, s.snout).into(), &fur, t(0.0, -0.02, -(hr * 0.5 + s.snout * 0.5)));
     part(QBone::Head, Cuboid::new(hr * 0.5, hr * 0.35, 0.08).into(), &dark, t(0.0, 0.0, -(hr * 0.5 + s.snout)));
     for x in [-1.0, 1.0] {
-        part(QBone::Head, Cuboid::new(0.07, 0.15, 0.05).into(), &dark, Transform::from_xyz(x * hr * 0.55, hr * 0.85, hr * 0.15).with_rotation(Quat::from_rotation_z(-x * 0.25)));
+        if s.look.mane {
+            part(QBone::Head, Cuboid::new(0.07, 0.15, 0.05).into(), &dark, Transform::from_xyz(x * hr * 0.55, hr * 0.85, hr * 0.15).with_rotation(Quat::from_rotation_z(-x * 0.25)));
+        }
         part(QBone::Head, Sphere::new(0.028).into(), &eyes, t(x * hr * 0.5, hr * 0.25, -hr * 0.75));
         // Upper fangs.
         part(QBone::Head, Cuboid::new(0.02, 0.06, 0.02).into(), &claws, t(x * hr * 0.32, -hr * 0.42, -(hr * 0.5 + s.snout * 0.85)));
@@ -316,6 +337,12 @@ pub fn spawn_quadruped(
         part(leg.lower, Capsule3d::new(r, lower * 0.9).into(), &fur, t(0.0, -lower * 0.5, 0.0));
         part(leg.paw, Sphere::new(1.0).into(), &dark, t(0.0, -0.01, -0.03).with_scale(Vec3::new(r * 1.4, r * 0.9, r * 1.9)));
         part(leg.paw, Cuboid::new(r * 1.6, 0.02, 0.04).into(), &claws, t(0.0, -0.04, -0.03 - r * 1.7));
+    }
+    let body = [fur.clone(), fur.clone(), belly.clone(), dark.clone(), dark.clone()];
+    for p in &s.look.extras {
+        let m = p.paint.material(materials, &body);
+        let e = commands.spawn((Mesh3d(meshes.add(p.shape.mesh())), MeshMaterial3d(m), p.transform(), NoFrustumCulling)).id();
+        commands.entity(bones[p.bone.index()]).add_child(e);
     }
     if s.look.shag > 0.0 {
         spawn_shag(commands, meshes, &[fur, dark], &bones, s);

@@ -703,7 +703,7 @@ pub fn animate_humanoids(
         &CharacterAction,
         Option<&Wielded>,
         Option<&Guard>,
-    )>,
+    ), Without<crate::character::Dormant>>,
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();

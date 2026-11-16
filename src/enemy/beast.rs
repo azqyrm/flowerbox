@@ -17,12 +17,12 @@ use bevy::prelude::*;
 use crate::weapon::AttackHand;
 
 use super::Enemy;
+use super::ai::{Rng, Senses, Steering, chain_combo, turn_toward};
 use crate::character::action::{ActionKind, ActionPhase, ActionRequest, CharacterAction};
 use crate::character::controller::CharacterController;
 use crate::character::stats::Health;
 use crate::character::{ActionIntent, MoveIntent};
 use crate::combat::Team;
-use crate::tuning::*;
 
 /// How a kind of beast behaves.
 #[derive(Clone, Copy, Debug)]
@@ -73,11 +73,8 @@ pub struct BeastAi {
     /// always comes within a few openings.
     pounce_urge: f32,
     combo_left: u8,
-    strafe: f32,
-    stuck: f32,
-    detour: f32,
-    outbound: bool,
-    rng: u32,
+    steering: Steering,
+    rng: Rng,
 }
 
 impl BeastAi {
@@ -91,22 +88,9 @@ impl BeastAi {
             pounce_cooldown: 1.5,
             pounce_urge: 0.0,
             combo_left: 0,
-            strafe: 1.0,
-            stuck: 0.0,
-            detour: 0.0,
-            outbound: true,
-            rng: seed.max(1),
+            steering: Steering::default(),
+            rng: Rng::new(seed),
         }
-    }
-
-    /// xorshift: deterministic, so autopilot runs repeat.
-    fn roll(&mut self) -> f32 {
-        let mut x = self.rng;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.rng = x;
-        (x & 0xFFFF) as f32 / 65536.0
     }
 
     fn set(&mut self, state: BeastState) {
@@ -123,19 +107,13 @@ pub fn beast_ai(
     spatial: SpatialQuery,
     players: Query<(&Transform, &CharacterAction, &Team), Without<BeastAi>>,
     characters: Query<(), With<CharacterController>>,
-    mut q: Query<(Entity, &Enemy, &mut BeastAi, &Transform, &CharacterController, &CharacterAction, &Health, &mut MoveIntent, &mut ActionIntent)>,
+    mut q: Query<(Entity, &Enemy, &mut BeastAi, &Transform, &CharacterController, &CharacterAction, &Health, &mut MoveIntent, &mut ActionIntent), Without<super::Dormant>>,
 ) {
     let dt = time.delta_secs();
     for (entity, enemy, mut ai, tf, ctrl, action, health, mut movement, mut intent) in &mut q {
         let p = *ai.profile;
-        let nearest = players
-            .iter()
-            .filter(|(_, a, team)| **team == Team::Player && !matches!(a.current, Some(a) if a.kind == ActionKind::Dead))
-            .map(|(t, _, _)| t.translation)
-            .min_by(|a, b| a.distance_squared(tf.translation).total_cmp(&b.distance_squared(tf.translation)));
-        let player_alive = nearest.is_some();
-        let ppos = nearest.unwrap_or(tf.translation + Vec3::Z * 1000.0);
-        ai.target = nearest;
+        let senses = Senses::gather(players.iter(), tf, enemy);
+        ai.target = senses.target;
         intent.tick(dt);
         movement.dir = Vec3::ZERO;
         movement.sprint = false;
@@ -143,26 +121,17 @@ pub fn beast_ai(
         if health.is_dead() {
             continue;
         }
-        let to_player = (ppos - tf.translation).with_y(0.0);
-        let dist = to_player.length();
-        let toward = to_player.normalize_or_zero();
-        let to_home = (enemy.home - tf.translation).with_y(0.0);
+        let (dist, toward) = (senses.dist, senses.toward);
         let busy = action.current.is_some();
-        let sees = |range: f32| {
-            player_alive
-                && dist < range
-                && (ppos.y - tf.translation.y).abs() < 2.5
-                && crate::level::line_of_sight(&spatial, tf.translation + Vec3::Y * 0.3, ppos + Vec3::Y * 0.6, &|e| {
-                    e != entity && !characters.contains(e)
-                })
-        };
+        let skip = |e: Entity| e == entity || characters.contains(e);
+        let sees = |range: f32| senses.sees(&spatial, range, 0.3, &skip);
         ai.timer -= dt;
         ai.pounce_cooldown -= dt;
 
-        if ai.state == BeastState::Idle && health.current < health.max && player_alive {
+        if ai.state == BeastState::Idle && health.current < health.max && senses.alive() {
             ai.set(BeastState::Chase);
         }
-        if matches!(ai.state, BeastState::Chase | BeastState::Bite | BeastState::Recover) && (!player_alive || to_home.length() > p.leash) {
+        if matches!(ai.state, BeastState::Chase | BeastState::Bite | BeastState::Recover) && (!senses.alive() || senses.to_home.length() > p.leash) {
             ai.set(BeastState::Home);
         }
 
@@ -171,14 +140,8 @@ pub fn beast_ai(
                 if sees(p.aggro_range) {
                     info!("a {} notices you", p.name);
                     ai.set(BeastState::Chase);
-                } else if let Some(far) = enemy.patrol {
-                    let goal = if ai.outbound { far } else { enemy.home };
-                    let to = (goal - tf.translation).with_y(0.0);
-                    if to.length() < 0.4 {
-                        ai.outbound = !ai.outbound;
-                    } else {
-                        movement.dir = to.normalize() * p.patrol_factor;
-                    }
+                } else if let Some(dir) = ai.steering.patrol(enemy, tf.translation, p.patrol_factor) {
+                    movement.dir = dir;
                 }
             }
             BeastState::Chase => {
@@ -193,26 +156,18 @@ pub fn beast_ai(
                     } else if dist < p.bite_range && ai.timer <= 0.0 {
                         intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
                         let (a, b) = p.combo;
-                        ai.combo_left = a.saturating_sub(1) + (ai.roll() * (b - a + 1) as f32) as u8;
+                        ai.combo_left = a.saturating_sub(1) + (ai.rng.roll() * (b - a + 1) as f32) as u8;
                         ai.set(BeastState::Bite);
                     }
                 }
             }
             BeastState::Bite => {
                 movement.face = Some(toward);
-                if let Some(cur) = action.current {
-                    let chaining = matches!(cur.kind, ActionKind::LightAttack(_)) && ai.combo_left > 0 && cur.elapsed >= cur.def.cancel - 0.1;
-                    if chaining {
-                        ai.combo_left -= 1;
-                        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
-                    }
-                    if matches!(cur.kind, ActionKind::Hurt | ActionKind::Stunned) {
-                        intent.buffered = None;
-                        ai.combo_left = 0;
-                    }
+                if action.current.is_some() {
+                    ai.combo_left = chain_combo(action, &mut intent, ai.combo_left);
                 } else if intent.buffered.is_none() {
-                    ai.timer = p.recover_time.0 + (p.recover_time.1 - p.recover_time.0) * ai.roll();
-                    ai.strafe = if ai.roll() < 0.5 { -1.0 } else { 1.0 };
+                    ai.timer = ai.rng.range(p.recover_time);
+                    ai.steering.strafe = ai.rng.sign();
                     ai.set(BeastState::Recover);
                 }
             }
@@ -234,7 +189,7 @@ pub fn beast_ai(
                 // With the pounce ready, it backs off to leaping distance first.
                 let make_room = ai.pounce_cooldown <= 0.0 && dist < p.pounce_range.0 + 0.4;
                 if !busy {
-                    let side = Vec3::new(-toward.z, 0.0, toward.x) * ai.strafe;
+                    let side = senses.around(ai.steering.strafe);
                     movement.dir = if make_room {
                         (-toward * 0.85 + side * 0.25).normalize_or_zero() * 0.8
                     } else if dist < p.circle_distance * 0.6 {
@@ -250,34 +205,19 @@ pub fn beast_ai(
                 }
             }
             BeastState::Home => {
-                if to_home.length() > 0.4 {
-                    movement.dir = to_home.normalize() * p.chase_factor * 0.6;
+                if senses.to_home.length() > 0.4 {
+                    movement.dir = senses.to_home.normalize() * p.chase_factor * 0.6;
                 } else {
                     ai.set(BeastState::Idle);
                 }
-                if sees(p.aggro_range * 0.6) && to_home.length() < p.leash * 0.7 {
+                if sees(p.aggro_range * 0.6) && senses.to_home.length() < p.leash * 0.7 {
                     ai.set(BeastState::Chase);
                 }
             }
         }
 
-        // Walking into something: sidestep around it for a moment.
-        let wants = movement.dir.length() * WALK_SPEED;
-        let moved = Vec2::new(ctrl.moved.x, ctrl.moved.z).length();
-        ai.stuck = if wants > 1.0 && moved < wants * 0.3 { ai.stuck + dt } else { 0.0 };
-        if ai.stuck > 0.4 {
-            ai.stuck = 0.0;
-            ai.detour = 0.6;
-            if ai.roll() < 0.5 {
-                ai.strafe = -ai.strafe;
-            }
-        }
-        if ai.detour > 0.0 && movement.dir.length_squared() > 0.01 {
-            ai.detour -= dt;
-            let d = movement.dir;
-            let side = Vec3::new(-d.z, 0.0, d.x) * ai.strafe;
-            movement.dir = (side * 0.8 + d * 0.3).normalize_or_zero() * d.length();
-        }
+        let BeastAi { steering, rng, .. } = &mut *ai;
+        steering.unstick(&mut movement, ctrl, dt, rng, 0.6);
     }
 }
 
@@ -289,8 +229,8 @@ fn try_pounce(ai: &mut BeastAi, intent: &mut ActionIntent, dist: f32, sees: &dyn
     if ai.pounce_cooldown > 0.0 || !(lo..hi).contains(&dist) || !sees(hi + 1.0) {
         return false;
     }
-    ai.pounce_cooldown = p.pounce_cooldown * (0.3 + 0.4 * ai.roll());
-    let roll = ai.roll();
+    ai.pounce_cooldown = p.pounce_cooldown * ai.rng.range((0.3, 0.7));
+    let roll = ai.rng.roll();
     let chance = p.pounce_chance + ai.pounce_urge;
     debug!("{}: pounce decision at {dist:.1} m (chance {chance:.2}): {}", p.name, if roll < chance { "yes" } else { "not now" });
     if roll >= chance {
@@ -314,14 +254,7 @@ pub fn pounce_tracking(time: Res<Time>, mut q: Query<(&BeastAi, &Transform, &mut
             continue;
         };
         let Some(target) = ai.target else { continue };
-        let to = (target - tf.translation).with_y(0.0);
-        if to.length_squared() < 1e-4 {
-            continue;
-        }
-        let want = f32::atan2(-to.x, -to.z);
-        let d = (want - ctrl.facing + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-        let step = ai.profile.windup_turn * dt;
-        ctrl.facing += d.clamp(-step, step);
+        turn_toward(&mut ctrl.facing, tf.translation, target, ai.profile.windup_turn, dt);
         cur.dir = Vec3::new(-ctrl.facing.sin(), 0.0, -ctrl.facing.cos());
     }
 }

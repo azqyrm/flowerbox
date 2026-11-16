@@ -261,7 +261,7 @@ pub struct QuadrupedAnimator {
 
 pub fn animate_quadrupeds(
     time: Res<Time>,
-    mut characters: Query<(&QuadrupedSpec, &QuadrupedRig, &mut QuadrupedAnimator, &CharacterController, &CharacterAction)>,
+    mut characters: Query<(&QuadrupedSpec, &QuadrupedRig, &mut QuadrupedAnimator, &CharacterController, &CharacterAction), Without<crate::character::Dormant>>,
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();

@@ -50,7 +50,7 @@ impl Plugin for CharacterPlugin {
                     (action::start_buffered_action, action::release_heavy_charge, action::tick_action, guard::update_guard)
                         .chain()
                         .in_set(CharacterSystems::Actions),
-                    (stats::update_stamina, stats::tick_hit_immunity, corpses_dont_block).in_set(CharacterSystems::Stats),
+                    (stats::update_stamina, stats::tick_hit_immunity, stats::regen_poise, corpses_dont_block).in_set(CharacterSystems::Stats),
                     controller::move_character.in_set(CharacterSystems::Movement),
                 ),
             );
@@ -103,6 +103,11 @@ pub enum CharacterSystems {
     Movement,
 }
 
+/// Asleep: nothing simulates, animates or draws this character (an enemy far from every player,
+/// `crate::enemy::dormancy`). The controller, the animators and the brains skip it.
+#[derive(Component, Debug, Default)]
+pub struct Dormant;
+
 /// A character simulated on another machine (an online puppet): nothing local moves it, and
 /// damage dealt to it isn't applied here but forwarded to its owner (`crate::net`).
 #[derive(Component, Debug, Default)]
@@ -148,9 +153,41 @@ impl ActionIntent {
     }
 }
 
+/// The character's capsule (optional; without it: the player's 0.35 m × 1.1 m, 1.8 m tall).
+/// Big creatures (the boss) carry a bigger one; the controller's ground probe follows it.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct BodySize {
+    pub radius: f32,
+    /// Length of the capsule's straight middle part.
+    pub length: f32,
+}
+
+impl Default for BodySize {
+    fn default() -> Self {
+        Self { radius: PLAYER_RADIUS, length: PLAYER_CAPSULE_LENGTH }
+    }
+}
+
+impl BodySize {
+    /// Feet to centre.
+    pub fn half_height(&self) -> f32 {
+        self.length * 0.5 + self.radius
+    }
+
+    pub fn collider(&self) -> Collider {
+        Collider::capsule(self.radius, self.length)
+    }
+}
+
 /// Everything a character needs to move, act and take damage. `transform` is the capsule center.
 pub fn character_bundle(transform: Transform, max_hp: f32, max_stamina: f32) -> impl Bundle {
+    character_bundle_sized(transform, max_hp, max_stamina, BodySize::default())
+}
+
+/// [`character_bundle`] with its own capsule.
+pub fn character_bundle_sized(transform: Transform, max_hp: f32, max_stamina: f32, size: BodySize) -> impl Bundle {
     (
+        size,
         MoveIntent::default(),
         ActionIntent::default(),
         CharacterController::default(),
@@ -162,7 +199,7 @@ pub fn character_bundle(transform: Transform, max_hp: f32, max_stamina: f32) -> 
         transform,
         Visibility::default(),
         RigidBody::Kinematic,
-        Collider::capsule(PLAYER_RADIUS, PLAYER_CAPSULE_LENGTH),
+        size.collider(),
         TransformInterpolation,
     )
 }

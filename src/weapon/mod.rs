@@ -25,6 +25,8 @@
 //! hitbox matches the model.
 
 pub mod axe;
+pub mod claws;
+pub mod greatsword;
 pub mod hollow_blade;
 pub mod light_sword;
 pub mod warg_fangs;
@@ -64,17 +66,28 @@ pub enum WeaponClass {
     WargFangs,
     /// Axes: slower, vertical chops.
     Axe,
+    /// A horror's long hooked fingers: quick raking flurries. A natural weapon: no model.
+    Claws,
+    /// Huge two-handed blades: slow, wide, crushing sweeps (the Thorned Saint's).
+    Greatsword,
 }
 
 impl WeaponClass {
     /// Every class (tests iterate over this, so new classes get checked automatically).
     #[allow(dead_code)] // only tests use it so far
-    pub const ALL: [WeaponClass; 4] = [WeaponClass::LightSword, WeaponClass::HollowBlade, WeaponClass::WargFangs, WeaponClass::Axe];
+    pub const ALL: [WeaponClass; 6] =
+        [WeaponClass::LightSword, WeaponClass::HollowBlade, WeaponClass::WargFangs, WeaponClass::Axe, WeaponClass::Claws, WeaponClass::Greatsword];
 
     /// A creature's body part rather than something held (no humanoid swing animations).
     #[allow(dead_code)] // only tests use it so far
     pub fn is_natural(self) -> bool {
         matches!(self, WeaponClass::WargFangs)
+    }
+
+    /// No model in the hand (jaws, claws): the body is the weapon.
+    #[allow(dead_code)]
+    pub fn is_bodily(self) -> bool {
+        matches!(self, WeaponClass::WargFangs | WeaponClass::Claws)
     }
 
     pub fn moveset(self) -> &'static Moveset {
@@ -83,6 +96,8 @@ impl WeaponClass {
             WeaponClass::HollowBlade => &hollow_blade::MOVESET,
             WeaponClass::WargFangs => &warg_fangs::MOVESET,
             WeaponClass::Axe => &axe::MOVESET,
+            WeaponClass::Claws => &claws::MOVESET,
+            WeaponClass::Greatsword => &greatsword::MOVESET,
         }
     }
 }
@@ -220,11 +235,34 @@ pub struct WeaponPart {
 pub enum ModelSource {
     /// Built from primitive parts.
     Parts(&'static [WeaponPart]),
+    /// Built from shaped, textured or glowing parts (any body [`crate::humanoid::Shape`] with a
+    /// [`crate::humanoid::Paint`], rotated), in the hand's frame (blade along +Y).
+    Styled(&'static [Styled]),
     /// A glTF scene (path under `assets/`), placed with `transform` relative to the hand.
     /// The model's blade should point along +Y from the grip at the origin. (Untested until a
     /// real asset exists.)
     #[allow(dead_code)] // ready for real models (Phase 9)
     Gltf { path: &'static str, transform: Transform },
+}
+
+/// One part of a [`ModelSource::Styled`] weapon.
+#[derive(Clone, Copy, Debug)]
+pub struct Styled {
+    pub shape: crate::humanoid::Shape,
+    pub at: Vec3,
+    /// XYZ euler angles (radians).
+    pub rot: Vec3,
+    pub paint: crate::humanoid::Paint,
+}
+
+impl Styled {
+    pub const fn new(shape: crate::humanoid::Shape, y: f32, paint: crate::humanoid::Paint) -> Self {
+        Self { shape, at: Vec3::new(0.0, y, 0.0), rot: Vec3::ZERO, paint }
+    }
+
+    pub const fn at(shape: crate::humanoid::Shape, at: Vec3, rot: Vec3, paint: crate::humanoid::Paint) -> Self {
+        Self { shape, at, rot, paint }
+    }
 }
 
 /// A concrete weapon.
@@ -354,10 +392,12 @@ fn equip_weapons(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
-    mut characters: Query<(&HumanoidRig, Option<&mut Wielded>)>,
+    mut characters: Query<(&HumanoidRig, Option<&crate::humanoid::HumanoidSpec>, Option<&mut Wielded>)>,
 ) {
     for req in requests.read() {
-        let Ok((rig, wielded)) = characters.get_mut(req.character) else { continue };
+        let Ok((rig, spec, wielded)) = characters.get_mut(req.character) else { continue };
+        // A big body holds a big weapon: the model grows with it (the blade span is per weapon).
+        let scale = spec.map_or(1.0, |s| s.scale);
         for old in wielded.as_ref().map_or([None; 2], |w| w.models).into_iter().flatten() {
             commands.entity(old).despawn();
         }
@@ -370,6 +410,9 @@ fn equip_weapons(
         for (i, (bone, def)) in shown.into_iter().enumerate() {
             let Some(def) = def else { continue };
             let model = spawn_weapon_model(&mut commands, &mut meshes, &mut materials, &asset_server, def);
+            if scale != 1.0 {
+                commands.entity(model).insert(Transform::from_scale(Vec3::splat(scale)));
+            }
             commands.entity(rig.bone(bone)).add_child(model);
             new.models[i] = Some(model);
         }
@@ -414,6 +457,16 @@ pub fn spawn_weapon_model(
                         NoFrustumCulling, // see ROADMAP N13
                     ))
                     .id();
+                commands.entity(root).add_child(e);
+            }
+        }
+        ModelSource::Styled(parts) => {
+            let none = materials.add(StandardMaterial::default());
+            let body = [none.clone(), none.clone(), none.clone(), none.clone(), none];
+            for part in parts {
+                let material = part.paint.material(materials, &body);
+                let t = crate::humanoid::Part::new(Bone::HandR, part.shape, part.at, part.rot, part.paint).transform();
+                let e = commands.spawn((Mesh3d(meshes.add(part.shape.mesh())), MeshMaterial3d(material), t, NoFrustumCulling)).id();
                 commands.entity(root).add_child(e);
             }
         }

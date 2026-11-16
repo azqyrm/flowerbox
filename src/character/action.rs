@@ -36,6 +36,8 @@ pub enum ActionRequest {
     Rest,
     /// A creature's grab leap (only movesets with a `pounce`, e.g. the warg).
     Pounce,
+    /// A specific ability, whatever the weapon (enemies' special moves, `crate::enemy::fighter`).
+    Special(AbilityId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -334,8 +336,10 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             }
         }
         Ability(id) => match id.def().effect {
-            AbilityEffect::Strike(spec) => ActionDef { stamina_cost: id.def().stamina_cost, ..attack_def(&spec, None, GroundRule::Ground, 0.0) },
-            AbilityEffect::Buff { startup, active, recovery, .. } => ActionDef {
+            AbilityEffect::Strike(spec) | AbilityEffect::Spin { swing: spec, .. } | AbilityEffect::Slam { swing: spec, .. } => {
+                ActionDef { stamina_cost: id.def().stamina_cost, ..attack_def(&spec, None, GroundRule::Ground, 0.0) }
+            }
+            AbilityEffect::Buff { startup, active, recovery, .. } | AbilityEffect::Shriek { startup, active, recovery, .. } => ActionDef {
                 startup,
                 active,
                 recovery,
@@ -575,6 +579,7 @@ pub fn resolve_request(
         ActionRequest::Rest => ActionKind::Rest,
         ActionRequest::Pounce if weapon.moveset().pounce.is_some() => ActionKind::Pounce,
         ActionRequest::Pounce => return None,
+        ActionRequest::Special(id) => ActionKind::Ability(id),
     };
     let def = action_def(kind, weapon);
     let ground_ok = match def.ground {

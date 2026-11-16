@@ -272,3 +272,17 @@ pub const LOAD_MEDIUM: f32 = 0.7;
 
 /// Thrown-out items land this far in front of the player (m).
 pub const THROW_OUT_DISTANCE: f32 = 0.9;
+
+/// Poise refills after this long without being hit (s).
+pub const POISE_REGEN_DELAY: f32 = 3.0;
+
+/// Enemies wake when a player comes this close (m) and sleep again beyond `DORMANCY_SLEEP`
+/// (`enemy::dormancy`): asleep they cost nothing (no AI, movement, animation or drawing).
+pub const DORMANCY_WAKE: f32 = 30.0;
+pub const DORMANCY_SLEEP: f32 = 36.0;
+
+/// Fog gates: prompt range in front of the mist and how far stepping through carries you (m).
+pub const FOG_RANGE: f32 = 1.6;
+pub const FOG_STEP: f32 = 1.4;
+/// The boss bar shows while a living boss is this close (m).
+pub const BOSS_BAR_RANGE: f32 = 26.0;

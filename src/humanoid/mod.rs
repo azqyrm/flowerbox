@@ -21,6 +21,8 @@ pub mod pose;
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
 
+use crate::textures::{self, Tex};
+
 pub struct HumanoidPlugin;
 
 impl Plugin for HumanoidPlugin {
@@ -119,7 +121,7 @@ impl Bone {
     }
 }
 
-/// Colours of a humanoid.
+/// Colours, textures and extra parts of a humanoid.
 #[derive(Clone, Debug)]
 pub struct HumanoidLook {
     pub skin: Color,
@@ -129,6 +131,154 @@ pub struct HumanoidLook {
     pub hair: Color,
     /// Glowing eyes (emissive), e.g. for Hollows. `None` = plain dark eyes.
     pub eye_glow: Option<LinearRgba>,
+    /// Procedural detail textures (tinted by the colours above), `None` = plain.
+    pub skin_tex: Option<Tex>,
+    pub top_tex: Option<Tex>,
+    pub bottom_tex: Option<Tex>,
+    /// No hair cap (bald heads, masks, hoods made of extras).
+    pub bald: bool,
+    /// Decorative shapes on bones: pauldrons, spikes, horns, robes, crowns… They follow the
+    /// bones like the body, but gameplay ignores them (hits use the capsule).
+    pub extras: Vec<Part>,
+}
+
+impl Default for HumanoidLook {
+    fn default() -> Self {
+        HumanoidSpec::human().look
+    }
+}
+
+/// One decorative shape on a bone (`B`: a humanoid [`Bone`] or a quadruped's `QBone`), in the
+/// bone's frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Part<B = Bone> {
+    pub bone: B,
+    pub shape: Shape,
+    pub at: Vec3,
+    /// XYZ euler angles (radians).
+    pub rot: Vec3,
+    pub paint: Paint,
+}
+
+impl<B: Copy> Part<B> {
+    pub const fn new(bone: B, shape: Shape, at: Vec3, rot: Vec3, paint: Paint) -> Self {
+        Self { bone, shape, at, rot, paint }
+    }
+
+    pub fn scaled(self, f: f32) -> Self {
+        Self { at: self.at * f, shape: self.shape.scaled(f), ..self }
+    }
+
+    pub fn transform(&self) -> Transform {
+        Transform::from_translation(self.at).with_rotation(Quat::from_euler(EulerRot::XYZ, self.rot.x, self.rot.y, self.rot.z))
+    }
+}
+
+impl Part<Bone> {
+    /// The same part on the other side of the body.
+    pub fn mirrored(self) -> Self {
+        Self { bone: self.bone.mirror(), at: Vec3::new(-self.at.x, self.at.y, self.at.z), rot: Vec3::new(self.rot.x, -self.rot.y, -self.rot.z), ..self }
+    }
+}
+
+/// `parts` plus their mirror images (for symmetric decorations).
+pub fn symmetric(parts: &[Part]) -> Vec<Part> {
+    parts.iter().flat_map(|p| [*p, p.mirrored()]).collect()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Shape {
+    Box(Vec3),
+    Ball(f32),
+    /// Radius, length of the straight part (along Y).
+    Capsule(f32, f32),
+    /// Base radius, height (tip along +Y).
+    Cone(f32, f32),
+    /// Radius, height (along Y).
+    Cylinder(f32, f32),
+    /// Tube radius, ring radius (lying in XZ).
+    Ring(f32, f32),
+}
+
+impl Shape {
+    pub fn scaled(self, f: f32) -> Self {
+        match self {
+            Shape::Box(v) => Shape::Box(v * f),
+            Shape::Ball(r) => Shape::Ball(r * f),
+            Shape::Capsule(r, l) => Shape::Capsule(r * f, l * f),
+            Shape::Cone(r, h) => Shape::Cone(r * f, h * f),
+            Shape::Cylinder(r, h) => Shape::Cylinder(r * f, h * f),
+            Shape::Ring(a, b) => Shape::Ring(a * f, b * f),
+        }
+    }
+
+    pub fn mesh(self) -> Mesh {
+        match self {
+            Shape::Box(v) => Cuboid::from_size(v).into(),
+            Shape::Ball(r) => Sphere::new(r).into(),
+            Shape::Capsule(r, l) => Capsule3d::new(r, l).into(),
+            Shape::Cone(r, h) => Cone { radius: r, height: h }.into(),
+            Shape::Cylinder(r, h) => Cylinder::new(r, h).into(),
+            Shape::Ring(a, b) => Torus::new(b - a, b + a).into(),
+        }
+    }
+}
+
+impl Paint {
+    /// The material for this paint; the named body colours come from `body` (skin, top, bottom,
+    /// boots, hair).
+    pub fn material(self, materials: &mut Assets<StandardMaterial>, body: &[Handle<StandardMaterial>; 5]) -> Handle<StandardMaterial> {
+        let plain = |materials: &mut Assets<StandardMaterial>, c: Color, tex: Option<Tex>| {
+            materials.add(StandardMaterial { base_color: c, base_color_texture: tex.and_then(textures::get), perceptual_roughness: 0.85, ..default() })
+        };
+        match self {
+            Paint::Skin => body[0].clone(),
+            Paint::Top => body[1].clone(),
+            Paint::Bottom => body[2].clone(),
+            Paint::Boots => body[3].clone(),
+            Paint::Hair => body[4].clone(),
+            Paint::Color(c) => plain(materials, c, None),
+            Paint::Textured(c, t) => plain(materials, c, Some(t)),
+            Paint::Metal(c) => materials.add(StandardMaterial { base_color: c, metallic: 0.9, perceptual_roughness: 0.35, ..default() }),
+            Paint::TexturedMetal(c, t) => materials.add(StandardMaterial {
+                base_color: c,
+                base_color_texture: textures::get(t),
+                metallic: 0.85,
+                perceptual_roughness: 0.4,
+                ..default()
+            }),
+            Paint::Glow(g) => materials.add(StandardMaterial { base_color: Color::BLACK, emissive: g, ..default() }),
+            Paint::GlowTex(g, t) => materials.add(StandardMaterial {
+                base_color: Color::srgb(0.05, 0.05, 0.06),
+                emissive: g,
+                emissive_texture: textures::get(t),
+                metallic: 0.8,
+                perceptual_roughness: 0.4,
+                ..default()
+            }),
+        }
+    }
+}
+
+/// What an extra part is made of.
+#[derive(Clone, Copy, Debug)]
+pub enum Paint {
+    Skin,
+    Top,
+    Bottom,
+    Boots,
+    Hair,
+    Color(Color),
+    /// A colour with a procedural texture.
+    Textured(Color, Tex),
+    /// Polished metal.
+    Metal(Color),
+    /// Metal with a procedural texture (rust, damascus…).
+    TexturedMetal(Color, Tex),
+    /// Glowing (emissive), e.g. eyes, embers, runes.
+    Glow(LinearRgba),
+    /// Dark metal glowing where the texture is bright (rune-etched blades).
+    GlowTex(LinearRgba, Tex),
 }
 
 /// Proportions (metres) and look of a humanoid. Swap this to get a different body.
@@ -153,6 +303,8 @@ pub struct HumanoidSpec {
     pub head_radius: f32,
     pub arm_radius: f32,
     pub leg_radius: f32,
+    /// Overall size relative to the human (feet, neck; set by [`HumanoidSpec::scaled`]).
+    pub scale: f32,
     pub look: HumanoidLook,
 }
 
@@ -174,6 +326,7 @@ impl HumanoidSpec {
             head_radius: 0.13,
             arm_radius: 0.06,
             leg_radius: 0.08,
+            scale: 1.0,
             look: HumanoidLook {
                 skin: Color::srgb(0.78, 0.6, 0.48),
                 top: Color::srgb(0.32, 0.22, 0.14),
@@ -181,6 +334,11 @@ impl HumanoidSpec {
                 boots: Color::srgb(0.12, 0.08, 0.05),
                 hair: Color::srgb(0.12, 0.08, 0.05),
                 eye_glow: None,
+                skin_tex: None,
+                top_tex: None,
+                bottom_tex: None,
+                bald: false,
+                extras: vec![],
             },
         }
     }
@@ -200,21 +358,52 @@ impl HumanoidSpec {
                 boots: Color::srgb(0.08, 0.07, 0.06),
                 hair: Color::srgb(0.3, 0.3, 0.27),
                 eye_glow: Some(LinearRgba::rgb(6.0, 2.2, 0.4)),
+                skin_tex: Some(Tex::Leather),
+                top_tex: Some(Tex::Cloth),
+                bottom_tex: Some(Tex::Cloth),
+                ..HumanoidLook::default()
             },
             ..Self::human()
         }
     }
 
+    /// The same body `f` times as big (every length, radius and extra part): poses are angles, so
+    /// every animation fits, and the FK hitboxes grow with it.
+    pub fn scaled(mut self, f: f32) -> Self {
+        for v in [
+            &mut self.pelvis_height,
+            &mut self.spine,
+            &mut self.shoulder_height,
+            &mut self.shoulder_x,
+            &mut self.neck_height,
+            &mut self.upper_arm,
+            &mut self.forearm,
+            &mut self.hip_x,
+            &mut self.thigh,
+            &mut self.shin,
+            &mut self.head_radius,
+            &mut self.arm_radius,
+            &mut self.leg_radius,
+        ] {
+            *v *= f;
+        }
+        self.torso *= f;
+        self.scale *= f;
+        self.look.extras = self.look.extras.iter().map(|p| p.scaled(f)).collect();
+        self
+    }
+
     /// Height of the ankle (the foot bone's origin) above the floor in the rest pose.
     pub fn ankle_height(&self) -> f32 {
-        self.pelvis_height - 0.02 - self.thigh - self.shin
+        self.pelvis_height - 0.02 * self.scale - self.thigh - self.shin
     }
 
     /// Heel and toe of the sole in the foot bone's frame (matches the boot mesh). Locomotion
     /// keeps the lowest of these on the floor.
     pub fn sole_points(&self) -> [Vec3; 2] {
         let y = -self.ankle_height();
-        [Vec3::new(0.0, y, FOOT_OFFSET + FOOT_LENGTH * 0.5), Vec3::new(0.0, y, FOOT_OFFSET - FOOT_LENGTH * 0.5)]
+        let (off, len) = (FOOT_OFFSET * self.scale, FOOT_LENGTH * self.scale);
+        [Vec3::new(0.0, y, off + len * 0.5), Vec3::new(0.0, y, off - len * 0.5)]
     }
 
     /// Rest translation of `bone` relative to its parent (Pelvis: relative to the feet).
@@ -228,8 +417,8 @@ impl HumanoidSpec {
             UpperArmR => Vec3::new(self.shoulder_x, self.shoulder_height, 0.0),
             ForearmL | ForearmR => Vec3::NEG_Y * self.upper_arm,
             HandL | HandR => Vec3::NEG_Y * self.forearm,
-            ThighL => Vec3::new(-self.hip_x, -0.02, 0.0),
-            ThighR => Vec3::new(self.hip_x, -0.02, 0.0),
+            ThighL => Vec3::new(-self.hip_x, -0.02 * self.scale, 0.0),
+            ThighR => Vec3::new(self.hip_x, -0.02 * self.scale, 0.0),
             ShinL | ShinR => Vec3::NEG_Y * self.thigh,
             FootL | FootR => Vec3::NEG_Y * self.shin,
         }
@@ -265,17 +454,20 @@ pub fn spawn_humanoid(
     spec: &HumanoidSpec,
     root_height: f32,
 ) -> HumanoidRig {
-    let mut mat = |c: Color| {
-        materials.add(StandardMaterial { base_color: c, perceptual_roughness: 0.85, ..default() })
-    };
-    let skin = mat(spec.look.skin);
-    let top = mat(spec.look.top);
-    let bottom = mat(spec.look.bottom);
-    let boots = mat(spec.look.boots);
-    let hair = mat(spec.look.hair);
+    fn mat(materials: &mut Assets<StandardMaterial>, c: Color, tex: Option<Tex>) -> Handle<StandardMaterial> {
+        materials.add(StandardMaterial { base_color: c, base_color_texture: tex.and_then(textures::get), perceptual_roughness: 0.85, ..default() })
+    }
+    let look = &spec.look;
+    let skin = mat(materials, look.skin, look.skin_tex);
+    let top = mat(materials, look.top, look.top_tex);
+    let bottom = mat(materials, look.bottom, look.bottom_tex);
+    let boots = mat(materials, look.boots, Some(Tex::Leather));
+    let hair = mat(materials, look.hair, None);
+    let body = [skin.clone(), top.clone(), bottom.clone(), boots.clone(), hair.clone()];
+    let extra_mats: Vec<Handle<StandardMaterial>> = look.extras.iter().map(|p| p.paint.material(materials, &body)).collect();
     let dark = match spec.look.eye_glow {
         Some(glow) => materials.add(StandardMaterial { base_color: Color::BLACK, emissive: glow, ..default() }),
-        None => mat(Color::srgb(0.03, 0.03, 0.03)),
+        None => mat(materials, Color::srgb(0.03, 0.03, 0.03), None),
     };
 
     let model = commands
@@ -311,12 +503,14 @@ pub fn spawn_humanoid(
     part(Bone::Pelvis, Cuboid::new(s.torso.x * 0.85, 0.2, s.torso.z * 0.9).into(), &bottom, t(0.0, 0.02, 0.0));
     part(Bone::Pelvis, Cuboid::new(s.torso.x * 0.9, 0.07, s.torso.z * 0.95).into(), &boots, t(0.0, 0.1, 0.0));
     part(Bone::Chest, Cuboid::from_size(s.torso).into(), &top, t(0.0, s.torso.y * 0.5 + 0.02, 0.0));
-    part(Bone::Chest, Cylinder::new(0.055, 0.1).into(), &skin, t(0.0, s.neck_height - 0.03, 0.0));
+    part(Bone::Chest, Cylinder::new(0.055 * s.scale, 0.1 * s.scale).into(), &skin, t(0.0, s.neck_height - 0.03 * s.scale, 0.0));
     // Head
     let hr = s.head_radius;
     part(Bone::Head, Sphere::new(hr).into(), &skin, t(0.0, hr, 0.0));
-    part(Bone::Head, Sphere::new(hr * 1.04).into(), &hair, t(0.0, hr * 1.2, hr * 0.2));
-    part(Bone::Head, Cuboid::new(hr, 0.025, 0.02).into(), &dark, t(0.0, hr * 1.1, -hr * 0.95));
+    if !s.look.bald {
+        part(Bone::Head, Sphere::new(hr * 1.04).into(), &hair, t(0.0, hr * 1.2, hr * 0.2));
+    }
+    part(Bone::Head, Cuboid::new(hr, 0.025 * s.scale, 0.02 * s.scale).into(), &dark, t(0.0, hr * 1.1, -hr * 0.95));
     // Arms
     for (upper, fore, hand) in [(Bone::UpperArmL, Bone::ForearmL, Bone::HandL), (Bone::UpperArmR, Bone::ForearmR, Bone::HandR)] {
         part(upper, Sphere::new(s.arm_radius * 1.3).into(), &top, Transform::IDENTITY);
@@ -328,7 +522,15 @@ pub fn spawn_humanoid(
     for (thigh, shin, foot) in [(Bone::ThighL, Bone::ShinL, Bone::FootL), (Bone::ThighR, Bone::ShinR, Bone::FootR)] {
         part(thigh, Capsule3d::new(s.leg_radius * 1.1, s.thigh - s.leg_radius).into(), &bottom, t(0.0, -s.thigh * 0.5, 0.0));
         part(shin, Capsule3d::new(s.leg_radius, s.shin - s.leg_radius).into(), &bottom, t(0.0, -s.shin * 0.5, 0.0));
-        part(foot, Cuboid::new(s.leg_radius * 2.0, 0.1, FOOT_LENGTH).into(), &boots, t(0.0, -s.ankle_height() + 0.05, FOOT_OFFSET));
+        part(
+            foot,
+            Cuboid::new(s.leg_radius * 2.0, 0.1 * s.scale, FOOT_LENGTH * s.scale).into(),
+            &boots,
+            t(0.0, -s.ankle_height() + 0.05 * s.scale, FOOT_OFFSET * s.scale),
+        );
+    }
+    for (p, m) in s.look.extras.iter().zip(&extra_mats) {
+        part(p.bone, p.shape.mesh(), m, p.transform());
     }
 
     HumanoidRig { model, bones, root_height }

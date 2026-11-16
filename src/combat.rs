@@ -133,7 +133,13 @@ fn sword_hits(
         let from = (cur.elapsed - dt).max(cur.def.startup);
         let steps = (((cur.elapsed - from) / 0.004).ceil() as usize).clamp(1, 64);
         let filter = SpatialQueryFilter::from_excluded_entities([entity]);
-        for (blade_index, (bone, weapon)) in wielded.blades(cur.hand).into_iter().enumerate() {
+        // A spinning attack may hit each target once per turn.
+        let turn = match cur.kind {
+            ActionKind::Ability(id) if id.turns() > 0.0 => (((cur.elapsed - cur.def.startup) / cur.def.active.max(1e-3)) * id.turns()).floor().max(0.0) as usize,
+            _ => 0,
+        };
+        for (blade, (bone, weapon)) in wielded.blades(cur.hand).into_iter().enumerate() {
+            let blade_index = blade + 2 * turn;
             for i in 0..=steps {
                 let mut sample = cur;
                 sample.elapsed = from + (cur.elapsed - from) * i as f32 / steps as f32;

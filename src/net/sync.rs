@@ -27,7 +27,8 @@ use crate::character::controller::CharacterController;
 use crate::character::guard::{Guard, Parried};
 use crate::character::stats::{DamageMessage, Health};
 use crate::combat::{Dummy, Hitstop, Hurtbox, Team};
-use crate::enemy::{Enemy, EnemiesSuppressed, EnemyKind, warg};
+use crate::character::BodySize;
+use crate::enemy::{self, Enemy, EnemiesSuppressed};
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::items::inventory::{EquipSlot, EquipStats, EquipVisuals, Equipment, Inventory};
@@ -35,7 +36,7 @@ use crate::lockon::Targetable;
 use crate::player::Player;
 use crate::pvp::Pvp;
 use crate::tuning::*;
-use crate::weapon::{EquipWeapon, Hand, WeaponSystems, Wielded, hollow_blade, warg_fangs};
+use crate::weapon::{EquipWeapon, Hand, WeaponSystems};
 
 pub struct SyncPlugin;
 
@@ -270,8 +271,11 @@ fn spawn_puppet(
     let pos = Vec3::from_array(body.pos);
     let name = match body.kind {
         BodyKind::Player => format!("Player {}", body.id),
-        BodyKind::Hollow => "Hollow (remote)".to_string(),
-        BodyKind::Warg => "Warg (remote)".to_string(),
+        BodyKind::Enemy(kind) => format!("{} (remote)", kind.def().name),
+    };
+    let size = match body.kind {
+        BodyKind::Player => BodySize::default(),
+        BodyKind::Enemy(kind) => kind.def().size,
     };
     let e = commands
         .spawn((
@@ -286,7 +290,7 @@ fn spawn_puppet(
             Health { current: body.hp, max: body.hp_max },
             // Solid, and something for weapons to hit.
             RigidBody::Kinematic,
-            Collider::capsule(PLAYER_RADIUS, PLAYER_CAPSULE_LENGTH),
+            size.collider(),
         ))
         .id();
     let humanoid = |commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, spec: HumanoidSpec| {
@@ -305,25 +309,15 @@ fn spawn_puppet(
                 EquipVisuals::default(),
             ));
         }
-        BodyKind::Hollow => {
-            humanoid(commands, meshes, materials, HumanoidSpec::hollow());
+        BodyKind::Enemy(kind) => {
+            // Its swings, bites, waves and grabs run from the replicated actions; they only
+            // catch *our* player.
+            enemy::kinds::attach_body(commands, meshes, materials, equip_weapon, e, kind);
             commands.entity(e).insert((
                 Team::Hostile,
                 Hurtbox,
-                Targetable { height: 0.55 },
-                Enemy { home: pos, patrol: None, kind: EnemyKind::Hollow },
-            ));
-            equip_weapon.write(EquipWeapon::right(e, &hollow_blade::HOLLOW_SWORD));
-        }
-        BodyKind::Warg => {
-            // Its bites and pounce run from the replicated actions; they only catch *our* player.
-            warg::attach_warg_body(commands, meshes, materials, e);
-            commands.entity(e).insert((
-                Team::Hostile,
-                Hurtbox,
-                Targetable { height: warg::WARG_TARGET_HEIGHT },
-                Enemy { home: pos, patrol: None, kind: EnemyKind::Warg },
-                Wielded::natural(&warg_fangs::WARG_FANGS),
+                Targetable { height: kind.def().target_height },
+                Enemy { home: pos, patrol: None, kind },
             ));
         }
     }
@@ -462,10 +456,7 @@ fn send_states(
         let mut ids: Vec<NetId> = bodies.iter().map(|b| b.id).collect();
         let mut live = HashSet::new();
         for (e, enemy, tf, ctrl, action, health) in &enemies {
-            let kind = match enemy.kind {
-                EnemyKind::Hollow => BodyKind::Hollow,
-                EnemyKind::Warg => BodyKind::Warg,
-            };
+            let kind = BodyKind::Enemy(enemy.kind);
             let state = body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; 3], false, None);
             ids.push(state.id);
             live.insert(state.id);

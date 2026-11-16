@@ -74,10 +74,12 @@ pub(super) fn move_character(
         Option<&Guard>,
         &mut Transform,
         Has<PassThroughCharacters>,
-    )>,
+        Option<&super::BodySize>,
+    ), Without<super::Dormant>>,
 ) {
     let dt = time.delta_secs();
-    for (entity, collider, mut ctrl, mut intent, action, stamina, guard, mut tf, pass_through) in &mut q {
+    for (entity, collider, mut ctrl, mut intent, action, stamina, guard, mut tf, pass_through, size) in &mut q {
+        let size = size.copied().unwrap_or_default();
         let guarding = guard.is_some_and(Guard::is_up);
         let free = action.current.is_none();
         let horizontal = Vec3::new(ctrl.velocity.x, 0.0, ctrl.velocity.z);
@@ -190,10 +192,10 @@ pub(super) fn move_character(
         // made grounding flicker and the animation stutter against walls (N16).
         ctrl.grounded = false;
         if vy <= 0.0 {
-            let radius = PLAYER_RADIUS * GROUND_PROBE_RADIUS_FACTOR;
-            let foot = tf.translation - Vec3::Y * (PLAYER_CAPSULE_LENGTH * 0.5);
+            let radius = size.radius * GROUND_PROBE_RADIUS_FACTOR;
+            let foot = tf.translation - Vec3::Y * (size.length * 0.5);
             // Probe bottom sits this far above the capsule bottom before the cast.
-            let gap = GROUND_PROBE_LIFT + (PLAYER_RADIUS - radius);
+            let gap = GROUND_PROBE_LIFT + (size.radius - radius);
             let probe = move_and_slide.spatial_query.cast_shape(
                 &Collider::sphere(radius),
                 foot + Vec3::Y * GROUND_PROBE_LIFT,

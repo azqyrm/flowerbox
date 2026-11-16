@@ -9,11 +9,12 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::character::action::ActionKind;
+use crate::enemy::EnemyKind;
 use crate::items::ItemId;
 use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 10;
+pub const PROTOCOL_VERSION: u16 = 11;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -26,8 +27,8 @@ pub const DUMMY_ID: NetId = 999;
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyKind {
     Player,
-    Hollow,
-    Warg,
+    /// Any enemy: its body, weapon and size come from its `EnemyDef`.
+    Enemy(EnemyKind),
 }
 
 /// A running action, enough to pose it identically on the other side.

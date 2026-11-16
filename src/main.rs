@@ -23,6 +23,7 @@ mod quadruped;
 mod save;
 mod settings;
 mod sound;
+mod textures;
 mod tuning;
 mod ui;
 mod weapon;
@@ -76,6 +77,7 @@ fn main() {
             ui::UiPlugin,
             debug::DebugPlugin,
             net::NetPlugin,
+            textures::TexturesPlugin,
         ))
         .run();
 }

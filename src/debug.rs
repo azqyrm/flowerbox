@@ -65,7 +65,8 @@ use crate::items::ItemId;
 use crate::input::GameplayBlocked;
 use crate::ui::icons::NoticeIcon;
 use crate::ui::notifications::Notify;
-use crate::enemy::{Enemy, HollowAi};
+use crate::enemy::Enemy;
+use crate::enemy::fighter::FighterAi;
 use crate::character::MoveIntent;
 use crate::hearth::WorldReset;
 use crate::lockon::LockOn;
@@ -863,7 +864,7 @@ fn enemy_script(
     mut equip: MessageWriter<EquipRequest>,
     mut reset: MessageWriter<WorldReset>,
     mut player: Query<(Entity, &mut Transform, &CharacterAction, &mut ActionIntent, &mut LockOn), With<Player>>,
-    mut hollows: Query<(Entity, &mut Enemy, &mut Transform, &CharacterAction, &Health, &HollowAi, &ActionIntent, &MoveIntent), Without<Player>>,
+    mut hollows: Query<(Entity, &mut Enemy, &mut Transform, &CharacterAction, &Health, &FighterAi, &ActionIntent, &MoveIntent), Without<Player>>,
 ) {
     use std::sync::atomic::Ordering::Relaxed;
     let Ok((pe, mut ptf, paction, mut intent, mut lock)) = player.single_mut() else { return };

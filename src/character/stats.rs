@@ -64,6 +64,34 @@ impl Stamina {
 #[derive(Component, Debug, Default, Clone, Copy)]
 pub struct HitImmunity(pub f32);
 
+/// Poise (optional): how much punishment a character takes without flinching, Souls-style. Every
+/// hit wears it down by its damage; while some is left the hit doesn't stagger (hyper armour), when
+/// it breaks the hit staggers and poise refills. It refills after `POISE_REGEN_DELAY` without hits.
+/// Without this component every hit staggers (the player, Hollows).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct Poise {
+    pub max: f32,
+    pub current: f32,
+    pub since_hit: f32,
+}
+
+impl Poise {
+    pub fn new(max: f32) -> Self {
+        Self { max, current: max, since_hit: 0.0 }
+    }
+
+    /// Takes a hit of `amount`; true if it breaks (the hit staggers).
+    pub fn hit(&mut self, amount: f32) -> bool {
+        self.since_hit = 0.0;
+        self.current -= amount;
+        if self.current > 0.0 {
+            return false;
+        }
+        self.current = self.max;
+        true
+    }
+}
+
 /// Fraction of incoming damage this character shrugs off (armour). Optional.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct DamageAbsorption(pub f32);
@@ -109,10 +137,11 @@ pub fn apply_damage(
         Option<&DamageAbsorption>,
         Option<(&mut Guard, &mut Stamina, &CharacterController, &Transform)>,
         Option<&mut HitImmunity>,
+        Option<&mut Poise>,
     ), Without<super::Remote>>,
 ) {
     for msg in messages.read() {
-        let Ok((mut health, action, invulnerable, absorption, guard, immunity)) = q.get_mut(msg.target) else { continue };
+        let Ok((mut health, action, invulnerable, absorption, guard, immunity, poise)) = q.get_mut(msg.target) else { continue };
         if invulnerable || health.is_dead() {
             info!("damage {} ignored (invulnerable={invulnerable})", msg.amount);
             continue;
@@ -158,12 +187,26 @@ pub fn apply_damage(
             i.0 = HIT_IMMUNITY;
         }
         let killed = health.is_dead();
+        // Poise holds: no flinch (a grab or a death still lands).
+        if stagger && let Some(mut p) = poise && !p.hit(amount) {
+            info!("poise holds ({:.0} left)", p.current);
+            stagger = false;
+        }
         if let Some(mut action) = action
             && (killed || stagger)
         {
             action.force(if killed { ActionKind::Dead } else { ActionKind::Hurt }, Vec3::ZERO);
         }
         taken.write(DamageTaken { target: msg.target, amount, from: msg.from, killed, attacker: msg.attacker });
+    }
+}
+
+pub(super) fn regen_poise(time: Res<Time>, mut q: Query<&mut Poise>) {
+    for mut p in &mut q {
+        p.since_hit += time.delta_secs();
+        if p.since_hit > POISE_REGEN_DELAY && p.current < p.max {
+            p.current = p.max;
+        }
     }
 }
 

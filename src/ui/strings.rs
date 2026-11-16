@@ -50,6 +50,8 @@ pub const MENU_HINTS: &str = "[Up/Down] Select   [Left/Right] Change   [Enter] C
 pub const SAVE_DELETED: &str = "Save deleted: the next start is a new game";
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
+pub const PROMPT_FOG: &str = "[E] Pass through the mist";
+pub const BOSS_DEFEATED: &str = "HALLOWED FOE UNMADE";
 pub const PROMPT_OPEN_DOOR: &str = "[E] Open";
 pub const DOOR_OTHER_SIDE: &str = "This door only opens from the other side";
 pub fn door_tried(who: &str) -> String {
