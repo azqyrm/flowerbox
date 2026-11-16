@@ -31,3 +31,5 @@ opt-level = 3
 [profile.release]
 codegen-units = 1
 lto = "thin"
+# Release builds ship to friends: no debug symbols (the binary shrinks a lot).
+strip = true

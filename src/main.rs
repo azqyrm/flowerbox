@@ -1,5 +1,7 @@
 //! FlowerBox — a Soulslike prototype. See ROADMAP.md.
 
+// Windows release builds open no console window next to the game.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 // Bevy systems take many parameters and nested queries by design.
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 

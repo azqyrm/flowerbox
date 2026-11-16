@@ -307,7 +307,7 @@ claude_ds/
 - [x] Online panel (`O`), status corner, `--host` / `--join <code>`, join code via clipboard
 - [x] Shared world events: guests resting / dying, item pickups, dummy state (done in Phases 8.6 / 8.7)
 - [ ] Interpolation buffer + lag compensation (puppets currently ease toward the last state)
-- [ ] Windows build for friends (cross-compile or build on Windows); ship `assets/` next to the binary
+- [x] Windows build for friends: cross-compiled with mingw (`x86_64-pc-windows-gnu`; only system DLLs, no console window in release); `tools/package.sh` builds Linux + Windows and packs each with `assets/` and a README into `dist/`
 - [ ] Optional: Steam transport (lobbies, invites) via `bevy_replicon_renet` + `renet_steam` or `aeronet_steam`
 
 ### Phase 8.6 — Shared world, notifications, opt-in PvP (user request, 2026-11-15)
