@@ -1769,7 +1769,7 @@ fn check_menu_block(
         frames.1 += 1;
         warn!("menu open but input not blocked (blocked {}, cursor grabbed {})", blocked.0, crate::input::cursor_grabbed(&cursor));
     }
-    if frames.0 % 120 == 0 {
+    if frames.0.is_multiple_of(120) {
         info!("menu check: {} frames open, {} leaked", frames.0, frames.1);
     }
 }
@@ -1817,7 +1817,7 @@ fn warg_script(
             info!("autopilot: guest placed at {:.2}", ptf.translation);
         }
     }
-    let ptf = ptf.into_inner().clone();
+    let ptf = *ptf.into_inner();
     if (run.roll || std::env::var("FLOWERBOX_WARG_TANK").is_ok()) && hp.max < 1000.0 {
         *hp = Health::new(1000.0); // survive the bites to face several pounces
     }
@@ -1844,13 +1844,12 @@ fn warg_script(
     run.player_was_grabbed = grabbed;
     // Roll mode: roll toward the warg just before each leap.
     if run.roll {
-        if let Some(cur) = waction.current.filter(|a| a.kind == ActionKind::Pounce && a.phase() == ActionPhase::Startup) {
-            if cur.elapsed >= cur.def.startup - 0.12 && run.rolled_for != Some(waction.serial) {
+        if let Some(cur) = waction.current.filter(|a| a.kind == ActionKind::Pounce && a.phase() == ActionPhase::Startup)
+            && cur.elapsed >= cur.def.startup - 0.12 && run.rolled_for != Some(waction.serial) {
                 run.rolled_for = Some(waction.serial);
                 run.roll_until = t + 0.15;
                 info!("autopilot: roll into the leap");
             }
-        }
         // Keep pressing until the roll starts (a bite's stagger may still be running).
         let rolling = paction.current.is_some_and(|a| a.kind == ActionKind::Roll);
         if t < run.roll_until && !rolling {
@@ -1886,20 +1885,18 @@ fn wargkill_script(
     let (t, dt) = (time.elapsed_secs(), time.delta_secs());
     let at = |s: f32| crossed(t, dt, s);
     let warg = wargs.iter().find(|(_, e, h)| e.kind == crate::enemy::EnemyKind::Warg && e.home.y < -3.0 && !h.is_dead());
-    if at(3.0) || at(10.0) {
-        if let Some((e, _, _)) = warg {
+    if (at(3.0) || at(10.0))
+        && let Some((e, _, _)) = warg {
             info!("autopilot: killing the vault warg");
             damage.write(DamageMessage { target: e, amount: 10_000.0, from: None, attacker: None });
         }
-    }
     let key = pickups.iter().find(|(p, _)| p.item == ItemId::ForgeKey);
-    if at(5.0) {
-        if let (Some((p, ptf)), Ok((mut tf, _))) = (key, player.single_mut()) {
+    if at(5.0)
+        && let (Some((p, ptf)), Ok((mut tf, _))) = (key, player.single_mut()) {
             tf.translation = ptf.translation + Vec3::Y * (PLAYER_HALF_HEIGHT + GROUND_SKIN);
             requests.write(crate::items::pickup::PickupRequest { pickup: p.id });
             info!("autopilot: taking the key (pickup {})", p.id);
         }
-    }
     if at(7.0) {
         info!("autopilot: world reset (the warg comes back)");
         reset.write(WorldReset);

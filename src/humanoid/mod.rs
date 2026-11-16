@@ -366,7 +366,10 @@ pub enum Paint {
     Skin,
     Top,
     Bottom,
+    /// The body's boot and hair colours (for extras matching them; no skin uses them yet).
+    #[allow(dead_code)]
     Boots,
+    #[allow(dead_code)]
     Hair,
     Color(Color),
     /// A colour with a procedural texture.

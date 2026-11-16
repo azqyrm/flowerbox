@@ -239,7 +239,7 @@ pub fn action_pose(a: &ActiveAction) -> Option<QuadrupedPose> {
                 let spread = if leg.front { 0.35 } else { -0.35 };
                 p.set(leg.upper, rx(spread * fall)).set(leg.lower, rx(-0.15 * fall));
             }
-            p.set(QBone::Neck, rx(-0.3 * fall)).set(QBone::Jaw, rx(0.25 * fall)).set(QBone::Tail, rx(-1.0 * fall));
+            p.set(QBone::Neck, rx(-0.3 * fall)).set(QBone::Jaw, rx(0.25 * fall)).set(QBone::Tail, rx(-fall));
             Some(p)
         }
         // Rolls, drinking, resting, being grabbed: not things a beast does.

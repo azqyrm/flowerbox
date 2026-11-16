@@ -243,7 +243,7 @@ fn draw_line(
     if !line.open {
         return;
     }
-    let caret = if (time.elapsed_secs() * 2.0) as u32 % 2 == 0 { "|" } else { " " };
+    let caret = if ((time.elapsed_secs() * 2.0) as u32).is_multiple_of(2) { "|" } else { " " };
     let shown = format!("{} {}{caret}", strings::CHAT_PROMPT, line.draft);
     for mut t in &mut text {
         if t.0 != shown {

@@ -200,8 +200,8 @@ fn bruin(s: &mut HumanoidSpec) {
         part(Bone::Chest, Shape::Box(v(0.045, t.y, 0.012)), v(0.12, t.y * 0.5, t.z * 0.5 + 0.006), NO_ROT, Paint::Bottom),
         part(Bone::Chest, Shape::Ball(0.016), v(0.12, t.y * 0.72, -t.z * 0.5 - 0.012), NO_ROT, Paint::Metal(Color::srgb(0.8, 0.65, 0.3))),
         // Claws.
-        part(Bone::HandR, Shape::Cone(0.012, 0.045), v(0.03, -0.1, -0.03), v(3.14, 0.0, 0.0), Paint::Color(Color::srgb(0.85, 0.8, 0.7))),
-        part(Bone::HandR, Shape::Cone(0.012, 0.045), v(-0.01, -0.11, -0.04), v(3.14, 0.0, 0.0), Paint::Color(Color::srgb(0.85, 0.8, 0.7))),
+        part(Bone::HandR, Shape::Cone(0.012, 0.045), v(0.03, -0.1, -0.03), v(std::f32::consts::PI, 0.0, 0.0), Paint::Color(Color::srgb(0.85, 0.8, 0.7))),
+        part(Bone::HandR, Shape::Cone(0.012, 0.045), v(-0.01, -0.11, -0.04), v(std::f32::consts::PI, 0.0, 0.0), Paint::Color(Color::srgb(0.85, 0.8, 0.7))),
     ]));
     // A stubby tail poking out of the shorts, wagging a little.
     l.tail = Some(Tail {
@@ -247,7 +247,7 @@ fn rattlebones(s: &mut HumanoidSpec) {
         // Skull: jaw, teeth, nose hole.
         part(Bone::Head, Shape::Box(v(hr * 1.2, 0.035, hr * 0.95)), v(0.0, hr * 0.32, -hr * 0.36), NO_ROT, Paint::Skin),
         part(Bone::Head, Shape::Box(v(hr * 0.85, 0.022, 0.012)), v(0.0, hr * 0.5, -hr * 0.9), NO_ROT, Paint::Color(Color::srgb(0.95, 0.93, 0.85))),
-        part(Bone::Head, Shape::Cone(0.02, 0.035), v(0.0, hr * 0.78, -hr * 0.94), v(3.14, 0.0, 0.0), hole),
+        part(Bone::Head, Shape::Cone(0.02, 0.035), v(0.0, hr * 0.78, -hr * 0.94), v(std::f32::consts::PI, 0.0, 0.0), hole),
         // Hip bone, a rope belt and a ragged loincloth front and back.
         part(Bone::Pelvis, Shape::Ring(0.022, 0.1), v(0.0, 0.04, 0.0), v(0.35, 0.0, 0.0), Paint::Skin),
         part(Bone::Pelvis, Shape::Ring(0.012, 0.13), v(0.0, 0.09, 0.0), NO_ROT, rope),

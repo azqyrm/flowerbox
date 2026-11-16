@@ -209,9 +209,7 @@ mod tests {
 
     #[test]
     fn root_rotation_turns_around_the_pivot() {
-        let mut pose = HumanoidPose::default();
-        pose.root_rot = Quat::from_rotation_x(std::f32::consts::PI);
-        pose.root_pivot = 0.9;
+        let pose = HumanoidPose { root_rot: Quat::from_rotation_x(std::f32::consts::PI), root_pivot: 0.9, ..Default::default() };
         let t = pose.model_transform(0.9);
         // The pivot (0.9 above the feet = character origin) stays in place.
         let pivot_after = t.transform_point(Vec3::Y * 0.9);

@@ -248,11 +248,10 @@ fn boss_bar(
         return;
     };
     *vis = Visibility::Inherited;
-    if let Ok(mut t) = name.single_mut() {
-        if t.0 != boss.name {
+    if let Ok(mut t) = name.single_mut()
+        && t.0 != boss.name {
             t.0 = boss.name.to_string();
         }
-    }
     let frac = (health.current / health.max).clamp(0.0, 1.0);
     *chunk_frac = if *chunk_frac < frac { frac } else { (*chunk_frac - 0.25 * time.delta_secs()).max(frac) };
     if let Ok(mut n) = fill.single_mut() {

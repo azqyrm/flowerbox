@@ -555,11 +555,10 @@ pub fn resolve_request(
     stamina: &Stamina,
 ) -> Option<ActionKind> {
     let RequestContext { grounded, moving, sprinting, weapon } = ctx;
-    if let Some(cur) = current {
-        if !cur.can_be_cancelled() {
+    if let Some(cur) = current
+        && !cur.can_be_cancelled() {
             return None;
         }
-    }
     let kind = match request {
         ActionRequest::Roll if moving => ActionKind::Roll,
         ActionRequest::Roll => ActionKind::Backstep,

@@ -420,12 +420,11 @@ fn bells_and_bosses(
                 info!("world event: {}", strings::rang(&session.name_of(by), &bell_name(*id)));
                 notify.write(Notify::new(NoticeIcon::Door, strings::rang(&session.name_of(by), &bell_name(*id))));
             }
-            NetInbox::Reliable(HOST_PEER, Reliable::Event(WorldEvent::BellRung { by, id })) if session.role == Role::Client => {
-                if *by != session.my_id {
+            NetInbox::Reliable(HOST_PEER, Reliable::Event(WorldEvent::BellRung { by, id })) if session.role == Role::Client
+                && *by != session.my_id => {
                     rung.write(BellRung { id: *id });
                     notify.write(Notify::new(NoticeIcon::Door, strings::rang(&session.name_of(*by), &bell_name(*id))));
                 }
-            }
             _ => {}
         }
     }

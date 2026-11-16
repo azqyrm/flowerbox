@@ -65,6 +65,8 @@ pub struct Boss {
 }
 
 impl EnemyKind {
+    /// Every kind (tests walk the table).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const ALL: [EnemyKind; 6] = [EnemyKind::Hollow, EnemyKind::Warg, EnemyKind::Acolyte, EnemyKind::Mourner, EnemyKind::Contorted, EnemyKind::Saint];
 
     pub fn def(self) -> &'static EnemyDef {

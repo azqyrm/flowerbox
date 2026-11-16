@@ -162,40 +162,37 @@ pub fn spawn_props(
             }
             _ => {}
         }
-        match prop.kind {
-            PropKind::SkyGrate => {
-                // Bars across the opening, daylight above, a sunbeam down through it.
-                let (w, d) = prop.size;
-                let y = layout.ceiling() + 0.15 - floor.y;
-                for i in 0..=((w / 0.32) as i32) {
-                    let x = -w * 0.5 + i as f32 * w / (w / 0.32).floor();
-                    part(commands, Cylinder::new(0.035, d).into(), &dark_iron, t(x, y, 0.0).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)));
-                }
-                for z in [-d * 0.25, d * 0.25] {
-                    part(commands, Cuboid::new(w, 0.08, 0.06).into(), &dark_iron, t(0.0, y + 0.05, z));
-                }
-                part(commands, Cuboid::new(w * 1.6, 0.05, d * 1.6).into(), &sky, t(0.0, y + 3.0, 0.0));
-                let top = frame.transform_point(Vec3::new(0.0, y, 0.0));
-                // The sun stands a little to the south-east: the beam slants.
-                let sun_from = Vec3::new(0.35, 1.0, 0.25).normalize();
-                commands.spawn((
-                    Name::new("Sunbeam"),
-                    SpotLight {
-                        color: Color::srgb(1.0, 0.93, 0.8),
-                        intensity: 9_000_000.0,
-                        range: 40.0,
-                        radius: 0.5,
-                        inner_angle: 0.08,
-                        outer_angle: 0.2,
-                        shadow_maps_enabled: true,
-                        ..default()
-                    },
-                    Transform::from_translation(top + sun_from * 14.0).looking_at(top - sun_from * 4.0, Vec3::Y),
-                ));
-                exits.push(Vec2::new(floor.x, floor.z));
-                beams.push((top, sun_from, w, d, y));
+        if prop.kind == PropKind::SkyGrate {
+            // Bars across the opening, daylight above, a sunbeam down through it.
+            let (w, d) = prop.size;
+            let y = layout.ceiling() + 0.15 - floor.y;
+            for i in 0..=((w / 0.32) as i32) {
+                let x = -w * 0.5 + i as f32 * w / (w / 0.32).floor();
+                part(commands, Cylinder::new(0.035, d).into(), &dark_iron, t(x, y, 0.0).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)));
             }
-            _ => {}
+            for z in [-d * 0.25, d * 0.25] {
+                part(commands, Cuboid::new(w, 0.08, 0.06).into(), &dark_iron, t(0.0, y + 0.05, z));
+            }
+            part(commands, Cuboid::new(w * 1.6, 0.05, d * 1.6).into(), &sky, t(0.0, y + 3.0, 0.0));
+            let top = frame.transform_point(Vec3::new(0.0, y, 0.0));
+            // The sun stands a little to the south-east: the beam slants.
+            let sun_from = Vec3::new(0.35, 1.0, 0.25).normalize();
+            commands.spawn((
+                Name::new("Sunbeam"),
+                SpotLight {
+                    color: Color::srgb(1.0, 0.93, 0.8),
+                    intensity: 9_000_000.0,
+                    range: 40.0,
+                    radius: 0.5,
+                    inner_angle: 0.08,
+                    outer_angle: 0.2,
+                    shadow_maps_enabled: true,
+                    ..default()
+                },
+                Transform::from_translation(top + sun_from * 14.0).looking_at(top - sun_from * 4.0, Vec3::Y),
+            ));
+            exits.push(Vec2::new(floor.x, floor.z));
+            beams.push((top, sun_from, w, d, y));
         }
     }
     // Dust in each sunbeam: specks scattered through the slanted column below the opening.

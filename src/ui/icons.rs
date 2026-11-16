@@ -390,7 +390,7 @@ fn spawn_face(commands: &mut Commands, parent: Entity, skin: Skin, tunic: Color,
     let at = |l: f32, t: f32, w: f32, h: f32| Node { position_type: PositionType::Absolute, left: s(l), top: s(t), width: s(w), height: s(h), ..default() };
     let round = |l: f32, t: f32, w: f32, h: f32| Node { border_radius: BorderRadius::MAX, ..at(l, t, w, h) };
     let bust = commands.spawn((Node { width: s(38.0), height: s(44.0), ..default() }, ChildOf(parent))).id();
-    let mut dot = |commands: &mut Commands, parent: Entity, node: Node, color: Color| {
+    let dot = |commands: &mut Commands, parent: Entity, node: Node, color: Color| {
         commands.spawn((node, BackgroundColor(color), ChildOf(parent)));
     };
     // Collar (what they wear on the chest).
