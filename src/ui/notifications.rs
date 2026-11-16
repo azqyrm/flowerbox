@@ -121,8 +121,11 @@ fn spawn_notifications(
     mut commands: Commands,
     mut messages: MessageReader<Notify>,
     settings: Res<NotificationSettings>,
+    assets: Res<AssetServer>,
     mut seq: Local<u64>,
 ) {
+    // PT Serif: it has umlauts and accents for names and chat (the default font is ASCII only).
+    let font: Handle<Font> = assets.load(super::DISPLAY_FONT);
     for msg in messages.read() {
         *seq += 1;
         let right = matches!(settings.corner, Corner::TopRight | Corner::BottomRight);
@@ -157,7 +160,7 @@ fn spawn_notifications(
         spawn_notice_icon(&mut commands, icon_box, msg.icon, settings.icon_scale);
         commands.spawn((
             Text::new(msg.text.clone()),
-            TextFont::from_font_size(settings.font_size),
+            TextFont { font: font.clone().into(), font_size: FontSize::Px(settings.font_size), ..default() },
             TextColor(Color::srgb(0.95, 0.92, 0.84)),
             // No background: a hard double shadow keeps it readable on any floor.
             TextShadow { offset: Vec2::splat(2.0), color: Color::srgba(0.0, 0.0, 0.0, 0.95) },

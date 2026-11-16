@@ -144,11 +144,13 @@ pub struct MenuInput {
     pub inventory: bool,
     pub pause: bool,
     pub online: bool,
+    /// The chat line is open (typing).
+    pub chat: bool,
 }
 
 impl MenuInput {
     pub fn any(&self) -> bool {
-        self.inventory || self.pause || self.online
+        self.inventory || self.pause || self.online || self.chat
     }
 }
 

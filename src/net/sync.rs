@@ -249,6 +249,13 @@ fn receive(
 
 /// Other players wear coloured tunics so you can tell them apart (by player slot).
 fn guest_look(id: NetId) -> HumanoidSpec {
+    let mut spec = HumanoidSpec::human();
+    spec.look.top = tunic(id);
+    spec
+}
+
+/// Each player slot's tunic colour (puppets wear it; chat faces show it).
+pub fn tunic(id: NetId) -> Color {
     const TUNICS: [Color; 5] = [
         Color::srgb(0.45, 0.12, 0.1),
         Color::srgb(0.12, 0.25, 0.45),
@@ -256,9 +263,7 @@ fn guest_look(id: NetId) -> HumanoidSpec {
         Color::srgb(0.42, 0.34, 0.1),
         Color::srgb(0.35, 0.15, 0.4),
     ];
-    let mut spec = HumanoidSpec::human();
-    spec.look.top = TUNICS[(id.saturating_sub(PLAYER_ID_BASE) as usize) % TUNICS.len()];
-    spec
+    TUNICS[(id.saturating_sub(PLAYER_ID_BASE) as usize) % TUNICS.len()]
 }
 
 fn spawn_puppet(

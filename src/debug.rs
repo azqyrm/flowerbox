@@ -53,6 +53,7 @@
 //! - `FLOWERBOX_KEYS="1.0:ShiftLeft+ 1.1:Tab+ 1.2:Tab- 1.4:ShiftLeft-"` → injects real key / mouse
 //!   events (`Name+` press, `Name-` release; `MouseLeft`, `MouseRight`, `MouseMiddle` for buttons) at
 //!   those game times, and logs menu / input-block / cursor changes. For input bugs.
+//!   `3.0:"Hello~you` types text (`~` = space; the chat, the name field).
 //! - `FLOWERBOX_THROW="secs:index"` → throws bag entry `index` out at that time (online tests).
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
@@ -1896,6 +1897,7 @@ fn key_by_name(name: &str) -> Option<KeyCode> {
         "KeyL" => KeyL,
         "KeyX" => KeyX,
         "KeyO" => KeyO,
+        "KeyT" => KeyT,
         "Backspace" => Backspace,
         "ArrowUp" => ArrowUp,
         "ArrowDown" => ArrowDown,
@@ -1916,6 +1918,7 @@ fn inject_keys(
     mut mouse: MessageWriter<bevy::input::mouse::MouseButtonInput>,
 ) {
     use bevy::input::ButtonState;
+    use bevy::input::keyboard::{Key, KeyboardInput};
     let Ok(window) = window.single() else { return };
     let script = std::env::var("FLOWERBOX_KEYS").unwrap_or_default();
     let (t, dt) = (time.elapsed_secs(), time.delta_secs());
@@ -1923,6 +1926,15 @@ fn inject_keys(
         let Some((at, what)) = step.split_once(':') else { continue };
         let Ok(at) = at.parse::<f32>() else { continue };
         if !(t - dt < at && at <= t) {
+            continue;
+        }
+        // `2.0:"Hello~there` types text (`~` = space), one character event each.
+        if let Some(text) = what.strip_prefix('"') {
+            info!("input script: typing {text:?}");
+            for c in text.replace('~', " ").chars() {
+                let logical_key = if c == ' ' { Key::Space } else { Key::Character(c.to_string().into()) };
+                keys.write(KeyboardInput { key_code: KeyCode::KeyA, logical_key, state: ButtonState::Pressed, text: Some(c.to_string().into()), repeat: false, window });
+            }
             continue;
         }
         let (name, state) = match what.strip_suffix('+') {
@@ -1939,9 +1951,20 @@ fn inject_keys(
         if let Some(button) = button {
             mouse.write(bevy::input::mouse::MouseButtonInput { button, state, window });
         } else if let Some(key_code) = key_by_name(name) {
-            keys.write(bevy::input::keyboard::KeyboardInput {
+            let logical_key = match key_code {
+                KeyCode::Enter => Key::Enter,
+                KeyCode::Escape => Key::Escape,
+                KeyCode::Backspace => Key::Backspace,
+                KeyCode::Space => Key::Space,
+                KeyCode::Tab => Key::Tab,
+                k => match format!("{k:?}").strip_prefix("Key") {
+                    Some(l) if l.len() == 1 => Key::Character(l.to_lowercase().into()),
+                    _ => Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+                },
+            };
+            keys.write(KeyboardInput {
                 key_code,
-                logical_key: bevy::input::keyboard::Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+                logical_key,
                 state,
                 text: None,
                 repeat: false,

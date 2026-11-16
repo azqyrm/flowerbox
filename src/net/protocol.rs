@@ -14,7 +14,7 @@ use crate::items::ItemId;
 use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 12;
+pub const PROTOCOL_VERSION: u16 = 13;
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -104,8 +104,16 @@ pub fn chunk_bodies(bodies: Vec<BodyState>, max: usize) -> Vec<Vec<BodyState>> {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Reliable {
-    /// Client → host, first message.
-    Hello { version: u16 },
+    /// Client → host, first message (with the name it would like; empty = none chosen).
+    Hello { version: u16, name: String },
+    /// Host → everyone: every player's name (made unique by the host).
+    Names(Vec<(NetId, String)>),
+    /// Guest → host: I changed my name in the settings.
+    Rename { name: String },
+    /// Guest → host: I said something.
+    Chat { text: String },
+    /// Host → guests: `who` said something.
+    Said { who: NetId, text: String },
     /// Host → client: your player id.
     Welcome { your_id: NetId },
     /// Host → client: the session can't take you.

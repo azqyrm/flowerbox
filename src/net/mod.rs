@@ -17,6 +17,7 @@
 //! **UI:** `O` opens the online panel (host / join from clipboard / copy code / leave).
 //! Command line: `--host`, `--join <code>`.
 
+pub mod names;
 pub mod protocol;
 pub mod sync;
 pub mod transport;
@@ -30,6 +31,7 @@ use bevy::prelude::*;
 use data_encoding::BASE64URL_NOPAD;
 use iroh::EndpointAddr;
 
+use crate::settings::Settings;
 use protocol::*;
 use transport::{HOST_PEER, NetCmd, NetEvent, NetLink, PeerId};
 
@@ -76,6 +78,8 @@ pub struct NetSession {
     pub status: String,
     /// Host: connected peers and their player ids.
     pub peers: HashMap<PeerId, NetId>,
+    /// Everyone's name, by player id (the host decides them; see `names.rs`).
+    pub names: HashMap<NetId, String>,
 }
 
 impl NetSession {
@@ -187,6 +191,7 @@ fn command_line(link: Res<NetLink>, mut session: ResMut<NetSession>) {
 /// Network thread → Bevy: session bookkeeping here, game messages to [`NetInbox`].
 fn pump_events(
     link: Res<NetLink>,
+    settings: Res<Settings>,
     clipboard: Res<SystemClipboard>,
     mut session: ResMut<NetSession>,
     mut inbox: MessageWriter<NetInbox>,
@@ -202,12 +207,13 @@ fn pump_events(
                 let copied = clipboard.copy(&code);
                 session.role = Role::Hosting;
                 session.my_id = PLAYER_ID_BASE;
+                session.assign_name(PLAYER_ID_BASE, &settings.name);
                 session.status = if copied { "Hosting. Code copied to the clipboard." } else { "Hosting. Share the code below." }.into();
                 session.code = Some(code);
             }
             NetEvent::Connected => {
                 info!("connected to the host");
-                link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Hello { version: PROTOCOL_VERSION }) });
+                link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Hello { version: PROTOCOL_VERSION, name: settings.name.clone() }) });
                 session.status = "Connected, waiting for the host...".into();
             }
             NetEvent::PeerJoined(peer) => info!("peer {peer} connected"),
@@ -215,8 +221,9 @@ fn pump_events(
                 if session.is_host() {
                     if let Some(id) = session.peers.remove(&peer) {
                         info!("player {id} left");
-                        session.status = format!("A player left ({} connected).", session.peers.len());
+                        // (Its name goes after the "left" notice: `world_inbox`.)
                         inbox.write(NetInbox::GuestLeft { id });
+                        session.status = format!("A player left ({} connected).", session.peers.len());
                     }
                 } else if session.is_client() && peer == HOST_PEER {
                     info!("disconnected from the host");
@@ -241,7 +248,7 @@ fn pump_events(
                 let Some(msg) = decode::<Reliable>(&bytes) else { continue };
                 match msg {
                     // Host: admit or refuse a new player.
-                    Reliable::Hello { version } if session.is_host() => {
+                    Reliable::Hello { version, name } if session.is_host() => {
                         let refuse = |reason: &str| {
                             link.send(NetCmd::Reliable { to: Some(peer), bytes: encode(&Reliable::Refused { reason: reason.into() }) });
                         };
@@ -256,6 +263,9 @@ fn pump_events(
                         };
                         session.peers.insert(peer, id);
                         link.send(NetCmd::Reliable { to: Some(peer), bytes: encode(&Reliable::Welcome { your_id: id }) });
+                        let name = session.assign_name(id, &name);
+                        session.share_names(&link);
+                        info!("player {id} is called {name}");
                         session.status = format!("A player joined ({} connected).", session.peers.len());
                         info!("player {id} joined (peer {peer})");
                         inbox.write(NetInbox::GuestJoined { peer, id });
@@ -266,6 +276,16 @@ fn pump_events(
                         session.status = "Joined the host's world.".into();
                         info!("joined as player {your_id}");
                         inbox.write(NetInbox::RoleChanged);
+                    }
+                    Reliable::Names(list) if session.role == Role::Client => {
+                        session.names = list.into_iter().collect();
+                    }
+                    Reliable::Rename { name } if session.is_host() => {
+                        if let Some(&id) = session.peers.get(&peer) {
+                            let name = session.assign_name(id, &name);
+                            info!("player {id} is now called {name}");
+                            session.share_names(&link);
+                        }
                     }
                     Reliable::Refused { reason } => {
                         session.role = Role::Offline;

@@ -100,3 +100,12 @@ pub const NOTHING_TO_EQUIP: &str = "Nothing in the bag fits this slot";
 pub const INVENTORY_TITLE: &str = "Inventory";
 pub const INVENTORY_HINTS: &str =
     "[Enter] Options / choose   [Left / Right] Slots / bag   [X] Unequip   [L] To left hand   [Q] [E] Filter   [Esc] Back   [Tab] Close";
+/// Chat: the typing line, and a message in the feed ("gordelius: I said something!").
+pub const CHAT_PROMPT: &str = "Say:";
+pub fn said(who: &str, text: &str) -> String {
+    format!("{who}: {text}")
+}
+/// The name field in the settings.
+pub const NAME_LABEL: &str = "Name";
+pub const NAME_NONE: &str = "(none: Host / GuestN)";
+pub const NAME_EDITING_HINT: &str = "Type your name, [Enter] keep, [Esc] cancel";

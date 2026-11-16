@@ -1,4 +1,4 @@
-//! Player settings: camera feel, volume, notification corner and key bindings. Saved as RON in
+//! Player settings: your name, camera feel, volume, notification corner and key bindings. Saved as RON in
 //! the OS config folder (`~/.config/flowerbox/settings.ron` on Linux) whenever they change, and
 //! loaded at start. Edited in the pause menu (`ui/pause_menu.rs`).
 //!
@@ -71,10 +71,11 @@ pub enum Bind {
     Inventory,
     TwoHand,
     Ability,
+    Chat,
 }
 
 impl Bind {
-    pub const ALL: [Bind; 14] = [
+    pub const ALL: [Bind; 15] = [
         Bind::MoveForward,
         Bind::MoveBack,
         Bind::MoveLeft,
@@ -89,6 +90,7 @@ impl Bind {
         Bind::Inventory,
         Bind::TwoHand,
         Bind::Ability,
+        Bind::Chat,
     ];
 
     pub fn label(self) -> &'static str {
@@ -107,6 +109,7 @@ impl Bind {
             Bind::Inventory => "Inventory",
             Bind::TwoHand => "Two-hand (hold + a hand's button); alone: lock on",
             Bind::Ability => "Weapon ability",
+            Bind::Chat => "Chat",
         }
     }
 
@@ -127,6 +130,7 @@ impl Bind {
             Bind::Inventory => Input::Key(Tab),
             Bind::TwoHand => Input::Mouse(MouseButton::Middle),
             Bind::Ability => Input::Key(KeyF),
+            Bind::Chat => Input::Key(KeyT),
         }
     }
 }
@@ -174,6 +178,8 @@ pub struct Settings {
     pub volume: f32,
     pub notification_corner: Corner,
     pub bindings: Bindings,
+    /// The name others see (empty: Host / GuestN / Player1; see `net/names.rs`).
+    pub name: String,
 }
 
 impl Default for Settings {
@@ -185,6 +191,7 @@ impl Default for Settings {
             volume: 0.8,
             notification_corner: Corner::BottomRight,
             bindings: Bindings::default(),
+            name: String::new(),
         }
     }
 }

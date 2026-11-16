@@ -284,7 +284,7 @@ fn flower(commands: &mut Commands, root: Entity, unit: Val, petal: Color, centre
 }
 
 /// Icons for notifications: an item, or one of the world events.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NoticeIcon {
     Item(ItemIcon),
     /// The sunflower was revived.
@@ -295,6 +295,8 @@ pub enum NoticeIcon {
     Died,
     /// A door (locked, or opens from the other side).
     Door,
+    /// A player's little face (chat), in the tunic colour of their slot.
+    Face(Color),
 }
 
 /// Spawns a notification icon (same ~56 px box at scale 1); returns its root.
@@ -338,6 +340,40 @@ pub fn spawn_notice_icon(commands: &mut Commands, parent: Entity, icon: NoticeIc
                 BackgroundColor(Color::srgb(0.75, 0.6, 0.3)),
                 ChildOf(door),
             ));
+            root
+        }
+        NoticeIcon::Face(tunic) => {
+            // A round head with hair, eyes and a mouth, over a collar in the player's colour.
+            let root = commands
+                .spawn((Node { width: s(56.0), height: s(56.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, ChildOf(parent)))
+                .id();
+            let bust = commands.spawn((Node { width: s(38.0), height: s(44.0), ..default() }, ChildOf(root))).id();
+            let dark = Color::srgb(0.06, 0.04, 0.03);
+            let at = |l: f32, t: f32, w: f32, h: f32| Node { position_type: PositionType::Absolute, left: s(l), top: s(t), width: s(w), height: s(h), ..default() };
+            // Collar and shoulders.
+            commands.spawn((
+                Node { border: UiRect::all(s(2.0)), border_radius: BorderRadius::new(s(14.0), s(14.0), s(3.0), s(3.0)), ..at(1.0, 30.0, 36.0, 14.0) },
+                BackgroundColor(tunic),
+                BorderColor::all(dark),
+                ChildOf(bust),
+            ));
+            let head = commands
+                .spawn((
+                    Node { border: UiRect::all(s(2.0)), border_radius: BorderRadius::MAX, ..at(6.0, 2.0, 26.0, 30.0) },
+                    BackgroundColor(Color::srgb(0.86, 0.68, 0.52)),
+                    BorderColor::all(dark),
+                    ChildOf(bust),
+                ))
+                .id();
+            commands.spawn((
+                Node { border_radius: BorderRadius::new(s(12.0), s(12.0), s(2.0), s(2.0)), ..at(0.0, 0.0, 22.0, 8.0) },
+                BackgroundColor(Color::srgb(0.3, 0.18, 0.09)),
+                ChildOf(head),
+            ));
+            for l in [5.0, 13.0] {
+                commands.spawn((Node { border_radius: BorderRadius::MAX, ..at(l, 11.0, 4.0, 4.5) }, BackgroundColor(dark), ChildOf(head)));
+            }
+            commands.spawn((Node { border_radius: BorderRadius::all(s(1.5)), ..at(7.0, 19.0, 8.0, 2.5) }, BackgroundColor(Color::srgb(0.45, 0.16, 0.12)), ChildOf(head)));
             root
         }
         NoticeIcon::Joined | NoticeIcon::Left | NoticeIcon::Died => {

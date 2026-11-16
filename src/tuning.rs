@@ -290,3 +290,13 @@ pub const BOSS_BAR_RANGE: f32 = 26.0;
 /// Bells and inscriptions: reach (m); inscriptions stay on screen this long (s).
 pub const BELL_RANGE: f32 = 2.2;
 pub const PLAQUE_NOTICE_TIME: f32 = 12.0;
+
+// ── Names and chat ──
+/// Longest player name (characters; a twin's German noun comes on top).
+pub const MAX_NAME_CHARS: usize = 16;
+/// Longest chat message (characters).
+pub const CHAT_MAX_CHARS: usize = 120;
+/// A chat message stays this long, plus `CHAT_SECS_PER_CHAR` per character, at most `CHAT_MAX_SECS`.
+pub const CHAT_BASE_SECS: f32 = 5.0;
+pub const CHAT_SECS_PER_CHAR: f32 = 0.06;
+pub const CHAT_MAX_SECS: f32 = 12.0;

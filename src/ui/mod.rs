@@ -12,6 +12,7 @@ pub mod markers;
 pub mod notifications;
 pub mod pause_menu;
 pub mod strings;
+pub mod text_input;
 
 pub struct UiPlugin;
 

@@ -3,6 +3,7 @@
 mod ability;
 mod arena;
 mod camera;
+mod chat;
 mod character;
 mod combat;
 mod debug;
@@ -77,6 +78,7 @@ fn main() {
             ui::UiPlugin,
             debug::DebugPlugin,
             net::NetPlugin,
+            chat::ChatPlugin,
             textures::TexturesPlugin,
         ))
         .run();

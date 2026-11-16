@@ -148,7 +148,7 @@ fn toggle_panel(
 ) {
     menus.online = panel.open;
     let close = panel.open && (keys.just_pressed(KeyCode::Escape) || press.0 == Some(PanelButton::Close));
-    let open = !panel.open && !menus.inventory && !menus.pause && keys.just_pressed(KeyCode::KeyO);
+    let open = !panel.open && !menus.inventory && !menus.pause && !menus.chat && keys.just_pressed(KeyCode::KeyO);
     let toggle = (panel.open && keys.just_pressed(KeyCode::KeyO)) || close || open;
     if !toggle {
         return;

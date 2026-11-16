@@ -43,11 +43,6 @@ impl Plugin for WorldSyncPlugin {
     }
 }
 
-/// "Host" or "Guest 1"… by player id.
-pub fn player_name(id: NetId) -> String {
-    if id == PLAYER_ID_BASE { "Host".into() } else { format!("Guest {}", id.saturating_sub(PLAYER_ID_BASE)) }
-}
-
 /// The guest's own world while it visits the host's.
 #[derive(Default)]
 struct Stash {
@@ -70,7 +65,8 @@ fn opened(doors: &Query<&mut Door>) -> Vec<u32> {
     ids
 }
 
-fn notice(notify: &mut MessageWriter<Notify>, event: &WorldEvent) {
+fn notice(notify: &mut MessageWriter<Notify>, session: &NetSession, event: &WorldEvent) {
+    let player_name = |id: NetId| session.name_of(id);
     let n = match *event {
         WorldEvent::Joined { who } => Notify::new(NoticeIcon::Joined, strings::joined(&player_name(who))),
         WorldEvent::Left { who } => Notify::new(NoticeIcon::Left, strings::left(&player_name(who))),
@@ -98,7 +94,7 @@ fn world_inbox(
     mut commands: Commands,
     mut inbox: MessageReader<NetInbox>,
     link: Res<NetLink>,
-    session: Res<NetSession>,
+    mut session: ResMut<NetSession>,
     assets: Option<Res<PickupAssets>>,
     (layout, unique, mut claimed, mut drop_ids): (Res<PickupLayout>, Res<UniqueDrops>, ResMut<ClaimedDrops>, ResMut<DropIds>),
     mut stash: Local<Option<Stash>>,
@@ -159,12 +155,14 @@ fn world_inbox(
                 link.send(NetCmd::Reliable { to: Some(*peer), bytes: encode(&world) });
                 let event = WorldEvent::Joined { who: *id };
                 broadcast(event);
-                notice(&mut notify, &event);
+                notice(&mut notify, &session, &event);
             }
             NetInbox::GuestLeft { id } if session.is_host() => {
                 let event = WorldEvent::Left { who: *id };
                 broadcast(event);
-                notice(&mut notify, &event);
+                notice(&mut notify, &session, &event);
+                session.names.remove(id);
+                session.share_names(&link);
             }
             // ── Host: guests' requests and reports ──
             NetInbox::Reliable(peer, Reliable::RequestPickup { pickup }) if session.is_host() => {
@@ -174,7 +172,7 @@ fn world_inbox(
                 claim(&unique, &mut claimed, p.id);
                 let event = WorldEvent::PickedUp { by, pickup: p.id, item: p.item };
                 broadcast(event);
-                notice(&mut notify, &event);
+                notice(&mut notify, &session, &event);
             }
             NetInbox::Reliable(peer, Reliable::RequestThrow { item, pos }) if session.is_host() => {
                 let Some(&by) = session.peers.get(peer) else { continue };
@@ -182,7 +180,7 @@ fn world_inbox(
                 spawn_pickup(&mut commands, &assets, id, *item, Vec3::from_array(*pos));
                 let event = WorldEvent::Dropped { id, item: *item, pos: *pos, by: Some(by) };
                 broadcast(event);
-                notice(&mut notify, &event);
+                notice(&mut notify, &session, &event);
             }
             NetInbox::Reliable(peer, Reliable::RequestDoor { id }) if session.is_host() => {
                 let Some(&by) = session.peers.get(peer) else { continue };
@@ -190,7 +188,7 @@ fn world_inbox(
                 door.open = true;
                 let event = WorldEvent::DoorOpened { by, id: *id };
                 broadcast(event);
-                notice(&mut notify, &event);
+                notice(&mut notify, &session, &event);
             }
             NetInbox::Reliable(peer, Reliable::Report(report)) if session.is_host() => {
                 let Some(&by) = session.peers.get(peer) else { continue };
@@ -207,7 +205,7 @@ fn world_inbox(
                     _ => continue,
                 };
                 broadcast(event);
-                notice(&mut notify, &event);
+                notice(&mut notify, &session, &event);
             }
             // ── Guest: the host's world ──
             NetInbox::Reliable(HOST_PEER, Reliable::World { suns, doors: open, pickups: list, dummy_hp }) if session.role == Role::Client => {
@@ -284,7 +282,7 @@ fn world_inbox(
                     }
                     _ => {}
                 }
-                notice(&mut notify, event);
+                notice(&mut notify, &session, event);
             }
             _ => {}
         }
@@ -419,13 +417,13 @@ fn bells_and_bosses(
                 guest_rings.write(GuestRing { id: *id });
                 rung.write(BellRung { id: *id });
                 send(None, Reliable::Event(WorldEvent::BellRung { by, id: *id }));
-                info!("world event: {}", strings::rang(&player_name(by), &bell_name(*id)));
-                notify.write(Notify::new(NoticeIcon::Door, strings::rang(&player_name(by), &bell_name(*id))));
+                info!("world event: {}", strings::rang(&session.name_of(by), &bell_name(*id)));
+                notify.write(Notify::new(NoticeIcon::Door, strings::rang(&session.name_of(by), &bell_name(*id))));
             }
             NetInbox::Reliable(HOST_PEER, Reliable::Event(WorldEvent::BellRung { by, id })) if session.role == Role::Client => {
                 if *by != session.my_id {
                     rung.write(BellRung { id: *id });
-                    notify.write(Notify::new(NoticeIcon::Door, strings::rang(&player_name(*by), &bell_name(*id))));
+                    notify.write(Notify::new(NoticeIcon::Door, strings::rang(&session.name_of(*by), &bell_name(*id))));
                 }
             }
             _ => {}
@@ -488,7 +486,7 @@ fn host_rest_circle(
         for who in &newcomers {
             let event = WorldEvent::RestWaiting { who: *who, resting: count, total };
             broadcast(event);
-            notice(&mut notify, &event);
+            notice(&mut notify, &session, &event);
         }
     }
     if count == total && count > 0 && !*completed {
@@ -496,7 +494,7 @@ fn host_rest_circle(
         done.write(RestComplete);
         if total > 1 {
             broadcast(WorldEvent::RestComplete);
-            notice(&mut notify, &WorldEvent::RestComplete);
+            notice(&mut notify, &session, &WorldEvent::RestComplete);
         }
     }
     *was_resting = resting;

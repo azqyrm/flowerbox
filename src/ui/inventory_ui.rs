@@ -329,7 +329,7 @@ fn toggle_menu(
     // Esc / B closes the screen only when nothing inside it is open (`menu_keys` steps back).
     let back = (keys.just_pressed(KeyCode::Escape) || pads.iter().any(|g| g.just_pressed(GamepadButton::East))) && !menu.nested();
     // Not over another menu (the pause menu or the online panel).
-    let others = menus.pause || menus.online;
+    let others = menus.pause || menus.online || menus.chat;
     // A second toggle within 0.25 s is ignored: a key delivered twice (or a press bouncing through
     // the desktop's shortcut handling) mustn't open and close the screen in one go.
     let now = real.elapsed_secs();

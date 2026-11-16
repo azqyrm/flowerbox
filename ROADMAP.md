@@ -50,7 +50,8 @@
 | Inventory / Equipment | **Tab** or **I** | Blocks gameplay input (the world keeps running). **Slot first:** Left from the grid's first column (or click a slot) walks the equipment column; Enter on a slot lists only what fits it, Enter equips into exactly that slot ("Nothing in the bag fits this slot" otherwise); X / Backspace empties it. **Item first:** Enter / double-click / right-click on an item opens its options (Drink / Eat, Equip in right / left hand, Equip, Unequip, **Throw out** — it lands in front of you, anyone can take it). Q/E filter, L puts a weapon in the left hand, Esc / Backspace go back one step, Tab/I close |
 | Online co-op | **O** | Online panel: **H** host (code copied to the clipboard), **J** join with the code in the clipboard, **C** copy code, **L** leave. Command line: `--host`, `--join <code>` |
 | Use an item | Inventory: the item's options → Drink / Eat | Healing Ale = drink, Poppy = PvP on, Camomile = PvP off, Hop Cone = +1 Ale (short eating action) |
-| Menu | **Esc** (gamepad: Select) | Resume / Settings (sensitivity, invert Y, stick speed, volume, notification corner) / Controls (rebind) / Delete save / Quit. The world keeps running |
+| Chat | **T** (rebindable) | A line opens at the bottom left (gameplay input blocked while typing); **Enter** sends, **Esc** throws it away. Messages appear in the notification feed: the speaker's little face (their tunic colour) and "Name: text", fading after 5–12 s by length. Online everyone sees them |
+| Menu | **Esc** (gamepad: Select) | Resume / Settings (**name**: Enter, type, Enter; sensitivity, invert Y, stick speed, volume, notification corner) / Controls (rebind) / Delete save / Quit. The world keeps running |
 
 All tuning values (timings, costs, damage) live in one `tuning.rs` constants module, or in a RON file later, so it's easy to adjust game feel.
 
@@ -495,6 +496,25 @@ Steps:
 - [ ] Interpolated puppet motion for fast spins (a Whirlwind on a guest's screen turns in 30 Hz steps)
 - [ ] Per-room ceilings (crypts are as tall as the nave: one ceiling per level)
 
+### Phase 8.14 — Names and chat (user request, 2026-11-16)
+Request, cleaned up:
+1. **Name** set in the settings. Without one: **Host** (hosting), **GuestN** (guests), **PlayerX** (offline: Player1).
+2. **Twins:** when a second player joins with a name already in use, append `_` and a random German noun (*gordelius* → *gordelius_Radieschen*).
+3. **Chat** opened with **T** (default); a message pops up where the notifications are, the same way (slides in, fades later): a small face picture and "Name: I said something!". Other players see it.
+
+Decisions:
+- **The host owns the names** (like the world): `Hello` carries the wanted name, `Rename` a change; the host makes it unique (case-insensitive) and sends the whole list (`Reliable::Names`) to everyone. Notifications use the names everywhere ("gordelius opened a door"). Protocol v13.
+- **Chat goes through the host** (`Chat` guest → host, `Said` host → the others); the sender sees its own line at once. Max 120 characters; names 16 (+ the noun); letters (umlauts too), digits, space, `_-.`.
+- **Face:** drawn from UI nodes (head, hair, eyes, mouth, collar in the player slot's tunic colour, the same colour as their puppet).
+- **Font:** notifications, the chat line and the name field use PT Serif — Bevy's default font is ASCII only (no umlauts).
+- Text input (`ui/text_input.rs`) reads the logical key of `KeyboardInput` (keyboard layout, shift, repeats) — shared by the chat and the name field. `FLOWERBOX_KEYS` can type (`3.0:"Hello~you`).
+
+Steps:
+- [x] Names: settings field, defaults, unique names on the host, list to everyone, rename online; notifications use them
+- [x] Chat: T line, send via the host, face + name in the feed, length-based lifetime; rebindable
+- [x] Tests (names, twins, text input, chat cleaning); offline + host/two-guest runs (both named gordelius → `Gordelius_Hammer`; every message on all three screens)
+- [ ] Name tags over other players' heads (only the feed shows names so far)
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
@@ -546,6 +566,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Inventory: slot-first and item-first equipping; throwing out removes the entry (indices shift) and puts a pickup into the host's world. |
 | 2026-11-16 | Level 2 "The Cathedral of Ashes" south of the arena; several levels load side by side. Bell riddle unseals the crypt; a one-way gallery door is the loop. |
 | 2026-11-16 | Enemy dormancy by distance to every player (30 / 36 m), not by opened doors (N31). |
+| 2026-11-16 | Player names (settings; Host / GuestN / Player1 without one), made unique by the host with a German noun; chat on T through the host into the notification feed (face + name). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
