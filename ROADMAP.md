@@ -529,8 +529,10 @@ Decisions:
 Steps:
 - [x] Look building blocks (form, eyes, coverage), fur texture, six skins, settings row, live swap with gear
 - [x] Armour fit check (`FLOWERBOX_AUTOPILOT=skins FLOWERBOX_SKIN_ARMOR=1`), animation check (`FLOWERBOX_SKIN_MOVE`), host/guest run (host cycles Blockhead → Tabby → Bruin, the guest's puppet follows; the guest's Rattlebones on the host)
-- [ ] The chat face could show the skin (it shows the slot colour)
-- [ ] Animated tails / ears (they're rigid on the pelvis / head)
+- [x] Chat faces per skin (drawn from UI boxes: monobrow, cube head, cat ears and whiskers, bear ears and snout, skull with glowing sockets, spotted cap); others' skins come from their puppets
+- [x] Idle: besides the breathing chest, a slow look around and shoulders rising with each breath; every body on its own clock (not in lockstep)
+- [x] Optional humanoid tail (`HumanoidLook::tail`): a chain of joints off the pelvis swinging in a travelling sine wave (`sway_tails`); Tabby (long, curled) and Bruin (stub)
+- [ ] Ears twitching (still rigid)
 
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).

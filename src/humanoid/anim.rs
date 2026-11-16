@@ -342,6 +342,16 @@ pub fn locomotion_pose(spec: &HumanoidSpec, input: &LocomotionInput) -> Humanoid
         }
         p.add(Bone::Chest, rx(-0.22 * k));
     }
+    // Idle life (fades out while moving): a slow look around, the shoulders rising with each breath.
+    let still = 1.0 - moving;
+    if still > 0.0 {
+        let t = input.time;
+        let look = ((t * 0.23).sin() * 0.6 + (t * 0.61 + 1.3).sin() * 0.4) * 0.22 * still;
+        let nod = (t * 0.37 + 0.5).sin() * 0.04 * still;
+        p.add(Bone::Head, ry(look) * rx(nod));
+        let breath = ((t * 1.8).sin() * 0.5 + 0.5) * still;
+        p.add(Bone::UpperArmL, rz(-0.03 * breath)).add(Bone::UpperArmR, rz(0.03 * breath));
+    }
     p.pelvis_offset.y -= grounded_feet(&p);
     p.pelvis_offset.y += bounce;
 
@@ -733,6 +743,7 @@ const BLOCKED_GAIT_SPEED: f32 = 1.1;
 pub fn animate_humanoids(
     time: Res<Time>,
     mut characters: Query<(
+        Entity,
         &HumanoidSpec,
         &HumanoidRig,
         &mut HumanoidAnimator,
@@ -745,7 +756,11 @@ pub fn animate_humanoids(
 ) {
     let dt = time.delta_secs();
     let smooth = |rate: f32| 1.0 - (-rate * dt).exp();
-    for (spec, rig, mut anim, ctrl, action, wielded, guard) in &mut characters {
+    for (entity, spec, rig, mut anim, ctrl, action, wielded, guard) in &mut characters {
+        if anim.time == 0.0 {
+            // Each body breathes and looks around on its own clock (not in lockstep).
+            anim.time = (entity.index_u32() % 97) as f32 * 0.731;
+        }
         anim.time += dt;
         // Airborne only after a short grace period, or right away when clearly jumping.
         if ctrl.grounded {

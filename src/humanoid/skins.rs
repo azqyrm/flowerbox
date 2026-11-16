@@ -15,7 +15,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{Bone, Covered, Eyes, Form, HumanoidSpec, Paint, Part, Shape, symmetric};
+use super::{Bone, Covered, Eyes, Form, HumanoidSpec, Paint, Part, Shape, Tail, symmetric};
 use crate::textures::Tex;
 
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -145,12 +145,21 @@ fn tabby(s: &mut HumanoidSpec) {
         // Muzzle and nose.
         part(Bone::Head, Shape::Ball(0.058), v(0.0, hr * 0.78, -hr * 0.8), NO_ROT, cream),
         part(Bone::Head, Shape::Ball(0.018), v(0.0, hr * 0.98, -hr * 1.26), NO_ROT, pink),
-        // The tail: back and down, then curling up, with a darker tip.
-        part(Bone::Pelvis, Shape::Capsule(0.034, 0.28), v(0.0, -0.07, 0.29), v(1.87, 0.0, 0.0), Paint::Skin),
-        part(Bone::Pelvis, Shape::Ball(0.036), v(0.0, -0.12, 0.44), NO_ROT, Paint::Skin),
-        part(Bone::Pelvis, Shape::Capsule(0.032, 0.26), v(0.0, 0.03, 0.49), v(0.3, 0.0, 0.0), Paint::Skin),
-        part(Bone::Pelvis, Shape::Ball(0.036), v(0.0, 0.2, 0.53), NO_ROT, Paint::Textured(Color::srgb(0.45, 0.24, 0.1), Tex::Fur)),
     ]);
+    // The tail: back and a little down, curling up, darker at the tip; swishes lazily.
+    l.tail = Some(Tail {
+        root: v(0.0, -0.04, 0.12),
+        segments: 6,
+        length: 0.1,
+        radius: 0.04,
+        taper: 0.7,
+        lift: 1.95,
+        curl: -0.3,
+        sway: 0.14,
+        speed: 0.32,
+        paint: Paint::Skin,
+        tip: Some(Paint::Textured(Color::srgb(0.45, 0.24, 0.1), Tex::Fur)),
+    });
 }
 
 fn bruin(s: &mut HumanoidSpec) {
@@ -194,6 +203,20 @@ fn bruin(s: &mut HumanoidSpec) {
         part(Bone::HandR, Shape::Cone(0.012, 0.045), v(0.03, -0.1, -0.03), v(3.14, 0.0, 0.0), Paint::Color(Color::srgb(0.85, 0.8, 0.7))),
         part(Bone::HandR, Shape::Cone(0.012, 0.045), v(-0.01, -0.11, -0.04), v(3.14, 0.0, 0.0), Paint::Color(Color::srgb(0.85, 0.8, 0.7))),
     ]));
+    // A stubby tail poking out of the shorts, wagging a little.
+    l.tail = Some(Tail {
+        root: v(0.0, 0.0, t.z * 0.47),
+        segments: 2,
+        length: 0.035,
+        radius: 0.05,
+        taper: 0.8,
+        lift: 1.2,
+        curl: 0.0,
+        sway: 0.18,
+        speed: 0.6,
+        paint: Paint::Skin,
+        tip: None,
+    });
 }
 
 fn rattlebones(s: &mut HumanoidSpec) {
@@ -295,6 +318,16 @@ mod tests {
             let head = bone_model_transform(&s, &pose, Bone::Head).translation;
             assert!(head.y + 2.0 * s.head_radius < 1.85, "{skin:?}: {head}");
         }
+    }
+
+    #[test]
+    fn tails_sway_and_scale() {
+        let cat = Skin::Tabby.spec();
+        let tail = cat.look.tail.expect("the cat has a tail");
+        assert!(tail.sway > 0.0 && tail.segments >= 3);
+        assert!(Skin::Monobrow.spec().look.tail.is_none(), "tails are optional");
+        let big = cat.scaled(2.0).look.tail.unwrap();
+        assert_eq!((big.length, big.radius), (tail.length * 2.0, tail.radius * 2.0));
     }
 
     #[test]

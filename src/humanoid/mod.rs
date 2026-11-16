@@ -28,7 +28,7 @@ pub struct HumanoidPlugin;
 
 impl Plugin for HumanoidPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, anim::animate_humanoids);
+        app.add_systems(Update, (anim::animate_humanoids, sway_tails));
     }
 }
 
@@ -147,6 +147,52 @@ pub struct HumanoidLook {
     /// Which body parts the clothes (top, bottom, boots) cover; the rest shows skin (or fur, or
     /// bone). Lighter clothes (shorts, sleeves, loincloths) are extras on top.
     pub covered: Covered,
+    /// An optional tail that sways on its own.
+    pub tail: Option<Tail>,
+}
+
+/// A tail: a chain of segments growing from the pelvis, each joint swinging a little side to side
+/// a moment after the one before (a lazy idle sway). Decoration: gameplay ignores it.
+#[derive(Clone, Copy, Debug)]
+pub struct Tail {
+    /// Where it starts, in the pelvis' frame (+Z = behind).
+    pub root: Vec3,
+    pub segments: usize,
+    /// Each segment's length; the radius tapers from `radius` to `radius * taper` at the tip.
+    pub length: f32,
+    pub radius: f32,
+    pub taper: f32,
+    /// Pitch of the first segment, from straight up toward the back (radians; π/2 = straight back).
+    pub lift: f32,
+    /// Extra pitch per following segment (negative curls it up).
+    pub curl: f32,
+    /// How far each joint swings sideways (radians; 0 = rigid).
+    pub sway: f32,
+    /// Swings per second.
+    pub speed: f32,
+    pub paint: Paint,
+    /// The last segment's paint (a darker tip), else `paint`.
+    pub tip: Option<Paint>,
+}
+
+/// One joint of a [`Tail`], posed by [`sway_tails`].
+#[derive(Component, Clone, Copy, Debug)]
+pub struct TailJoint {
+    pub index: usize,
+    pub rest: Quat,
+    pub sway: f32,
+    pub speed: f32,
+    /// Per character, so tails don't swing in lockstep.
+    pub phase: f32,
+}
+
+/// Swings every tail joint: a sine wave travelling from the root to the tip.
+pub fn sway_tails(time: Res<Time>, mut joints: Query<(&TailJoint, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (j, mut tf) in &mut joints {
+        let wave = (t * j.speed * std::f32::consts::TAU + j.phase - j.index as f32 * 0.8).sin();
+        tf.rotation = j.rest * Quat::from_rotation_z(wave * j.sway);
+    }
 }
 
 /// How the body's own parts are shaped.
@@ -396,6 +442,7 @@ impl HumanoidSpec {
                 form: Form::Round,
                 eyes: Eyes::Bar,
                 covered: Covered::ALL,
+                tail: None,
             },
         }
     }
@@ -448,6 +495,7 @@ impl HumanoidSpec {
                 form: Form::Round,
                 eyes: Eyes::Bar,
                 covered: Covered::ALL,
+                tail: None,
             },
             ..Self::human()
         }
@@ -476,6 +524,11 @@ impl HumanoidSpec {
         self.torso *= f;
         self.scale *= f;
         self.look.extras = self.look.extras.iter().map(|p| p.scaled(f)).collect();
+        if let Some(t) = &mut self.look.tail {
+            t.root *= f;
+            t.length *= f;
+            t.radius *= f;
+        }
         self
     }
 
@@ -687,6 +740,34 @@ pub fn spawn_humanoid(
     }
     for (p, m) in s.look.extras.iter().zip(&extra_mats) {
         part(p.bone, p.shape.mesh(), m, p.transform());
+    }
+    if let Some(tail) = look.tail {
+        let fur = tail.paint.material(materials, &body);
+        let tip = tail.tip.map_or(fur.clone(), |t| t.material(materials, &body));
+        let phase = (character.index_u32() % 29) as f32 * 0.9;
+        let (mut parent, mut at) = (bones[Bone::Pelvis.index()], tail.root);
+        for index in 0..tail.segments {
+            let rest = Quat::from_rotation_x(if index == 0 { tail.lift } else { tail.curl });
+            let joint = commands
+                .spawn((
+                    TailJoint { index, rest, sway: tail.sway, speed: tail.speed, phase },
+                    Transform::from_translation(at).with_rotation(rest),
+                    Visibility::default(),
+                    ChildOf(parent),
+                ))
+                .id();
+            let f = index as f32 / (tail.segments.max(2) - 1) as f32;
+            let r = tail.radius * (1.0 - f * (1.0 - tail.taper));
+            let material = if index + 1 == tail.segments { tip.clone() } else { fur.clone() };
+            commands.spawn((
+                Mesh3d(meshes.add(Capsule3d::new(r, tail.length))),
+                MeshMaterial3d(material),
+                Transform::from_xyz(0.0, tail.length * 0.5, 0.0),
+                NoFrustumCulling,
+                ChildOf(joint),
+            ));
+            (parent, at) = (joint, Vec3::Y * tail.length);
+        }
     }
 
     HumanoidRig { model, bones, root_height }

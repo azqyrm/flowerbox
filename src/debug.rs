@@ -48,7 +48,8 @@
 //!   5000 HP: attacks when close, rolls from its specials, adds 25 scripted damage every 0.5 s;
 //!   logs its moves, waves, enrage, death, the drop and the fog lifting.
 //! - `FLOWERBOX_AUTOPILOT=skins` → every player skin on a mannequin in a row (`FLOWERBOX_SKIN_MOVE=secs`:
-//!   then they walk in circles and swing; `FLOWERBOX_SKIN_ARMOR=1`: all wear every armour piece).
+//!   then they walk in circles and swing; `FLOWERBOX_SKIN_ARMOR=1`: all wear every armour piece;
+//!   `FLOWERBOX_FACES=1`: a chat line per skin, for their faces).
 //! - `FLOWERBOX_AUTOPILOT=bestiary` → every enemy kind stands in a row in the arena (brains off),
 //!   for screenshots. `FLOWERBOX_SPECIAL="Saint:Whirlwind@2.0"` makes one of them perform an
 //!   ability at that time (several, comma-separated).
@@ -705,9 +706,19 @@ fn skins_script(
     mut equip: MessageWriter<crate::weapon::EquipWeapon>,
     mut row: Local<Vec<Entity>>,
     mut bodies: Query<(&mut ActionIntent, &mut MoveIntent)>,
+    mut notify: MessageWriter<crate::ui::notifications::Notify>,
+    mut notes: ResMut<crate::ui::notifications::NotificationSettings>,
 ) {
     use crate::humanoid::skins::Skin;
     let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    // `FLOWERBOX_FACES`: one chat line per skin (their faces in the feed).
+    if std::env::var("FLOWERBOX_FACES").is_ok() && crossed(t, dt, 1.0) {
+        notes.max_shown = Skin::ALL.len();
+        for (i, skin) in Skin::ALL.into_iter().enumerate() {
+            let icon = crate::ui::icons::NoticeIcon::Face(skin, crate::net::sync::tunic(crate::net::protocol::PLAYER_ID_BASE + i as u32));
+            notify.write(crate::ui::notifications::Notify::new(icon, format!("{}: I said something!", skin.name())).lasting(20.0));
+        }
+    }
     if crossed(t, dt, 0.3) {
         for (i, skin) in Skin::ALL.into_iter().enumerate() {
             // Three each side of the player (who stands in the middle of the picture).

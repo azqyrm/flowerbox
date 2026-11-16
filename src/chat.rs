@@ -15,7 +15,8 @@ use crate::input::{InputSystems, MenuInput};
 use crate::net::NetSession;
 use crate::net::names::{default_name, sanitize};
 use crate::net::protocol::{NetId, PLAYER_ID_BASE, Reliable, encode};
-use crate::net::sync::tunic;
+use crate::humanoid::skins::Skin;
+use crate::net::sync::{Puppet, tunic};
 use crate::net::transport::{HOST_PEER, NetCmd, NetLink};
 use crate::net::{NetInbox, Role};
 use crate::settings::{Bind, Input, Settings};
@@ -152,13 +153,21 @@ fn chat_inbox(mut inbox: MessageReader<NetInbox>, session: Res<NetSession>, link
     }
 }
 
-/// A message becomes a notification: face + "Name: text".
-fn show_said(mut said: MessageReader<Said>, session: Res<NetSession>, settings: Res<Settings>, mut notify: MessageWriter<Notify>) {
+/// A message becomes a notification: the speaker's face (in their skin) + "Name: text".
+fn show_said(
+    mut said: MessageReader<Said>,
+    session: Res<NetSession>,
+    settings: Res<Settings>,
+    puppets: Query<(&Puppet, &Skin)>,
+    mut notify: MessageWriter<Notify>,
+) {
     for Said { who, text } in said.read() {
-        let name = if *who == session.my_id { my_name(&session, &settings) } else { session.name_of(*who) };
+        let mine = *who == session.my_id;
+        let name = if mine { my_name(&session, &settings) } else { session.name_of(*who) };
+        let skin = if mine { settings.skin } else { puppets.iter().find(|(p, _)| p.id == *who).map_or(Skin::Monobrow, |(_, s)| *s) };
         let slot = if session.online() { *who } else { PLAYER_ID_BASE };
-        info!("chat: {name}: {text}");
-        notify.write(Notify::new(NoticeIcon::Face(tunic(slot)), strings::said(&name, text)).lasting(message_secs(text)));
+        info!("chat: {name} ({}): {text}", skin.name());
+        notify.write(Notify::new(NoticeIcon::Face(skin, tunic(slot)), strings::said(&name, text)).lasting(message_secs(text)));
     }
 }
 
