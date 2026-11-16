@@ -68,6 +68,10 @@ pub struct LocomotionInput {
     pub slide: Vec2,
     /// -1..1 pivoting round (+ = to the left): the hips swing into the turn ahead of the chest.
     pub turn: f32,
+    /// 0..1 turning on the spot (standing, but the facing turns): small shuffling steps.
+    pub shuffle: f32,
+    /// Shuffle step cycle (radians), advanced by the angle turned.
+    pub shuffle_phase: f32,
 }
 
 /// Hips turned toward the direction of travel, and whether the cycle runs backward: a sideways or
@@ -372,6 +376,14 @@ pub fn locomotion_pose(spec: &HumanoidSpec, input: &LocomotionInput) -> Humanoid
         p.add(Bone::Pelvis, ry(input.turn * 0.4)).add(Bone::Chest, ry(input.turn * 0.25)).add(Bone::Head, ry(input.turn * 0.3));
         for (thigh, shin) in [(Bone::ThighL, Bone::ShinL), (Bone::ThighR, Bone::ShinR)] {
             p.add(thigh, rx(0.3 * input.turn.abs())).add(shin, rx(-0.5 * input.turn.abs()));
+        }
+    }
+
+    // Turning on the spot: the feet shuffle round in small alternating steps.
+    if input.shuffle > 1e-3 {
+        for (i, (thigh, shin, foot)) in [(Bone::ThighL, Bone::ShinL, Bone::FootL), (Bone::ThighR, Bone::ShinR, Bone::FootR)].into_iter().enumerate() {
+            let lift = (input.shuffle_phase + i as f32 * PI).sin().max(0.0) * input.shuffle;
+            p.add(thigh, rx(0.32 * lift)).add(shin, rx(-0.6 * lift)).add(foot, rx(0.28 * lift));
         }
     }
 
@@ -697,6 +709,10 @@ pub struct HumanoidAnimator {
     heading: f32,
     /// Eased skid / pivot weights and the slide direction (see `LocomotionInput`).
     brake: f32,
+    /// Turning on the spot: eased weight, step cycle, and last frame's facing.
+    shuffle: f32,
+    shuffle_phase: f32,
+    last_facing: f32,
     turn: f32,
     slide: Vec2,
 }
@@ -831,6 +847,16 @@ pub fn animate_humanoids(
             anim.heading *= 1.0 - smooth(4.0);
         }
 
+        // Turning on the spot: a step per ~35° turned, while standing (not mid-action / in the air).
+        let turned = (ctrl.facing - anim.last_facing + PI).rem_euclid(TAU) - PI;
+        anim.last_facing = ctrl.facing;
+        let rate = if dt > 0.0 { turned.abs() / dt } else { 0.0 };
+        let on_the_spot = !airborne && action.current.is_none() && anim.speed < 0.6 && rate > 0.8 && turned.abs() < 1.0;
+        anim.shuffle += (if on_the_spot { 1.0 } else { 0.0 } - anim.shuffle) * smooth(if on_the_spot { 12.0 } else { 6.0 });
+        if on_the_spot {
+            anim.shuffle_phase = (anim.shuffle_phase + turned.abs() / 0.6 * PI) % TAU;
+        }
+
         // Skid and pivot: in fast (the stop happens at once), out a little slower (settling).
         let brake = if airborne { 0.0 } else { ctrl.brake };
         anim.brake += (brake - anim.brake) * smooth(if brake > anim.brake { 22.0 } else { 7.0 });
@@ -856,6 +882,8 @@ pub fn animate_humanoids(
                 brake: anim.brake,
                 slide: anim.slide,
                 turn: anim.turn,
+                shuffle: anim.shuffle,
+                shuffle_phase: anim.shuffle_phase,
             },
         );
 
@@ -918,6 +946,17 @@ mod tests {
         let pivot = LocomotionInput { turn: 1.0, ..still };
         let hip = bone_model_transform(&spec, &locomotion_pose(&spec, &pivot), Bone::ThighR).translation;
         assert!(hip.z < -0.02, "right hip swings forward: {hip}");
+    }
+
+    #[test]
+    fn turning_on_the_spot_lifts_one_foot_at_a_time() {
+        use crate::humanoid::pose::bone_model_transform;
+        let spec = HumanoidSpec::human();
+        let foot = |i: &LocomotionInput, b: Bone| bone_model_transform(&spec, &locomotion_pose(&spec, i), b).translation.y;
+        let still = LocomotionInput::default();
+        let step = LocomotionInput { shuffle: 1.0, shuffle_phase: FRAC_PI_2, ..still };
+        assert!(foot(&step, Bone::FootL) > foot(&still, Bone::FootL) + 0.03, "left foot lifts");
+        assert!((foot(&step, Bone::FootR) - foot(&step, Bone::FootL)).abs() > 0.03, "the other stays down");
     }
 
     #[test]

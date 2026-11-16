@@ -493,7 +493,7 @@ Steps:
 - [x] Dormancy + measurement; strafe; target switching; gamepad two-handing; player + weapon redesign
 - [x] Online: bells via the host, defeated bosses for joiners (protocol v12); save bosses
 - [x] Tests (100), autopilots (`cathedral` route, `boss`, `bestiary`), two-instance runs, notes (N31)
-- [ ] Interpolated puppet motion for fast spins (a Whirlwind on a guest's screen turns in 30 Hz steps)
+- [x] Smooth puppet spins: the turn rate between two states carries a fast spin on between updates (`spin_rate`, > 6 rad/s while acting); ordinary turns still ease
 - [ ] Per-room ceilings (crypts are as tall as the nave: one ceiling per level)
 
 ### Phase 8.14 — Names and chat (user request, 2026-11-16)
@@ -513,7 +513,7 @@ Steps:
 - [x] Names: settings field, defaults, unique names on the host, list to everyone, rename online; notifications use them
 - [x] Chat: T line, send via the host, face + name in the feed, length-based lifetime; rebindable
 - [x] Tests (names, twins, text input, chat cleaning); offline + host/two-guest runs (both named gordelius → `Gordelius_Hammer`; every message on all three screens)
-- [ ] Name tags over other players' heads (only the feed shows names so far)
+- [x] Name tags over other players' heads (`ui/markers.rs`): within 25 m (`NAME_TAG_RANGE`, fading over the last 40 %), hidden behind walls (line of sight from the camera)
 
 ### Phase 8.15 — Player skins (user request, 2026-11-16)
 Request, cleaned up: skins chosen in the settings, worn by your character; the default **Monobrow** is the current look. Several forms and sizes that stay humanoid — a cat person, a bear, a human, a skeleton, a cube-headed builder — in light cloth clothes or underwear (no armour: that's equipment, on top). Every skin shares the animations, the humanoid features and the hitboxes: plug and play.
@@ -550,7 +550,7 @@ Decisions (see N32):
 Steps:
 - [x] `ground_rate` (accel vs decel), `brake` / `pivot` on the controller, skid and pivot poses; tests (stop distances, reversal rate, pose directions)
 - [x] `FLOWERBOX_AUTOPILOT=skid` (sprint → let go → sprint → reverse → jog → let go, logged); screenshots; level walk still completes
-- [ ] Turn-in-place animation when standing still and turning a lot (the body just rotates)
+- [x] Turning on the spot (locked on, the target circling): small alternating shuffle steps, a step per ~35° turned
 
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).

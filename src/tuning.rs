@@ -305,3 +305,5 @@ pub const CHAT_MAX_CHARS: usize = 120;
 pub const CHAT_BASE_SECS: f32 = 5.0;
 pub const CHAT_SECS_PER_CHAR: f32 = 0.06;
 pub const CHAT_MAX_SECS: f32 = 12.0;
+/// Other players' name tags show within this distance (fading over the last 40 %).
+pub const NAME_TAG_RANGE: f32 = 25.0;

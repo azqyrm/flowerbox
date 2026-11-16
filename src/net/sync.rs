@@ -69,6 +69,25 @@ pub struct Puppet {
     shown_gear: [Option<crate::items::ItemId>; 3],
     /// Action elapsed as last reported (to tell a new action from the same one).
     last_elapsed: f32,
+    /// Turn rate between the last two states (rad/s), to carry fast spins on between updates.
+    spin: f32,
+}
+
+/// Faster than this (rad/s) a puppet's turn is a spin (a Whirlwind): extrapolated, not eased.
+const SPIN_RATE: f32 = 6.0;
+
+/// Shortest signed angle `to - from`.
+fn turn(from: f32, to: f32) -> f32 {
+    (to - from + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// The turn rate from two states `dt` apart; small rates count as none (ordinary turning).
+fn spin_rate(old: f32, new: f32, dt: f32) -> f32 {
+    if dt < 0.005 {
+        return 0.0;
+    }
+    let rate = turn(old, new) / dt;
+    if rate.abs() > SPIN_RATE { rate } else { 0.0 }
 }
 
 /// Net id of one of the host's real enemies (stable while the entity lives).
@@ -225,6 +244,9 @@ fn receive(
     for body in latest {
         match puppets.iter_mut().find(|(_, p)| p.id == body.id) {
             Some((_, mut p)) => {
+                // Only a spinning action carries a spin on (a stop or a snap isn't one).
+                let acting = body.action.is_some();
+                p.spin = if acting { spin_rate(p.state.facing, body.facing, p.age) } else { 0.0 };
                 p.state = body;
                 p.age = 0.0;
             }
@@ -309,7 +331,7 @@ fn spawn_puppet(
         .spawn((
             Name::new(name),
             Remote,
-            Puppet { id: body.id, state: body.clone(), age: 0.0, shown_gear: [None; 3], last_elapsed: 0.0 },
+            Puppet { id: body.id, state: body.clone(), age: 0.0, shown_gear: [None; 3], last_elapsed: 0.0, spin: 0.0 },
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(body.facing)),
             Visibility::default(),
             CharacterController { facing: body.facing, ..default() },
@@ -379,8 +401,13 @@ fn drive_puppets(
         if tf.translation.distance(target) > 4.0 {
             tf.translation = target; // teleported (respawn): snap
         }
-        let d = (s.facing - ctrl.facing + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-        ctrl.facing += d * follow;
+        if p.spin != 0.0 {
+            // Spinning: keep turning at the reported rate until the next state (briefly), so a
+            // Whirlwind turns smoothly instead of in 30 Hz steps.
+            ctrl.facing = s.facing + p.spin * p.age.min(0.1);
+        } else {
+            ctrl.facing += turn(ctrl.facing, s.facing) * follow;
+        }
         tf.rotation = Quat::from_rotation_y(ctrl.facing);
         ctrl.moved = moved;
         ctrl.wish_speed = moved.with_y(0.0).length();
@@ -601,4 +628,19 @@ pub fn place_guest(
     ctrl.velocity = Vec3::ZERO;
     commands.remove_resource::<PlaceNearHost>();
     info!("joined beside the host at {:.2}", tf.translation);
+}
+
+#[cfg(test)]
+mod spin_tests {
+    use super::*;
+
+    #[test]
+    fn spins_are_told_from_turns() {
+        // A Whirlwind: ~2 turns a second, states 1/30 s apart.
+        let rate = spin_rate(0.0, 0.42, 1.0 / 30.0);
+        assert!((rate - 12.6).abs() < 0.1, "{rate}");
+        assert!(spin_rate(3.0, -3.0, 1.0 / 30.0) > 8.0, "across ±π the short way (+0.28 rad)");
+        assert_eq!(spin_rate(0.0, 0.1, 1.0 / 30.0), 0.0, "an ordinary turn");
+        assert_eq!(spin_rate(0.0, 1.0, 0.0), 0.0);
+    }
 }

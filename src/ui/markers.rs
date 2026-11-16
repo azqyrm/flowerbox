@@ -1,7 +1,8 @@
 //! Screen-space markers that follow things in the world: the lock-on dot on the target, the
 //! health bars over enemies (shown once hurt, or while locked on; hidden when dead or off-screen)
 //! and, online, a health bar over every other player's head that shows for `PLAYER_BAR_SHOW`
-//! seconds whenever their HP changes (hurt or healed), then fades away.
+//! seconds whenever their HP changes (hurt or healed), then fades away. Other players also carry
+//! a **name tag** over the head: within `NAME_TAG_RANGE`, not behind a wall, fading with distance.
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -21,7 +22,8 @@ impl Plugin for MarkersPlugin {
         app.add_systems(Startup, spawn_lock_marker)
             .add_systems(
                 PostUpdate,
-                (spawn_enemy_bars, update_lock_marker, update_enemy_bars, spawn_player_bars, update_player_bars).after(TransformSystems::Propagate),
+                (spawn_enemy_bars, update_lock_marker, update_enemy_bars, spawn_player_bars, update_player_bars, spawn_name_tags, update_name_tags)
+                    .after(TransformSystems::Propagate),
             );
     }
 }
@@ -262,5 +264,102 @@ mod tests {
         assert!(mid > 0.4 && mid < 0.6, "{mid}");
         assert_eq!(player_bar_alpha(PLAYER_BAR_SHOW + PLAYER_BAR_FADE), 0.0);
         assert_eq!(player_bar_alpha(f32::INFINITY), 0.0, "hidden until the HP changes");
+    }
+}
+
+// ── Name tags ────────────────────────────────────────────────────────────
+
+/// Name tag over `0` (another player's puppet).
+#[derive(Component)]
+struct NameTag(Entity);
+#[derive(Component)]
+struct NameTagText;
+
+const NAME_TAG_WIDTH: f32 = 260.0;
+/// Above the health bar (metres above the capsule centre).
+const NAME_TAG_HEIGHT: f32 = 1.42;
+
+fn spawn_name_tags(mut commands: Commands, assets: Res<AssetServer>, players: Query<(Entity, Option<&Team>), (Added<Remote>, With<crate::net::sync::Puppet>)>) {
+    for (player, team) in &players {
+        if team != Some(&Team::Player) {
+            continue;
+        }
+        let tag = commands
+            .spawn((
+                Name::new("Name tag"),
+                NameTag(player),
+                Node { position_type: PositionType::Absolute, width: Val::Px(NAME_TAG_WIDTH), justify_content: JustifyContent::Center, ..default() },
+                Visibility::Hidden,
+            ))
+            .id();
+        commands.spawn((
+            NameTagText,
+            Text::new(""),
+            TextFont { font: assets.load(super::DISPLAY_FONT).into(), font_size: FontSize::Px(16.0), ..default() },
+            TextColor(Color::srgb(0.95, 0.9, 0.78)),
+            TextShadow { offset: Vec2::splat(1.5), color: Color::srgba(0.0, 0.0, 0.0, 0.9) },
+            ChildOf(tag),
+        ));
+    }
+}
+
+/// How visible a tag is at `distance` metres: full up close, fading out toward the range.
+fn name_tag_alpha(distance: f32) -> f32 {
+    use crate::tuning::NAME_TAG_RANGE;
+    (1.0 - (distance - NAME_TAG_RANGE * 0.6) / (NAME_TAG_RANGE * 0.4)).clamp(0.0, 1.0)
+}
+
+#[allow(clippy::type_complexity)]
+fn update_name_tags(
+    mut commands: Commands,
+    session: Res<crate::net::NetSession>,
+    spatial: avian3d::prelude::SpatialQuery,
+    cams: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    puppets: Query<(&GlobalTransform, &crate::net::sync::Puppet)>,
+    characters: Query<(), With<crate::character::controller::CharacterController>>,
+    mut tags: Query<(Entity, &NameTag, &mut Node, &mut Visibility, &Children)>,
+    mut texts: Query<(&mut Text, &mut TextColor, &mut TextShadow), With<NameTagText>>,
+) {
+    let Ok((camera, cam_tf)) = cams.single() else { return };
+    let eye = cam_tf.translation();
+    for (entity, tag, mut node, mut vis, children) in &mut tags {
+        let Ok((tf, puppet)) = puppets.get(tag.0) else {
+            commands.entity(entity).despawn(); // the player left
+            continue;
+        };
+        let head = tf.translation() + Vec3::Y * NAME_TAG_HEIGHT;
+        let alpha = name_tag_alpha(head.distance(eye));
+        // Not through walls (characters don't hide each other).
+        let seen = alpha > 0.0 && crate::level::line_of_sight(&spatial, eye, head, &|e| !characters.contains(e));
+        let Some(p) = seen.then(|| to_screen(camera, cam_tf, head)).flatten() else {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        vis.set_if_neq(Visibility::Inherited);
+        node.left = Val::Px(p.x - NAME_TAG_WIDTH * 0.5);
+        node.top = Val::Px(p.y - 22.0);
+        let name = session.name_of(puppet.id);
+        for child in children.iter() {
+            if let Ok((mut text, mut color, mut shadow)) = texts.get_mut(child) {
+                if text.0 != name {
+                    text.0 = name.clone();
+                }
+                color.0 = color.0.with_alpha(alpha);
+                shadow.color = shadow.color.with_alpha(0.9 * alpha);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod name_tag_tests {
+    use super::*;
+
+    #[test]
+    fn name_tags_fade_with_distance() {
+        use crate::tuning::NAME_TAG_RANGE;
+        assert_eq!(name_tag_alpha(2.0), 1.0);
+        assert!(name_tag_alpha(NAME_TAG_RANGE * 0.8) > 0.0 && name_tag_alpha(NAME_TAG_RANGE * 0.8) < 1.0);
+        assert_eq!(name_tag_alpha(NAME_TAG_RANGE + 1.0), 0.0);
     }
 }
