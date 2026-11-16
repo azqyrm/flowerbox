@@ -180,6 +180,10 @@ pub struct RoomDef {
     pub name: String,
     pub floor: f32,
     pub rects: Vec<PxRect>,
+    /// Its own ceiling, this high above its floor (a low crypt under a tall nave). Default: the
+    /// level's ceiling.
+    #[serde(default)]
+    pub height: Option<f32>,
 }
 
 /// Stairs inside `rect`, going down toward `down`, from floor height `top` to `bottom`. Open at both
@@ -435,6 +439,20 @@ impl Layout {
     /// The ceiling height of this level.
     pub fn ceiling(&self) -> f32 {
         self.file.ceiling.unwrap_or(LEVEL_CEILING)
+    }
+
+    /// Ceiling height of room `room`.
+    pub fn room_ceiling(&self, room: usize) -> f32 {
+        let r = &self.file.rooms[room];
+        r.height.map_or(self.ceiling(), |h| r.floor + h)
+    }
+
+    /// The ceiling over `p` (its room's, else the level's: stairs and outside).
+    pub fn ceiling_at(&self, p: Vec2) -> f32 {
+        match self.index(p).map(|(i, j)| self.cell(i, j)) {
+            Some(Cell::Room(r)) => self.room_ceiling(r as usize),
+            _ => self.ceiling(),
+        }
     }
 
     /// Top of its walls (a little above the ceiling).

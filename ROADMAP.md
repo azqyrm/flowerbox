@@ -494,7 +494,7 @@ Steps:
 - [x] Online: bells via the host, defeated bosses for joiners (protocol v12); save bosses
 - [x] Tests (100), autopilots (`cathedral` route, `boss`, `bestiary`), two-instance runs, notes (N31)
 - [x] Smooth puppet spins: the turn rate between two states carries a fast spin on between updates (`spin_rate`, > 6 rad/s while acting); ordinary turns still ease
-- [ ] Per-room ceilings (crypts are as tall as the nave: one ceiling per level)
+- [x] Per-room ceilings: `height` on a room (above its floor; default the level's ceiling); columns, chimneys and grates reach their room's ceiling; a header closes the gap where a stair meets a lower room. Ossuary 6 m, crypt 5.5 m, the Choir of Thorns 10 m
 
 ### Phase 8.14 — Names and chat (user request, 2026-11-16)
 Request, cleaned up:

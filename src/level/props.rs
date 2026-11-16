@@ -141,7 +141,7 @@ pub fn spawn_props(
                 }
                 part(commands, Cuboid::new(2.1, 0.5, 1.5).into(), &brick, t(0.0, 2.6, 0.1));
                 part(commands, Cuboid::new(1.5, 0.6, 1.1).into(), &brick, t(0.0, 3.1, 0.2));
-                let ceiling = layout.ceiling() - floor.y;
+                let ceiling = layout.ceiling_at(floor.xz()) - floor.y;
                 part(commands, Cuboid::new(0.9, ceiling - 3.4 + 0.3, 0.8).into(), &brick, t(0.0, (3.4 + ceiling + 0.3) * 0.5, 0.25));
                 for x in [-0.95, 0.95] {
                     part(commands, Cuboid::new(0.15, 1.7, 0.15).into(), &brick, t(x, 1.75, -0.55));
@@ -165,7 +165,7 @@ pub fn spawn_props(
         if prop.kind == PropKind::SkyGrate {
             // Bars across the opening, daylight above, a sunbeam down through it.
             let (w, d) = prop.size;
-            let y = layout.ceiling() + 0.15 - floor.y;
+            let y = layout.ceiling_at(floor.xz()) + 0.15 - floor.y;
             for i in 0..=((w / 0.32) as i32) {
                 let x = -w * 0.5 + i as f32 * w / (w / 0.32).floor();
                 part(commands, Cylinder::new(0.035, d).into(), &dark_iron, t(x, y, 0.0).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)));

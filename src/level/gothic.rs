@@ -83,7 +83,7 @@ pub fn spawn_gothic_prop(
     frame: Transform,
 ) {
     let floor = frame.translation;
-    let height = layout.ceiling() - floor.y;
+    let height = layout.ceiling_at(floor.xz()) - floor.y;
     let mut part = |commands: &mut Commands, mesh: Mesh, mat: &Handle<StandardMaterial>, t: Transform| {
         commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat.clone()), t, ChildOf(root))).id()
     };

@@ -1,7 +1,8 @@
 //! Levels built from a data file (`assets/levels/*.ron`, format in [`layout`]): rooms are
 //! rectangles with a floor height, rasterised onto a fine grid; walls are generated on the grid
 //! lines wherever a room borders nothing, a solid block or another room (except at doors and at
-//! the ends of stairs). Every room shares one ceiling height, so deeper rooms are taller.
+//! the ends of stairs). Rooms share the level's ceiling height (deeper rooms are taller) unless a
+//! room sets its own `height` above its floor.
 //!
 //! The builder spawns floors, ceilings, walls (merged into long runs), stairs (an invisible ramp
 //! to walk on + visible steps), torches, doors ([`door`]), sunflowers (`hearth::spawn_sunflower`),
@@ -180,8 +181,9 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
     let holes = layout.ceiling_holes();
     let ceiling = |rect: (Vec2, Vec2)| holes.iter().fold(vec![rect], |pieces, h| pieces.into_iter().flat_map(|p| layout::subtract_rect(p, *h)).collect());
     for f in &layout.floors {
+        let room_ceiling = layout.room_ceiling(f.room);
         for (a, b) in ceiling((f.min, f.max)) {
-            block(&mut commands, "Ceiling", Vec3::new(a.x, ceiling_y, a.y), Vec3::new(b.x, ceiling_y + 0.3, b.y), &ceiling_mat, true);
+            block(&mut commands, "Ceiling", Vec3::new(a.x, room_ceiling, a.y), Vec3::new(b.x, room_ceiling + 0.3, b.y), &ceiling_mat, true);
         }
         // No floor under stairs: their ramp is solid, and a floor slab reaching under a stair
         // from the upper room would stick up through the ramp as a step.
@@ -215,6 +217,16 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
         let (length, width) = if s.down.is_ns() { (size.y, size.x) } else { (size.x, size.y) };
         let centre = (s.min + s.max) * 0.5;
         let across = Vec2::new(-down.y, down.x);
+        // A room at either end with a lower ceiling: close the gap between its ceiling and the
+        // stair's with a header over the opening (else you'd look into the space above the room).
+        for end in [-0.5, 0.5] {
+            let edge = centre + down * end * length;
+            let room_ceiling = layout.ceiling_at(edge + down * end.signum() * 0.5);
+            if room_ceiling < ceiling_y - 0.05 {
+                let half = across.abs() * width * 0.5 + down.abs() * LEVEL_WALL_THICKNESS * 0.5;
+                block(&mut commands, "Stair Header", Vec3::new(edge.x - half.x, room_ceiling, edge.y - half.y), Vec3::new(edge.x + half.x, ceiling_y + 0.3, edge.y + half.y), &wall_mats[0], true);
+            }
+        }
         let base = s.bottom - 0.5;
         let mut points = vec![];
         for (along, h) in [(-0.5, s.top), (0.5, s.bottom)] {
