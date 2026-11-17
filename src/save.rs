@@ -71,6 +71,8 @@ pub struct SaveData {
     pub two_hand: Option<Hand>,
     /// Bosses defeated for good.
     pub bosses: Vec<crate::enemy::EnemyKind>,
+    /// Light carried (`crate::light`).
+    pub light: u32,
 }
 
 impl SaveData {
@@ -93,6 +95,8 @@ struct SaveState {
     respawn: Option<([f32; 3], f32)>,
     taken: Vec<u32>,
     bosses: Vec<crate::enemy::EnemyKind>,
+    /// The player's Light (kept with the character, also while visiting).
+    light: u32,
 }
 
 fn save_path() -> Option<PathBuf> {
@@ -172,6 +176,8 @@ fn load_save(
     state.respawn = data.respawn;
     state.taken = data.taken.clone();
     state.bosses = data.bosses.clone();
+    state.light = data.light;
+    commands.entity(entity).insert(crate::light::LightPurse(data.light));
     info!("save loaded ({} items, {} Ale)", data.items.len(), data.ale_charges);
 }
 
@@ -210,10 +216,17 @@ fn track_world(
 
 #[allow(clippy::type_complexity)]
 fn mark_dirty(
+    purse: Query<&crate::light::LightPurse, With<Player>>,
     mut state: ResMut<SaveState>,
     changed: Query<(), (With<Player>, Or<(Changed<Inventory>, Changed<Equipment>, Changed<HealingAle>)>)>,
 ) {
     if !changed.is_empty() {
+        state.dirty = true;
+    }
+    if let Ok(p) = purse.single()
+        && p.0 != state.light
+    {
+        state.light = p.0;
         state.dirty = true;
     }
 }
@@ -236,6 +249,7 @@ fn snapshot(state: &SaveState, inventory: &Inventory, equipment: &Equipment, ale
         claimed_drops: state.claimed.clone(),
         two_hand: equipment.two_hand,
         bosses: state.bosses.clone(),
+        light: state.light,
     }
 }
 

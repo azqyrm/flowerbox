@@ -207,6 +207,12 @@ pub const PARRY_STUN_TIME: f32 = 1.8;
 /// Damage multiplier for hitting a stunned (parried) character: the riposte.
 pub const RIPOSTE_MULT: f32 = 2.5;
 
+// ── Light (`crate::light`) ──
+/// Who gets the Light of a kill (user request: everyone, for now).
+pub const LIGHT_SHARE: crate::light::LightShare = crate::light::LightShare::Everyone;
+/// `LightShare::Nearby`: within this distance of the kill (m).
+pub const LIGHT_NEARBY_RANGE: f32 = 40.0;
+
 // ── Critical hits (`crate::critical`) ──
 /// Reach for a critical: centre to centre, beyond both capsules (m).
 pub const CRIT_RANGE: f32 = 1.6;

@@ -153,6 +153,8 @@ pub enum Reliable {
     Stun,
     /// Client → host: my critical pins `target` (an enemy) on my blade, turned to `facing`.
     Pin { target: NetId, kind: crate::character::action::CritKind, facing: f32 },
+    /// Host → guest: you earned `amount` Light (a kill in the host's world).
+    Light { amount: u32 },
 }
 
 /// An item on the floor.

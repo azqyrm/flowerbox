@@ -104,7 +104,7 @@ pub use crate::character::Dormant;
 
 /// Lying dead for this many seconds.
 #[derive(Component)]
-struct Corpse(f32);
+pub struct Corpse(f32);
 
 /// True while this machine is a guest in someone else's world: the host's enemies are the real
 /// ones (they arrive as puppets), so none are spawned here (`crate::net`).

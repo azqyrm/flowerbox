@@ -12,6 +12,7 @@ mod chat;
 mod character;
 mod combat;
 mod critical;
+mod light;
 mod debug;
 mod enemy;
 mod grab;
@@ -72,6 +73,8 @@ fn main() {
             quadruped::QuadrupedPlugin,
             weapon::WeaponPlugin,
             player::PlayerPlugin,
+            critical::CriticalPlugin,
+            light::LightPlugin,
         ))
         .add_plugins((
             level::LevelPlugin,
@@ -88,7 +91,6 @@ fn main() {
             net::NetPlugin,
             chat::ChatPlugin,
             textures::TexturesPlugin,
-            critical::CriticalPlugin,
         ))
         .run();
 }

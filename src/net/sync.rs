@@ -195,6 +195,7 @@ fn receive(
     mut equip_weapon: MessageWriter<EquipWeapon>,
     mut damage: MessageWriter<DamageMessage>,
     mut pins: MessageWriter<crate::critical::PinRequest>,
+    mut light: MessageWriter<crate::light::LightGained>,
     mut inbox: MessageReader<NetInbox>,
     session: Res<NetSession>,
     mut puppets: Query<(Entity, &mut Puppet)>,
@@ -251,6 +252,9 @@ fn receive(
                     info!("a guest's critical pins enemy {target}");
                     pins.write(crate::critical::PinRequest { victim: e, kind: *kind, facing: *facing });
                 }
+            }
+            NetInbox::Reliable(HOST_PEER, Reliable::Light { amount }) if session.is_client() => {
+                light.write(crate::light::LightGained { amount: *amount });
             }
             NetInbox::Reliable(HOST_PEER, Reliable::Stun) if session.is_client() => {
                 stun_me = true;
@@ -608,11 +612,17 @@ fn forward_hits(
     mut damage: MessageReader<DamageMessage>,
     mut parries: MessageReader<Parried>,
     mut pins: MessageReader<crate::critical::PinRequest>,
+    mut light: MessageReader<crate::light::LightForGuest>,
     puppets: Query<&Puppet>,
     dummies: Query<(), With<Dummy>>,
 ) {
     if session.is_host() {
         pins.clear();
+        for l in light.read() {
+            if let Some((&peer, _)) = session.peers.iter().find(|(_, id)| **id == l.guest) {
+                link.send(NetCmd::Reliable { to: Some(peer), bytes: encode(&Reliable::Light { amount: l.amount }) });
+            }
+        }
         // The host parried a guest: stun them on their machine.
         damage.clear();
         for parry in parries.read() {
@@ -628,6 +638,7 @@ fn forward_hits(
         damage.clear();
         parries.clear();
         pins.clear();
+        light.clear();
         return;
     }
     for pin in pins.read() {

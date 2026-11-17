@@ -65,5 +65,5 @@ fn spawn_player(
     let mut equipment = Equipment::default();
     equipment.equip(&inventory, 0);
     equipment.equip(&inventory, 1);
-    commands.entity(player).insert((inventory, equipment, EquipStats::default(), EquipVisuals::default(), DamageAbsorption::default(), Stance::new(PLAYER_STANCE, false)));
+    commands.entity(player).insert((inventory, equipment, EquipStats::default(), EquipVisuals::default(), DamageAbsorption::default(), Stance::new(PLAYER_STANCE, false), crate::light::LightPurse::default()));
 }
