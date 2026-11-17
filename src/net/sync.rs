@@ -32,7 +32,7 @@ use crate::enemy::{self, Enemy, EnemiesSuppressed};
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::humanoid::skins::Skin;
-use crate::items::inventory::{EquipSlot, EquipStats, EquipVisuals, Equipment, Inventory};
+use crate::items::inventory::{EquipStats, EquipVisuals, Equipment, Inventory};
 use crate::lockon::Targetable;
 use crate::player::Player;
 use crate::pvp::Pvp;
@@ -66,7 +66,7 @@ pub struct Puppet {
     /// Seconds since `state` arrived (for extrapolation).
     age: f32,
     /// Equipment shown, to rebuild the puppet's bag when it changes.
-    shown_gear: [Option<crate::items::ItemId>; 3],
+    shown_gear: [Option<crate::items::ItemId>; SHOWN_SLOTS.len()],
     /// Action elapsed as last reported (to tell a new action from the same one).
     last_elapsed: f32,
     /// Turn rate between the last two states (rad/s), to carry fast spins on between updates.
@@ -104,7 +104,7 @@ fn body_state(
     action: &CharacterAction,
     guard: Option<&Guard>,
     health: &Health,
-    gear: [Option<crate::items::ItemId>; 3],
+    gear: [Option<crate::items::ItemId>; SHOWN_SLOTS.len()],
     pvp: bool,
     two_hand: Option<Hand>,
 ) -> BodyState {
@@ -120,9 +120,7 @@ fn body_state(
         guard: guard.and_then(|g| g.raised_for),
         hp: health.current,
         hp_max: health.max,
-        right_hand: gear[0],
-        left_hand: gear[1],
-        head: gear[2],
+        gear,
         pvp,
         two_hand,
         skid: (ctrl.brake, ctrl.pivot as i8),
@@ -331,7 +329,7 @@ fn spawn_puppet(
         .spawn((
             Name::new(name),
             Remote,
-            Puppet { id: body.id, state: body.clone(), age: 0.0, shown_gear: [None; 3], last_elapsed: 0.0, spin: 0.0 },
+            Puppet { id: body.id, state: body.clone(), age: 0.0, shown_gear: [None; SHOWN_SLOTS.len()], last_elapsed: 0.0, spin: 0.0 },
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(body.facing)),
             Visibility::default(),
             CharacterController { facing: body.facing, ..default() },
@@ -449,17 +447,16 @@ fn drive_puppets(
         if health.current != s.hp || health.max != s.hp_max {
             *health = Health { current: s.hp, max: s.hp_max };
         }
-        // Equipment: rebuild the puppet's tiny bag when it changes (weapon/shield/hood models follow;
-        // each hand's item goes into that hand, so a left weapon stays left).
-        let shown = [s.right_hand, s.left_hand, s.head];
+        // Equipment: rebuild the puppet's tiny bag when it changes (weapon, shield and armour
+        // models follow; each item goes back into the slot it was sent for).
         if let Some((mut inv, mut eq)) = gear
-            && (shown != p.shown_gear || eq.two_hand != s.two_hand)
+            && (s.gear != p.shown_gear || eq.two_hand != s.two_hand)
         {
-            p.shown_gear = shown;
-            *inv = Inventory { items: shown.iter().flatten().copied().collect(), ..default() };
+            p.shown_gear = s.gear;
+            let worn: Vec<_> = SHOWN_SLOTS.into_iter().zip(s.gear).filter_map(|(slot, item)| Some((slot, item?))).collect();
+            *inv = Inventory { items: worn.iter().map(|(_, item)| *item).collect(), ..default() };
             let mut next = Equipment::default();
-            for (i, item) in inv.items.clone().into_iter().enumerate() {
-                let slot = if Some(item) == s.left_hand { EquipSlot::LeftHand } else if Some(item) == s.right_hand { EquipSlot::RightHand } else { EquipSlot::Head };
+            for (i, (slot, _)) in worn.into_iter().enumerate() {
                 next.equip_to(&inv, i, slot);
             }
             next.two_hand = s.two_hand;
@@ -505,7 +502,7 @@ fn send_states(
     let tick = *timer;
     *timer = 0.0;
     let Ok((tf, ctrl, action, guard, health, inv, eq, pvp, skin)) = player.single() else { return };
-    let gear = [EquipSlot::RightHand, EquipSlot::LeftHand, EquipSlot::Head].map(|s| eq.item(s, inv));
+    let gear = SHOWN_SLOTS.map(|s| eq.item(s, inv));
     let me = body_state(session.my_id, BodyKind::Player(*skin), tf, ctrl, action, Some(guard), health, gear, pvp.0, eq.two_hand);
     if session.is_host() {
         let mut bodies = vec![me];
@@ -514,7 +511,7 @@ fn send_states(
         let mut live = HashSet::new();
         for (e, enemy, tf, ctrl, action, health) in &enemies {
             let kind = BodyKind::Enemy(enemy.kind);
-            let state = body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; 3], false, None);
+            let state = body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; SHOWN_SLOTS.len()], false, None);
             ids.push(state.id);
             live.insert(state.id);
             // Only what changed, plus a keepalive for idle ones: most enemies stand still far away.

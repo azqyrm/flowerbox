@@ -607,6 +607,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Player skins change only the look on the human skeleton (same animation, reach, feet, capsule); six skins; armour fitted to at least a human build. |
 | 2026-11-16 | Player names (settings; Host / GuestN / Player1 without one), made unique by the host with a German noun; chat on T through the host into the notification feed (face + name). |
 | 2026-11-17 | Test runs (`FLOWERBOX_AUTOPILOT` / `FLOWERBOX_SCREENSHOT`) never capture the mouse (`input::cursor_lock_allowed`) and open their window without taking focus, so tests can run while you keep using the desktop. Scripted attack/guard buttons already ignore the cursor state. |
+| 2026-11-17 | Robes, skirts and capes are cloth meshes rebuilt each frame (`humanoid/skirt.rs`): the hem is pushed out past knees and feet, so striding legs never poke through (a fixed cone narrow enough to look like a robe always failed). Hoods wrap the head (a cowl with the face in its opening) instead of sitting on top. Online, every visible equipment slot (hands, head, chest, gauntlets, legs: `SHOWN_SLOTS`) is sent, not only weapons and the hood (protocol 16). |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---

@@ -12,10 +12,15 @@ use crate::character::action::ActionKind;
 use crate::enemy::EnemyKind;
 use crate::humanoid::skins::Skin;
 use crate::items::ItemId;
+use crate::items::inventory::EquipSlot;
 use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 15;
+pub const PROTOCOL_VERSION: u16 = 16;
+
+/// The equipment other players see on you (rings and the quick item don't show).
+pub const SHOWN_SLOTS: [EquipSlot; 6] =
+    [EquipSlot::RightHand, EquipSlot::LeftHand, EquipSlot::Head, EquipSlot::Chest, EquipSlot::Hands, EquipSlot::Legs];
 
 /// Network id of a body. Players: `PLAYER_ID_BASE + slot` (the host is slot 0). Enemies:
 /// `ENEMY_ID_BASE + index`.
@@ -60,9 +65,8 @@ pub struct BodyState {
     pub guard: Option<f32>,
     pub hp: f32,
     pub hp_max: f32,
-    pub right_hand: Option<ItemId>,
-    pub left_hand: Option<ItemId>,
-    pub head: Option<ItemId>,
+    /// What's worn and held, one per [`SHOWN_SLOTS`] slot (weapons, shield, armour).
+    pub gear: [Option<ItemId>; SHOWN_SLOTS.len()],
     /// Opted into PvP (Poppy).
     pub pvp: bool,
     /// Which hand's weapon is held in both hands.
@@ -219,9 +223,7 @@ mod tests {
             guard: None,
             hp: 80.0,
             hp_max: 100.0,
-            right_hand: Some(ItemId::Longsword),
-            left_hand: Some(ItemId::WoodenShield),
-            head: None,
+            gear: [Some(ItemId::Longsword), Some(ItemId::WoodenShield), Some(ItemId::LeatherHood), Some(ItemId::PenitentHauberk), None, Some(ItemId::GraveGreaves)],
             pvp: false,
             two_hand: None,
             skid: (0.0, 0),

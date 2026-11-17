@@ -61,6 +61,7 @@
 //!   those game times, and logs menu / input-block / cursor changes. For input bugs.
 //!   `3.0:"Hello~you` types text (`~` = space; the chat, the name field).
 //! - `FLOWERBOX_THROW="secs:index"` → throws bag entry `index` out at that time (online tests).
+//! - `FLOWERBOX_WEAR=secs` → puts on a full set of armour at that time (online tests).
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
 use bevy::prelude::*;
@@ -114,6 +115,9 @@ impl Plugin for DebugPlugin {
         }
         if std::env::var("FLOWERBOX_THROW").is_ok() {
             app.add_systems(Update, scripted_throw);
+        }
+        if std::env::var("FLOWERBOX_WEAR").is_ok() {
+            app.add_systems(Update, scripted_wear);
         }
         if std::env::var("FLOWERBOX_FPS_LOG").is_ok() {
             app.add_systems(Update, log_fps);
@@ -628,6 +632,21 @@ fn scripted_throw(time: Res<Time>, mut throw: MessageWriter<crate::items::pickup
     if crossed(time.elapsed_secs(), time.delta_secs(), at) {
         info!("script: throw out bag entry {index}");
         throw.write(crate::items::pickup::ThrowOutRequest { index });
+    }
+}
+
+/// `FLOWERBOX_WEAR=secs`: at that time the player puts on a full set of armour (online tests:
+/// the other players should see it).
+fn scripted_wear(time: Res<Time>, mut player: Query<(Entity, &mut Inventory), With<Player>>, mut equip: MessageWriter<EquipRequest>) {
+    let Ok(at) = std::env::var("FLOWERBOX_WEAR").unwrap_or_default().parse::<f32>() else { return };
+    if !crossed(time.elapsed_secs(), time.delta_secs(), at) {
+        return;
+    }
+    let Ok((entity, mut inventory)) = player.single_mut() else { return };
+    info!("script: wearing a full set of armour");
+    for item in [ItemId::LeatherHood, ItemId::PenitentHauberk, ItemId::AshenGauntlets, ItemId::GraveGreaves] {
+        let index = inventory.add(item);
+        equip.write(EquipRequest { character: entity, index, equip: true, slot: None });
     }
 }
 
