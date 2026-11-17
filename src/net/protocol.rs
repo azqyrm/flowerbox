@@ -200,10 +200,10 @@ pub fn v3(v: Vec3) -> [f32; 3] {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn body(id: NetId) -> BodyState {
+    pub(crate) fn body(id: NetId) -> BodyState {
         BodyState {
             id,
             kind: BodyKind::Player(Skin::Bruin),

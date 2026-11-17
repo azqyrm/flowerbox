@@ -29,6 +29,8 @@ use crate::character::stats::{DamageMessage, Health};
 use crate::combat::{Dummy, Hitstop, Hurtbox, Team};
 use crate::character::BodySize;
 use crate::enemy::{self, Enemy, EnemiesSuppressed};
+#[cfg(test)]
+use crate::enemy::EnemyKind;
 use crate::humanoid::anim::HumanoidAnimator;
 use crate::humanoid::{HumanoidSpec, spawn_humanoid};
 use crate::humanoid::skins::Skin;
@@ -43,7 +45,7 @@ pub struct SyncPlugin;
 
 impl Plugin for SyncPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (role_changed, receive, reskin_puppets, drive_puppets, place_guest, send_states, forward_hits).chain().before(WeaponSystems::Equip));
+        app.init_resource::<NextEnemyId>().add_systems(Update, (role_changed, tag_enemies, receive, reskin_puppets, drive_puppets, place_guest, send_states, forward_hits).chain().before(WeaponSystems::Equip));
     }
 }
 
@@ -90,9 +92,29 @@ fn spin_rate(old: f32, new: f32, dt: f32) -> f32 {
     if rate.abs() > SPIN_RATE { rate } else { 0.0 }
 }
 
-/// Net id of one of the host's real enemies (stable while the entity lives).
-fn enemy_id(e: Entity) -> NetId {
-    ENEMY_ID_BASE + e.index_u32()
+/// Net id of one of this machine's real enemies, unique for the whole session. Not the entity's
+/// index: a world reset despawns every enemy and Bevy hands the freed indices to the new ones, so
+/// guests kept the old puppets (hidden corpses, sometimes of another kind) for the new enemies:
+/// alive and fighting on the host, invisible and unhittable on the guest.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnemyNetId(pub NetId);
+
+/// The next [`EnemyNetId`] to hand out (never reused).
+#[derive(Resource)]
+struct NextEnemyId(NetId);
+
+impl Default for NextEnemyId {
+    fn default() -> Self {
+        Self(ENEMY_ID_BASE)
+    }
+}
+
+/// Gives every new real enemy its id.
+fn tag_enemies(mut commands: Commands, mut next: ResMut<NextEnemyId>, new: Query<Entity, (With<Enemy>, Without<Remote>, Without<EnemyNetId>)>) {
+    for e in &new {
+        commands.entity(e).insert(EnemyNetId(next.0));
+        next.0 += 1;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -173,7 +195,7 @@ fn receive(
     mut inbox: MessageReader<NetInbox>,
     session: Res<NetSession>,
     mut puppets: Query<(Entity, &mut Puppet)>,
-    mut real_enemies: Query<(Entity, &mut CharacterAction), (With<Enemy>, Without<Remote>)>,
+    mut real_enemies: Query<(Entity, &EnemyNetId, &mut CharacterAction), (With<Enemy>, Without<Remote>)>,
     mut me: Query<&mut CharacterAction, (With<Player>, Without<Enemy>)>,
     dummy: Query<Entity, With<Dummy>>,
     link: Res<NetLink>,
@@ -205,13 +227,13 @@ fn receive(
                         info!("a guest hit the dummy for {amount}");
                         damage.write(DamageMessage { target: e, amount: *amount, from: Some(Vec3::from_array(*from)), attacker });
                     }
-                } else if let Some((e, _)) = real_enemies.iter().find(|(e, _)| enemy_id(*e) == *target) {
+                } else if let Some((e, _, _)) = real_enemies.iter().find(|(_, id, _)| id.0 == *target) {
                     info!("a guest hit enemy {target} for {amount}");
                     damage.write(DamageMessage { target: e, amount: *amount, from: Some(Vec3::from_array(*from)), attacker });
                 }
             }
             NetInbox::Reliable(_, Reliable::Parried { attacker }) if session.is_host() => {
-                if let Some((_, mut action)) = real_enemies.iter_mut().find(|(e, _)| enemy_id(*e) == *attacker) {
+                if let Some((_, _, mut action)) = real_enemies.iter_mut().find(|(_, id, _)| id.0 == *attacker) {
                     action.force(ActionKind::Stunned, Vec3::ZERO);
                     info!("a guest parried enemy {attacker}");
                 } else if *attacker == session.my_id {
@@ -240,6 +262,16 @@ fn receive(
         }
     }
     for body in latest {
+        // A puppet that can't be this body any more (another kind, or a corpse coming back to
+        // life) is rebuilt rather than reused: a vanished corpse stays hidden and unhittable.
+        if let Some((e, p)) = puppets.iter().find(|(_, p)| p.id == body.id)
+            && !same_body(&p.state, &body)
+        {
+            debug!("puppet {} rebuilt ({:?} -> {:?})", p.id, p.state.kind, body.kind);
+            commands.entity(e).despawn();
+            spawn_puppet(&mut commands, &mut meshes, &mut materials, &mut equip_weapon, body);
+            continue;
+        }
         match puppets.iter_mut().find(|(_, p)| p.id == body.id) {
             Some((_, mut p)) => {
                 // Only a spinning action carries a spin on (a stop or a snap isn't one).
@@ -465,6 +497,13 @@ fn drive_puppets(
     }
 }
 
+/// Whether a new state can still be shown by the puppet of `old` (same kind, not back from the dead).
+fn same_body(old: &BodyState, new: &BodyState) -> bool {
+    let dead = |b: &BodyState| b.action.is_some_and(|a| a.kind == ActionKind::Dead);
+    let revived = matches!(old.kind, BodyKind::Enemy(_)) && dead(old) && !dead(new);
+    old.kind == new.kind && !revived
+}
+
 /// What the host last sent of each enemy, and how long ago.
 #[derive(Default)]
 struct SentEnemies(std::collections::HashMap<NetId, (BodyState, f32)>);
@@ -489,7 +528,7 @@ fn send_states(
     session: Res<NetSession>,
     player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment, &Pvp, &Skin), With<Player>>,
     puppets: Query<&Puppet>,
-    enemies: Query<(Entity, &Enemy, &Transform, &CharacterController, &CharacterAction, &Health), Without<Remote>>,
+    enemies: Query<(&EnemyNetId, &Enemy, &Transform, &CharacterController, &CharacterAction, &Health), Without<Remote>>,
 ) {
     if !session.online() {
         return;
@@ -509,9 +548,9 @@ fn send_states(
         bodies.extend(puppets.iter().filter(|p| matches!(p.state.kind, BodyKind::Player(_))).map(|p| p.state.clone()));
         let mut ids: Vec<NetId> = bodies.iter().map(|b| b.id).collect();
         let mut live = HashSet::new();
-        for (e, enemy, tf, ctrl, action, health) in &enemies {
+        for (id, enemy, tf, ctrl, action, health) in &enemies {
             let kind = BodyKind::Enemy(enemy.kind);
-            let state = body_state(enemy_id(e), kind, tf, ctrl, action, None, health, [None; SHOWN_SLOTS.len()], false, None);
+            let state = body_state(id.0, kind, tf, ctrl, action, None, health, [None; SHOWN_SLOTS.len()], false, None);
             ids.push(state.id);
             live.insert(state.id);
             // Only what changed, plus a keepalive for idle ones: most enemies stand still far away.
@@ -639,5 +678,60 @@ mod spin_tests {
         assert!(spin_rate(3.0, -3.0, 1.0 / 30.0) > 8.0, "across ±π the short way (+0.28 rad)");
         assert_eq!(spin_rate(0.0, 0.1, 1.0 / 30.0), 0.0, "an ordinary turn");
         assert_eq!(spin_rate(0.0, 1.0, 0.0), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod id_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    fn enemy(kind: EnemyKind) -> Enemy {
+        Enemy { home: Vec3::ZERO, patrol: None, kind }
+    }
+
+    /// Ids never repeat across world resets. (Entity indices do: measured with the `enemy`
+    /// autopilot, one reset put 2 of the 46 new enemies into old enemies' slots.)
+    #[test]
+    fn respawned_enemies_get_new_ids() {
+        let mut world = World::new();
+        world.init_resource::<NextEnemyId>();
+        let mut seen: Vec<EnemyNetId> = vec![];
+        for _ in 0..3 {
+            let es: Vec<Entity> = (0..5).map(|_| world.spawn(enemy(EnemyKind::Hollow)).id()).collect();
+            world.run_system_once(tag_enemies).unwrap();
+            for e in es {
+                let id = *world.get::<EnemyNetId>(e).unwrap();
+                assert!(!seen.contains(&id), "net id {id:?} reused");
+                seen.push(id);
+                world.despawn(e); // a world reset
+            }
+        }
+    }
+
+    #[test]
+    fn puppets_are_rebuilt_for_another_kind_or_a_revived_corpse() {
+        use crate::character::action::ActionKind;
+        let mut hollow = super::super::protocol::tests::body(1000);
+        hollow.kind = BodyKind::Enemy(EnemyKind::Hollow);
+        hollow.action = None;
+        let mut dead = hollow.clone();
+        dead.action = Some(NetAction { kind: ActionKind::Dead, ..hollow_action() });
+        let mut warg = hollow.clone();
+        warg.kind = BodyKind::Enemy(EnemyKind::Warg);
+        assert!(same_body(&hollow, &hollow));
+        assert!(same_body(&hollow, &dead), "dying is the same body");
+        assert!(!same_body(&dead, &hollow), "a corpse coming back is a new body");
+        assert!(!same_body(&hollow, &warg), "another kind is a new body");
+        // A player getting up after death keeps their puppet.
+        let mut player = super::super::protocol::tests::body(2);
+        player.action = Some(NetAction { kind: ActionKind::Dead, ..hollow_action() });
+        let mut up = player.clone();
+        up.action = None;
+        assert!(same_body(&player, &up));
+    }
+
+    fn hollow_action() -> NetAction {
+        super::super::protocol::tests::body(1).action.unwrap()
     }
 }
