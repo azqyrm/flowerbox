@@ -72,6 +72,15 @@ pub enum AbilityId {
     RendingTurn,
     /// Greatswords: one and a half turns with the blade held out (the player's Whirlwind).
     PenitentWhirl,
+    // ── The Archivist (the library's boss) ──
+    /// A tome the size of a door raised high and slammed down: a wide shockwave.
+    TomeSlam,
+    /// Ink flung from the quill: a fan of dark bolts flying at you.
+    InkVolley,
+    /// A whirl of the quill in a storm of torn pages (two turns, wide).
+    PageStorm,
+    /// "Hush": a hiss that can't be blocked, wide.
+    Hush,
 }
 
 /// What an ability does.
@@ -88,6 +97,9 @@ pub enum AbilityEffect {
     Slam { swing: AttackSpec, radius: f32, wave_mult: f32 },
     /// A roar (buff stance timings) whose wave to `radius` deals `damage` and can't be blocked.
     Shriek { startup: f32, active: f32, recovery: f32, radius: f32, damage: f32 },
+    /// A stance that, at the start of its active phase, flings `count` projectiles in a fan
+    /// `spread` radians wide where the body faces (`crate::projectile`).
+    Volley { startup: f32, active: f32, recovery: f32, count: u32, spread: f32, speed: f32, damage: f32 },
 }
 
 /// A shockwave: where it can reach and what it deals.
@@ -239,6 +251,63 @@ const PENITENT_WHIRL: AbilityDef = AbilityDef {
     },
 };
 
+const TOME_SLAM: AbilityDef = AbilityDef {
+    name: "Tome Slam",
+    icon: ItemIcon::Axe,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Slam {
+        swing: AttackSpec {
+            startup: 1.2,
+            active: 0.25,
+            recovery: 1.0,
+            cancel: 2.45,
+            stamina_cost: 0.0,
+            lunge: 1.6,
+            damage_mult: 1.6,
+            windup: SwingKey::new(0.1, -0.4, 0.0, 3.05),
+            strike: SwingKey::new(0.0, 0.55, 0.0, 0.5),
+            stance: Stance::Lunge,
+        },
+        radius: 7.0,
+        wave_mult: 0.9,
+    },
+};
+
+const INK_VOLLEY: AbilityDef = AbilityDef {
+    name: "Ink Volley",
+    icon: ItemIcon::Sword,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Volley { startup: 0.75, active: 0.35, recovery: 0.7, count: 5, spread: 0.9, speed: 11.0, damage: 22.0 },
+};
+
+const PAGE_STORM: AbilityDef = AbilityDef {
+    name: "Page Storm",
+    icon: ItemIcon::Sword,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Spin {
+        swing: AttackSpec {
+            startup: 0.7,
+            active: 1.1,
+            recovery: 0.8,
+            cancel: 2.6,
+            stamina_cost: 0.0,
+            lunge: 4.0,
+            damage_mult: 1.0,
+            windup: SwingKey::new(-1.1, 0.2, -1.3, 1.3),
+            strike: SwingKey::new(0.2, 0.2, 0.9, 1.2),
+            stance: Stance::Lunge,
+        },
+        turns: 2.0,
+    },
+};
+
+const HUSH: AbilityDef = AbilityDef {
+    name: "Hush",
+    icon: ItemIcon::Sword,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Shriek { startup: 0.9, active: 0.5, recovery: 0.7, radius: 9.0, damage: 18.0 },
+};
+
 const WARCRY: AbilityDef = AbilityDef {
     name: "Warcry",
     icon: ItemIcon::Axe,
@@ -257,6 +326,10 @@ impl AbilityId {
             AbilityId::Shriek => &SHRIEK,
             AbilityId::RendingTurn => &RENDING_TURN,
             AbilityId::PenitentWhirl => &PENITENT_WHIRL,
+            AbilityId::TomeSlam => &TOME_SLAM,
+            AbilityId::InkVolley => &INK_VOLLEY,
+            AbilityId::PageStorm => &PAGE_STORM,
+            AbilityId::Hush => &HUSH,
         }
     }
 
@@ -264,7 +337,7 @@ impl AbilityId {
     pub fn strike(self) -> Option<&'static AttackSpec> {
         match &self.def().effect {
             AbilityEffect::Strike(spec) | AbilityEffect::Spin { swing: spec, .. } | AbilityEffect::Slam { swing: spec, .. } => Some(spec),
-            AbilityEffect::Buff { .. } | AbilityEffect::Shriek { .. } => None,
+            AbilityEffect::Buff { .. } | AbilityEffect::Shriek { .. } | AbilityEffect::Volley { .. } => None,
         }
     }
 
@@ -301,15 +374,34 @@ struct AbilityApplied(Option<u32>);
 fn apply_abilities(
     mut commands: Commands,
     mut notify: MessageWriter<Notify>,
-    q: Query<(Entity, &CharacterAction, Option<&AbilityApplied>, Has<Player>)>,
+    mut shots: MessageWriter<crate::projectile::SpawnProjectile>,
+    q: Query<(Entity, &CharacterAction, Option<&AbilityApplied>, Has<Player>, &Transform, &CharacterController, Option<&crate::combat::Team>)>,
 ) {
-    for (entity, action, applied, is_player) in &q {
+    for (entity, action, applied, is_player, tf, ctrl, team) in &q {
         let Some(cur) = action.current else { continue };
         let ActionKind::Ability(id) = cur.kind else { continue };
         if cur.phase() != ActionPhase::Active || applied.is_some_and(|a| a.0 == Some(action.serial)) {
             continue;
         }
         commands.entity(entity).insert(AbilityApplied(Some(action.serial)));
+        // A volley: every machine flings it from its copy of the body (puppets too); each
+        // projectile only hurts that machine's own bodies (`crate::projectile`).
+        if let AbilityEffect::Volley { count, spread, speed, damage, .. } = id.def().effect {
+            let from = tf.translation + Vec3::Y * 0.6;
+            for i in 0..count {
+                let a = ctrl.facing + if count > 1 { spread * (i as f32 / (count - 1) as f32 - 0.5) } else { 0.0 };
+                let dir = Vec3::new(-a.sin(), -0.04, -a.cos()).normalize();
+                shots.write(crate::projectile::SpawnProjectile {
+                    pos: from + dir * 0.6,
+                    vel: dir * speed,
+                    damage,
+                    stance: damage,
+                    team: team.copied(),
+                    kind: crate::projectile::ProjectileKind::Ink,
+                    by: Some(entity),
+                });
+            }
+        }
         if let AbilityEffect::Buff { attack_mult, duration, .. } = id.def().effect {
             commands.entity(entity).insert(AttackBuff { mult: attack_mult, left: duration });
             info!("{}: ×{attack_mult} damage for {duration} s", id.def().name);

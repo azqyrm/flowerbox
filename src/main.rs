@@ -22,12 +22,14 @@ mod healing;
 mod hearth;
 mod humanoid;
 mod input;
+mod ladder;
 mod interact;
 mod items;
 mod level;
 mod lockon;
 mod net;
 mod player;
+mod projectile;
 mod pvp;
 mod quadruped;
 mod save;
@@ -78,7 +80,7 @@ fn main() {
             critical::CriticalPlugin,
             light::LightPlugin,
         ))
-        .add_plugins((spectate::SpectatePlugin, ambience::AmbiencePlugin))
+        .add_plugins((spectate::SpectatePlugin, ambience::AmbiencePlugin, ladder::LadderPlugin, projectile::ProjectilePlugin))
         .add_plugins((
             level::LevelPlugin,
             enemy::EnemyPlugin,

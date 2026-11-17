@@ -154,6 +154,8 @@ mod tests {
         assert!(light(EnemyKind::Hollow) < light(EnemyKind::Acolyte));
         assert!(light(EnemyKind::Acolyte) < light(EnemyKind::Warg));
         assert!(light(EnemyKind::Warg) < light(EnemyKind::Mourner));
-        assert!(EnemyKind::ALL.iter().all(|k| light(*k) > 0 && light(*k) <= light(EnemyKind::Saint)));
+        let most_common = EnemyKind::ALL.iter().filter(|k| !k.def().boss).map(|k| light(*k)).max().unwrap();
+        assert!(EnemyKind::ALL.iter().all(|k| light(*k) > 0));
+        assert!(EnemyKind::ALL.iter().filter(|k| k.def().boss).all(|k| light(*k) > most_common * 5), "bosses give far more");
     }
 }

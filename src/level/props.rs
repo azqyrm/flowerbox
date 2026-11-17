@@ -94,6 +94,7 @@ pub fn spawn_props(
     let mote = meshes.add(Sphere::new(0.012).mesh().ico(1).unwrap());
 
     let gothic = super::gothic::GothicMats::new(materials);
+    let library = super::library::LibraryMats::new(materials);
     let mut exits = vec![];
     // Sunbeams to fill with dust once the props are placed: (top of the opening, sun direction,
     // size, height above the floor).
@@ -112,6 +113,17 @@ pub fn spawn_props(
         let t = Transform::from_xyz;
         match prop.kind {
             PropKind::Anvil | PropKind::Forge | PropKind::SkyGrate => {}
+            PropKind::Bookshelf
+            | PropKind::Desk
+            | PropKind::BookPile
+            | PropKind::Water
+            | PropKind::DartTrap
+            | PropKind::Pendulum
+            | PropKind::IllusoryWall
+            | PropKind::Orrery => {
+                super::library::spawn_library_prop(commands, meshes, &library, layout, prop, n, root, frame);
+                continue;
+            }
             _ => {
                 super::gothic::spawn_gothic_prop(commands, meshes, materials, &gothic, layout, prop, root, frame);
                 continue;

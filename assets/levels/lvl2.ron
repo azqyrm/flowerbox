@@ -51,6 +51,9 @@
         (id: 15, at: (13.0, 47.0), width: 2.6, hinge: North, opens: West),
         // Antechamber → the Choir of Thorns: an archway; the fog gate stands in it.
         (id: 16, at: (0.0, 132.0), width: 3.0, hinge: West, opens: South, arch: true),
+        // The Choir's south door: the way on into the Drowned Library (lvl3), sealed until the
+        // Saint falls.
+        (id: 17, at: (0.0, 160.0), width: 2.6, hinge: West, opens: South, after_boss: Some(Saint)),
     ],
     torches: [
         (at: (-6.7, 26.0), wall: West), (at: (6.7, 31.0), wall: East),
@@ -67,7 +70,7 @@
         (at: (-7.7, 112.0), wall: West), (at: (7.7, 112.0), wall: East), (at: (-7.7, 120.0), wall: West), (at: (7.7, 120.0), wall: East),
         (at: (-3.7, 128.0), wall: West),
         (at: (-14.7, 140.0), wall: West), (at: (14.7, 140.0), wall: East), (at: (-14.7, 152.0), wall: West), (at: (14.7, 152.0), wall: East),
-        (at: (-6.0, 159.7), wall: South), (at: (6.0, 159.7), wall: South), (at: (-7.0, 132.3), wall: North), (at: (7.0, 132.3), wall: North),
+        (at: (-3.5, 159.7), wall: South), (at: (3.5, 159.7), wall: South), (at: (-7.0, 132.3), wall: North), (at: (7.0, 132.3), wall: North),
     ],
     enemies: [
         // The nave: Hollows and acolytes among the pews; a Mourner waits at the crossing.
@@ -186,7 +189,8 @@
         (kind: FogGate, at: (0.0, 132.4), facing: South, size: (3.2, 4.0), boss: Some(Saint)),
         (kind: Column, at: (-11.0, 140.0), size: (0.75, 0.0)), (kind: Column, at: (11.0, 140.0), size: (0.75, 0.0)),
         (kind: Column, at: (-11.0, 152.0), size: (0.75, 0.0)), (kind: Column, at: (11.0, 152.0), size: (0.75, 0.0)),
-        (kind: Window, at: (0.0, 159.6), facing: North, size: (3.2, 6.0)),
+        (kind: Window, at: (-7.5, 159.6), facing: North, size: (2.6, 6.0)),
+        (kind: Window, at: (7.5, 159.6), facing: North, size: (2.6, 6.0)),
         (kind: Window, at: (-14.6, 146.0), facing: East, size: (2.4, 5.0)),
         (kind: Window, at: (14.6, 146.0), facing: West, size: (2.4, 5.0)),
         (kind: Chandelier, at: (0.0, 146.0)),

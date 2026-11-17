@@ -49,6 +49,34 @@ pub enum CritKind {
     Riposte,
 }
 
+/// A step of using a ladder (`crate::ladder`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ClimbMove {
+    /// Stepping onto it from below.
+    OnBottom,
+    /// Turning round at the top and lowering yourself onto it.
+    OnTop,
+    /// On the ladder: up or down with the stick (`ActiveAction::charge` = the rung cycle, 0..1).
+    Climbing,
+    /// Pulling yourself up over the top and stepping off.
+    OffTop,
+    /// Stepping off at the bottom.
+    OffBottom,
+}
+
+impl ClimbMove {
+    /// How long the step takes (climbing: until you reach an end).
+    pub fn duration(self) -> f32 {
+        match self {
+            ClimbMove::OnBottom => LADDER_ON_BOTTOM,
+            ClimbMove::OnTop => LADDER_ON_TOP,
+            ClimbMove::Climbing => f32::INFINITY,
+            ClimbMove::OffTop => LADDER_OFF_TOP,
+            ClimbMove::OffBottom => LADDER_OFF_BOTTOM,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ActionKind {
     Roll,
@@ -88,6 +116,8 @@ pub enum ActionKind {
     Critical(CritKind),
     /// On the receiving end of a critical: pinned, run through, thrown down, getting up.
     Pinned(CritKind),
+    /// On a ladder (`crate::ladder` moves the body; this only poses it).
+    Climb(ClimbMove),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -353,7 +383,9 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             AbilityEffect::Strike(spec) | AbilityEffect::Spin { swing: spec, .. } | AbilityEffect::Slam { swing: spec, .. } => {
                 ActionDef { stamina_cost: id.def().stamina_cost, ..attack_def(&spec, None, GroundRule::Ground, 0.0) }
             }
-            AbilityEffect::Buff { startup, active, recovery, .. } | AbilityEffect::Shriek { startup, active, recovery, .. } => ActionDef {
+            AbilityEffect::Buff { startup, active, recovery, .. }
+            | AbilityEffect::Shriek { startup, active, recovery, .. }
+            | AbilityEffect::Volley { startup, active, recovery, .. } => ActionDef {
                 startup,
                 active,
                 recovery,
@@ -387,6 +419,20 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             ground: GroundRule::Ground,
             hop: 0.0,
         },
+        // Never ends by itself: the ladder moves on to the next step (`ClimbMove::duration`).
+        Climb(_) => {
+            ActionDef {
+                startup: 0.0,
+                active: f32::INFINITY,
+                recovery: 0.0,
+                cancel: f32::INFINITY, // the ladder ends it
+                stamina_cost: 0.0,
+                iframes: None,
+                movement: ActionMovement::Locked,
+                ground: GroundRule::Any,
+                hop: 0.0,
+            }
+        }
         Pinned(_) => ActionDef {
             startup: CRIT_STARTUP,
             active: CRIT_ACTIVE + PINNED_DOWN,

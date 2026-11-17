@@ -94,6 +94,9 @@ pub struct LevelFile {
     /// Puzzles: ring bells in order to open a sealed door (`crate::level::riddle`).
     #[serde(default)]
     pub riddles: Vec<RiddleDef>,
+    /// Ladders (`crate::ladder`).
+    #[serde(default)]
+    pub ladders: Vec<LadderDef>,
 }
 
 fn default_seed_base() -> u32 {
@@ -108,6 +111,19 @@ pub enum Theme {
     Sunken,
     /// Dark gothic ashlar, flagstone floors, cold stone (the cathedral).
     Gothic,
+    /// Dark panelled wood walls, worn plank floors, a coffered ceiling (the library).
+    Library,
+}
+
+/// A ladder against a wall: its foot at `at` (on the lower floor), the climber facing `facing`
+/// (toward the wall); it reaches from floor `bottom` to floor `top`, where you step off forward
+/// (through the doorway above it).
+#[derive(Deserialize, Debug, Clone)]
+pub struct LadderDef {
+    pub at: Px,
+    pub facing: Dir,
+    pub bottom: f32,
+    pub top: f32,
 }
 
 /// A riddle: ring the `bells` (prop ids) in this order and door `door` (sealed) opens.
@@ -152,6 +168,23 @@ pub enum PropKind {
     Fountain,
     /// Mist across a boss arena's entrance (`size` = width, height; `facing` = into the arena).
     FogGate,
+    // ── The library (`crate::level::library`) ──
+    /// A tall double-sided bookshelf (`size` = length, height; default 3 m × to the ceiling). Solid.
+    Bookshelf,
+    /// A slanted reading desk with an open book and a candle. Solid.
+    Desk,
+    /// A pile of books on the floor.
+    BookPile,
+    /// Standing water on the floor (`size` = x, z metres).
+    Water,
+    /// A pressure plate; darts fly `facing` from the wall behind it.
+    DartTrap,
+    /// A spiked censer swinging along `facing` from the ceiling.
+    Pendulum,
+    /// A wall that vanishes when struck (`size` = width, height), across a doorway.
+    IllusoryWall,
+    /// A brass armillary turning round a glowing star (the boss hall's centrepiece).
+    Orrery,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -215,9 +248,13 @@ pub struct DoorDef {
     /// Sealed: only a riddle opens it (`RiddleDef::door`).
     #[serde(default)]
     pub sealed: bool,
-    /// An archway: the opening and its lintel, no door leaf (a fog gate can stand in it).
+    /// An archway: the opening and its lintel, no door leaf (a fog gate can stand in it). Also
+    /// the other half of a door joining two level files (a real door in one, an arch in the other).
     #[serde(default)]
     pub arch: bool,
+    /// Sealed until this boss is defeated (the way on behind a boss).
+    #[serde(default)]
+    pub after_boss: Option<crate::enemy::EnemyKind>,
 }
 
 /// A torch on the wall that lies `wall`-wards of `at`.
@@ -238,6 +275,10 @@ pub struct EnemyDef {
     pub patrol: Option<Px>,
     #[serde(default)]
     pub drops: Vec<crate::enemy::DropDef>,
+    /// Which way it faces while idle (default: toward the world's centre). A reader at a desk
+    /// with its back to the door is a backstab waiting to happen.
+    #[serde(default)]
+    pub facing: Option<Dir>,
 }
 
 /// An item lying on the floor. `id` must be unique among all pickups (the arena's are 0..).
@@ -302,6 +343,9 @@ pub struct DoorPlan {
     pub key: Option<ItemId>,
     pub sealed: bool,
     pub arch: bool,
+    pub after_boss: Option<crate::enemy::EnemyKind>,
+    /// Floor of the lower side (a raised doorway gets a wall below it, see `riser`).
+    pub low: f32,
     along_x: bool,
     /// Grid index of the wall line, and the cell span of the hole.
     line: i32,
@@ -562,7 +606,9 @@ impl Layout {
             let centre = if along_x { Vec2::new(origin.x + mid, c.y) } else { Vec2::new(c.x, origin.y + mid) };
             // Floor: the higher of the two sides.
             let probe = d.opens.vec() * LEVEL_CELL * 0.5;
-            let floor = [centre + probe, centre - probe].iter().filter_map(|p| layout.floor_at(*p)).fold(f32::MIN, f32::max);
+            let sides: Vec<f32> = [centre + probe, centre - probe].iter().filter_map(|p| layout.floor_at(*p)).collect();
+            let floor = sides.iter().copied().fold(f32::MIN, f32::max);
+            let low = sides.iter().copied().fold(f32::MAX, f32::min);
             layout.doors.push(DoorPlan {
                 id: d.id,
                 centre,
@@ -571,8 +617,10 @@ impl Layout {
                 hinge: d.hinge,
                 opens: d.opens,
                 key: d.key,
-                sealed: d.sealed,
+                sealed: d.sealed || d.after_boss.is_some(),
                 arch: d.arch,
+                after_boss: d.after_boss,
+                low: if low == f32::MAX { 0.0 } else { low },
                 along_x,
                 line,
                 span,

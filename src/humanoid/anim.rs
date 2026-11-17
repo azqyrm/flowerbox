@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use super::pose::{HumanoidPose, PoseMask, bone_model_transform, reach_left_hand};
 use super::{Bone, HumanoidRig, HumanoidSpec};
-use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction, CritKind};
+use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction, ClimbMove, CritKind};
 use crate::character::controller::CharacterController;
 use crate::character::guard::Guard;
 use crate::tuning::*;
@@ -737,6 +737,38 @@ fn right_handed_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
             p.root_rot = rx(-1.45 * back * down);
             p.root_pivot = 0.05;
             p.root_offset.y = -0.05 * down;
+            Some((p, PoseMask::Full))
+        }
+        ActionKind::Climb(step) => {
+            // Facing the rungs: hands high, alternating; knees lifting in turn (the other side's
+            // hand and foot move together).
+            let rungs = |p: &mut HumanoidPose, cycle: f32, w: f32| {
+                let s = (TAU * cycle).sin();
+                p.set(Bone::UpperArmL, Quat::IDENTITY.slerp(rx(2.55 + 0.35 * s) * rz(-0.12), w)).set(Bone::ForearmL, rx((0.5 - 0.35 * s) * w));
+                p.set(Bone::UpperArmR, Quat::IDENTITY.slerp(rx(2.55 - 0.35 * s) * rz(0.12), w)).set(Bone::ForearmR, rx((0.5 + 0.35 * s) * w));
+                p.set(Bone::ThighL, rx((0.75 - 0.45 * s) * w)).set(Bone::ShinL, rx((-1.0 + 0.4 * s) * w)).set(Bone::FootL, rx(0.25 * w));
+                p.set(Bone::ThighR, rx((0.75 + 0.45 * s) * w)).set(Bone::ShinR, rx((-1.0 - 0.4 * s) * w)).set(Bone::FootR, rx(0.25 * w));
+                p.add(Bone::Chest, rx(-0.08 * w)).set(Bone::Head, rx(-0.25 * w));
+            };
+            let k = (a.elapsed / step.duration()).clamp(0.0, 1.0);
+            match step {
+                ClimbMove::Climbing => rungs(&mut p, a.charge, 1.0),
+                ClimbMove::OnBottom => rungs(&mut p, 0.0, ease(k)),
+                ClimbMove::OffBottom => rungs(&mut p, 0.0, 1.0 - ease(k)),
+                ClimbMove::OffTop | ClimbMove::OnTop => {
+                    // Over the edge: hands pushing down on the top, a knee coming up, the chest
+                    // leaning over (getting on at the top runs the same backwards).
+                    let k = if step == ClimbMove::OnTop { 1.0 - k } else { k };
+                    let push = ease(k / 0.6) * (1.0 - ease((k - 0.75) / 0.25));
+                    rungs(&mut p, 0.0, 1.0 - ease(k / 0.4));
+                    if push > 0.0 {
+                        p.set(Bone::UpperArmL, p.get(Bone::UpperArmL).slerp(rx(0.5) * rz(-0.2), push)).set(Bone::ForearmL, rx(0.3 * push));
+                        p.set(Bone::UpperArmR, p.get(Bone::UpperArmR).slerp(rx(0.5) * rz(0.2), push)).set(Bone::ForearmR, rx(0.3 * push));
+                        p.set(Bone::ThighL, rx(1.3 * push)).set(Bone::ShinL, rx(-1.5 * push));
+                        p.add(Bone::Chest, rx(-0.45 * push));
+                    }
+                }
+            }
             Some((p, PoseMask::Full))
         }
         // Creatures only (`crate::quadruped`).

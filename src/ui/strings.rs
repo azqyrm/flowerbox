@@ -48,6 +48,12 @@ pub const REST_COMPLETE: &str = "Everyone rests at the sunflower: the world stir
 pub fn spectating(who: &str, several: bool) -> String {
     if several { format!("Watching {who} fight on   ·   Q / E: someone else") } else { format!("Watching {who} fight on") }
 }
+/// A door that opens only once the boss behind which it stands is dead.
+pub const DOOR_BOSS_SEALED: &str = "It will not move while the hall's master lives";
+/// The way on, after a boss.
+pub const WAY_OPENS: &str = "Somewhere, a door unseals";
+/// A struck illusory wall fades.
+pub const ILLUSORY_WALL: &str = "The wall was only an illusion";
 /// Every player was composted (together): the world resets as after a rest.
 pub const WIPE: &str = "All were composted: the world stirs anew";
 /// The menu (Esc).
@@ -56,6 +62,9 @@ pub const MENU_HINTS: &str = "[Up/Down] Select   [Left/Right] Change   [Enter] C
 pub const SAVE_DELETED: &str = "Save deleted: the next start is a new game";
 /// Interaction prompt next to an item on the floor.
 pub const PROMPT_PICK_UP: &str = "[E] Pick up";
+/// At a ladder's foot / top.
+pub const PROMPT_CLIMB_UP: &str = "[E] Climb up";
+pub const PROMPT_CLIMB_DOWN: &str = "[E] Climb down";
 pub const DOOR_SEALED: &str = "Sealed. Runes crawl over the stone: an old rite holds it shut";
 pub const PROMPT_RING: &str = "[E] Ring the bell";
 pub const PROMPT_READ: &str = "[E] Read";

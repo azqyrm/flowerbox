@@ -173,6 +173,31 @@ pub struct QuadrupedSpec {
 const PAW_LIFT: f32 = 0.05;
 
 impl QuadrupedSpec {
+    /// The same body `f` times as big (poses are angles, so every gait fits).
+    pub fn scaled(mut self, f: f32) -> Self {
+        for v in [
+            &mut self.body_length,
+            &mut self.hips_back,
+            &mut self.front_upper,
+            &mut self.front_lower,
+            &mut self.hind_upper,
+            &mut self.hind_lower,
+            &mut self.leg_x,
+            &mut self.chest_radius,
+            &mut self.hips_radius,
+            &mut self.head_radius,
+            &mut self.snout,
+            &mut self.tail,
+            &mut self.leg_radius,
+            &mut self.look.shag_length,
+        ] {
+            *v *= f;
+        }
+        self.neck *= f;
+        self.look.extras = self.look.extras.into_iter().map(|p| p.scaled(f)).collect();
+        self
+    }
+
     /// A warg: a wolf the size of a pony, dark and shaggy, with smouldering eyes.
     pub fn warg() -> Self {
         Self {

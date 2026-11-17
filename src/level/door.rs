@@ -51,6 +51,8 @@ pub struct Door {
     pub key: Option<ItemId>,
     /// Only a riddle opens it (`super::riddle`); E just tells you so.
     pub sealed: bool,
+    /// Sealed until this boss is defeated (`crate::enemy::boss::unseal_after_bosses`).
+    pub after_boss: Option<crate::enemy::EnemyKind>,
     /// Shown opening 0 (closed) … 1 (open).
     swing: f32,
     hinge: Vec3,
@@ -142,6 +144,7 @@ pub fn spawn_door(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials:
         open: false,
         key: plan.key,
         sealed: plan.sealed,
+        after_boss: plan.after_boss,
         swing: 0.0,
         hinge: Vec3::new(h.x, plan.floor, h.y),
         width,
@@ -204,7 +207,10 @@ fn door_interaction(
     if !std::mem::take(&mut input.interact) {
         return;
     }
-    if door.sealed {
+    if door.sealed && door.after_boss.is_some() {
+        notify.write(Notify::new(NoticeIcon::Door, strings::DOOR_BOSS_SEALED.to_string()));
+        info!("door {} is sealed while its boss lives", door.id);
+    } else if door.sealed {
         notify.write(Notify::new(NoticeIcon::Door, strings::DOOR_SEALED.to_string()));
         info!("door {} is sealed", door.id);
     } else if !door.opens_from(feet) {
@@ -321,6 +327,7 @@ mod tests {
             opens: Dir::North.vec(),
             key: None,
             sealed: false,
+            after_boss: None,
             blocker: None,
         };
         let closed = d.transform().translation;

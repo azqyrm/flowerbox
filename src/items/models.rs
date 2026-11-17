@@ -97,6 +97,16 @@ pub fn hauberk(b: &mut ModelBuilder, spec: &HumanoidSpec) {
     }
 }
 
+/// A long, ink-dark robe over the torso: a high collar, a sash, the front panel.
+pub fn inkbound_robe(b: &mut ModelBuilder, spec: &HumanoidSpec) {
+    let t = spec.torso;
+    let ink = Color::srgb(0.07, 0.06, 0.1);
+    b.textured(Cuboid::new(t.x * 1.06, t.y * 1.04, t.z * 1.12), ink, Tex::Cloth, 0.0, 0.85, Transform::from_xyz(0.0, t.y * 0.5 + 0.02, 0.0));
+    b.textured(Cylinder::new(t.z * 0.75, 0.1), ink, Tex::Cloth, 0.0, 0.85, Transform::from_xyz(0.0, t.y + 0.03, 0.0));
+    b.textured(Cuboid::new(t.x * 1.1, 0.07, t.z * 1.18), Color::srgb(0.35, 0.06, 0.08), Tex::Cloth, 0.0, 0.9, Transform::from_xyz(0.0, 0.06, 0.0));
+    b.textured(Cuboid::new(t.x * 0.3, t.y * 1.2, 0.02), Color::srgb(0.55, 0.45, 0.25), Tex::Cloth, 0.0, 0.9, Transform::from_xyz(0.0, t.y * 0.45, -t.z * 0.6));
+}
+
 /// An iron cuff on the forearm with a flared rim and knuckle plates over the hand.
 pub fn gauntlet(b: &mut ModelBuilder, spec: &HumanoidSpec) {
     let r = spec.arm_radius;

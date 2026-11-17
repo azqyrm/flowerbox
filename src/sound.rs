@@ -60,6 +60,10 @@ pub enum Sound {
     Shriek,
     /// A blade run through a body: a wet crunch.
     Critical,
+    /// A trap's darts: a sharp hiss of air.
+    Dart,
+    /// A pressure plate sinking: a stony click.
+    Click,
 }
 
 #[derive(Message, Debug, Clone, Copy)]
@@ -279,6 +283,8 @@ struct Sounds {
     shriek: Handle<AudioSource>,
     critical: Handle<AudioSource>,
     stagger: Handle<AudioSource>,
+    dart: Handle<AudioSource>,
+    click: Handle<AudioSource>,
 }
 
 fn build_sounds(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
@@ -300,6 +306,8 @@ fn build_sounds(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>
         shriek: add(shriek(43)),
         critical: add(critical(47)),
         stagger: add(stagger(53)),
+        dart: add(whoosh(0.18, 1800.0, 5000.0, 59)),
+        click: add(metal(&[(820.0, 0.4), (1460.0, 0.25)], 0.08, 61)),
     };
     commands.insert_resource(sounds);
 }
@@ -445,6 +453,8 @@ fn play_requests(mut commands: Commands, sounds: Option<Res<Sounds>>, mut reques
             Sound::Shockwave => &sounds.boom,
             Sound::Shriek => &sounds.shriek,
             Sound::Critical => &sounds.critical,
+            Sound::Dart => &sounds.dart,
+            Sound::Click => &sounds.click,
         };
         play(&mut commands, s, r.pos, r.volume);
     }
