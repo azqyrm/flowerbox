@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-use bevy::audio::{AudioSinkPlayback, SpatialAudioSink, SpatialListener, Volume};
+use bevy::audio::{AudioSinkPlayback, GlobalVolume, SpatialAudioSink, SpatialListener, Volume};
 use bevy::prelude::*;
 
 use crate::arena::Torch;
@@ -27,7 +27,7 @@ impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<PlaySound>()
             .add_systems(Startup, build_sounds)
-            .add_systems(Update, (add_listener, start_loops, footsteps, action_sounds, impact_sounds, hum_volume, play_requests));
+            .add_systems(Update, (add_listener, start_loops, footsteps, action_sounds, impact_sounds, (hum_volume, loop_volume).chain(), play_requests));
     }
 }
 
@@ -288,6 +288,11 @@ fn play(commands: &mut Commands, sound: &Handle<AudioSource>, pos: Vec3, volume:
 #[derive(Component)]
 struct HumLoop;
 
+/// A looping sound's own loudness. Bevy only applies the master volume when a sound starts, so
+/// loops (which start at level load) follow it here: sink = base × master, every frame.
+#[derive(Component)]
+struct LoopVolume(f32);
+
 /// Loops on the sunflower and the torches (once they exist).
 fn start_loops(
     mut commands: Commands,
@@ -300,6 +305,7 @@ fn start_loops(
         commands.entity(e).insert(HumLoop);
         commands.spawn((
             HumLoop,
+            LoopVolume(0.15),
             AudioPlayer::new(sounds.hum.clone()),
             PlaybackSettings { spatial: true, volume: Volume::Linear(0.15), ..PlaybackSettings::LOOP },
             Transform::from_xyz(0.0, 1.5, 0.0),
@@ -309,6 +315,7 @@ fn start_loops(
     for (i, e) in torches.iter().enumerate() {
         commands.entity(e).insert(HumLoop);
         commands.spawn((
+            LoopVolume(0.22),
             AudioPlayer::new(sounds.crackle[i % sounds.crackle.len()].clone()),
             PlaybackSettings { spatial: true, volume: Volume::Linear(0.22), ..PlaybackSettings::LOOP },
             Transform::default(),
@@ -318,10 +325,18 @@ fn start_loops(
 }
 
 /// A revived sunflower hums louder.
-fn hum_volume(hearths: Query<&Hearth>, mut sinks: Query<(&mut SpatialAudioSink, &ChildOf), With<HumLoop>>) {
-    for (mut sink, parent) in &mut sinks {
+fn hum_volume(hearths: Query<&Hearth>, mut loops: Query<(&mut LoopVolume, &ChildOf), With<HumLoop>>) {
+    for (mut base, parent) in &mut loops {
         let Ok(hearth) = hearths.get(parent.parent()) else { continue };
-        sink.set_volume(Volume::Linear(if hearth.kindled { 0.55 } else { 0.15 }));
+        base.0 = if hearth.kindled { 0.55 } else { 0.15 };
+    }
+}
+
+/// Loops (torches, the sunflower) follow the master volume setting while they play.
+fn loop_volume(master: Res<GlobalVolume>, mut sinks: Query<(&mut SpatialAudioSink, &LoopVolume)>) {
+    let master = master.volume.to_linear();
+    for (mut sink, base) in &mut sinks {
+        sink.set_volume(Volume::Linear(base.0 * master));
     }
 }
 
