@@ -552,6 +552,50 @@ Steps:
 - [x] `FLOWERBOX_AUTOPILOT=skid` (sprint → let go → sprint → reverse → jog → let go, logged); screenshots; level walk still completes
 - [x] Turning on the spot (locked on, the target circling): small alternating shuffle steps, a step per ~35° turned
 
+### Phase 8.17 — Big request of 2026-11-17: ambience, boss spectating, party wipes, stance, criticals, Light (user request, 2026-11-17)
+> **Resume here after a crash:** work top to bottom through Phases 8.17 → 8.20, tick boxes as they land, log nuances in N34+.
+> Git plan: `master` was fast-forwarded to `level-1` first (done). Systems (8.17) are built on branch `systems` and merged into `master`; each level (8.18–8.20) gets its own branch off `master` (`library`, `womb`, `storm`) and is merged back when done.
+
+Request, cleaned up:
+1. **Ambience music** per area (arena, sunken halls, forgery, cathedral, crypt, each new level): more a soundscape than a tune, cross-faded when you walk between areas.
+2. **Boss spectating (online):** a player who dies during a boss fight watches the survivors until the fight ends (cycle between them). Only when the last one falls is everyone sent back to the sunflower as usual, and the boss bar and the boss reset.
+3. **Party wipe = rest:** if all players die at the same time or within a short window, the enemies reset like after resting at the sunflower.
+4. **Critical hits:** a unique attack animation (with sound + visual effect, big damage) when you attack a small humanoid enemy **from behind** (backstab, close and aligned) or one that is **stunned** (parried or stance broken: riposte).
+5. **Stance (poise bar):** a bar that fills with stance damage when hit. Every weapon has a stance-damage stat; every entity has a flat stance by creature type, raised by armour (every armour piece has a stance value). Example: sword 10, Hollow 25 → the third hit staggers (cancels their action like today's single hit does). Stance damage drains over time.
+6. **Light** (souls/runes): a counter per player. Every killed enemy grants a guaranteed amount, more for harder enemies, added automatically (no pickup). Attribution modes: everyone / only those who hit it / only those nearby — all implemented, **"everyone" active for now**.
+
+Decisions:
+- Stance replaces the old hyper-armour `Poise` (hits no longer flinch until the bar is full). Players have it too (low base, armour raises it), so heavy enemy blows still stagger an unarmoured player. A full bar on an enemy = **stance break → Stunned** (the parry stun), which opens a riposte; on a player = Hurt.
+- Bosses and beasts can't be backstabbed (not "small humanoid"); bosses can be riposted after a stance break.
+
+Steps:
+- [ ] Ambience: synthesised looping beds per `Area` (noise drones, filtered wind/water, choir pads, heartbeats), area lookup from the player position, cross-fade, volume setting
+- [ ] Stance component + weapon `stance_damage` + armour `stance` + creature base stance; drain; stagger = stance break; HUD bar (player) + enemy bar; online (host owns enemy stance; damage carries stance damage)
+- [ ] Criticals: backstab / riposte detection, the critical action (pin → thrust → wrench out), victim pose, damage multiplier, sound + sparks/blood, online
+- [ ] Light: `Light` counter in save, HUD counter, per-kind `light` in `EnemyDef`, `LightShare` modes (Everyone / Attackers / Nearby), host grants online
+- [ ] Party wipe → world reset (online, all dead within `WIPE_WINDOW`), offline unchanged
+- [ ] Boss spectating: dead players in a boss fight spectate survivors (camera follows, Q/E to cycle), last death → everyone respawns, boss + bar + fog gate reset
+- [ ] Docs, tests, merge `systems` → `master`
+
+### Phase 8.18 — Level 3 "The Drowned Library" (3 floors, after the Thorned Saint) (user request, 2026-11-17)
+Request (pasted brief): a dark, interconnected 3-floor library reached from the cathedral boss room; unique layouts, enemies, traps and exploration per floor; stairs and ladders between floors; a challenging boss with unique attacks, animations and boss bar on floor 3; secrets, rewards, challenging encounters; reuse systems; backstab (covered by 8.17).
+Steps:
+- [ ] Ladders: interact at top or bottom, climb up/down, auto mount/dismount animations, online pose
+- [ ] Trapdoors (floor/ceiling hatches) as door variants
+- [ ] Layout + theme (shelves, reading desks, candles, books, ink), three floors stacked, connected by stairs and ladders, shortcut loops
+- [ ] Traps (e.g. falling shelves / pressure plates firing darts / swinging lamps) and secrets (illusory shelf walls, hidden rewards)
+- [ ] New enemies (e.g. scribes / book-wraiths) and the floor-3 boss with unique attacks
+- [ ] Rewards, sunflower, connection from the cathedral boss room, Light values
+
+### Phase 8.19 — Level 4: a womb horror level (user request, 2026-11-17)
+User asked for "the uterus of Abeloth from Star Wars". Abeloth is a Star Wars character, so this level is an **original** fleshy, living womb dungeon (own name, own creature design; no Star Wars names or likeness). Attached to the central arena by a door or a floor hatch + ladder.
+- [ ] Layout + flesh theme (pulsing walls, membranes, sinew bridges, amniotic pools), heartbeat ambience
+- [ ] Enemies + a boss, hazards, rewards
+
+### Phase 8.20 — Level 5: a storm-isle level (user request "Fortnite", 2026-11-17)
+We don't recreate an existing game (its name, characters, art or look). Interpreted as an **original** level built on battle-royale *mechanics* for a Souls player: an open isle where a closing storm ring drives you inward through waves of enemies, colour-tiered loot chests, a drop-in entry from above. Attached to the arena by a ceiling hatch + ladder or a door.
+- [ ] Layout, storm ring hazard, tiered chests, waves, boss/finale, rewards
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
