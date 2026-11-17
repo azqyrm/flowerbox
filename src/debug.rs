@@ -23,6 +23,8 @@
 //!   back (see `net_movement`), with the Hollow in the arena.
 //! - `FLOWERBOX_AUTOPILOT=pvp` → for two instances: both eat a Poppy, the guest attacks the host
 //!   (damage), eats a Camomile, attacks again (no damage); the host dies (PvP off, Poppy back).
+//! - `FLOWERBOX_AUTOPILOT=ladder` (with `FLOWERBOX_POS=-14.4,176` at the library's west ladder) →
+//!   gets on, climbs to the top and off, gets back on from the top and climbs down (`ladder_script`).
 //! - `FLOWERBOX_AUTOPILOT=crit` → backstabs the arena Hollow, then breaks its stance with plain
 //!   hits and ripostes it (see `crit_script`); logs its stance and actions.
 //! - `FLOWERBOX_AUTOPILOT=netrest` → for two instances: the guest hits the dummy (both see it), both
@@ -216,6 +218,12 @@ impl Plugin for DebugPlugin {
                 })
                 .init_resource::<EnemyScript>()
                 .add_systems(Update, (enemy_script, log_ale, log_audio));
+            }
+            Ok("ladder") => {
+                // Up the library's west ladder and back down (`FLOWERBOX_POS=-14.4,176,1.57`).
+                let movement: fn(f32, f32) -> (Vec3, bool, bool) = |_, _| *LEVEL_DIR.lock().unwrap();
+                app.insert_resource(Autopilot { movement: Some(movement), attack_button: None, guard_button: None })
+                    .add_systems(Update, ladder_script);
             }
             Ok("crit") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: None })
@@ -578,11 +586,12 @@ fn boss_script(
         hp.current = 5000.0;
     }
     run.log += dt;
-    let Ok((be, btf, baction, bhp, ai)) = boss.single() else {
+    // The nearest boss (the Saint, or the Archivist with `FLOWERBOX_POS` in the Orrery).
+    let Some((be, btf, baction, bhp, ai)) = boss.iter().filter(|b| b.1.translation.distance(ptf.translation) < 40.0).min_by(|a, b| a.1.translation.distance(ptf.translation).total_cmp(&b.1.translation.distance(ptf.translation))) else {
         if let Some(d) = run.died_at
             && t > d + 4.0
         {
-            let drop = pickups.iter().any(|p| p.item == ItemId::Penitence);
+            let drop = pickups.iter().any(|p| matches!(p.item, ItemId::Penitence | ItemId::ArchivistQuill));
             info!("boss test: defeated {:?}; fog gates left {}; Penitence on the floor: {drop}; player HP {:.0}, rolls {}", defeated.0, gates.iter().count(), hp.current, run.rolls);
             exit.write(AppExit::Success);
         }
@@ -716,8 +725,10 @@ fn bestiary_script(
         }
     }
     if crossed(t, dt, 0.3) {
-        let kinds = [EnemyKind::Hollow, EnemyKind::Acolyte, EnemyKind::Mourner, EnemyKind::Saint, EnemyKind::Contorted, EnemyKind::Warg];
-        for (i, kind) in kinds.into_iter().enumerate() {
+        let all = [EnemyKind::Hollow, EnemyKind::Acolyte, EnemyKind::Mourner, EnemyKind::Saint, EnemyKind::Contorted, EnemyKind::Warg, EnemyKind::Scribe, EnemyKind::PageHound, EnemyKind::Archivist];
+        // `FLOWERBOX_BESTIARY_FROM=n`: only the kinds from the n-th on (a closer row).
+        let from = std::env::var("FLOWERBOX_BESTIARY_FROM").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+        for (i, kind) in all.into_iter().skip(from).enumerate() {
             let x = -8.0 + 3.2 * i as f32;
             let e = crate::enemy::kinds::spawn_enemy(&mut commands, &mut meshes, &mut materials, &mut equip, kind, Vec3::new(x, 0.0, 3.0), None, 0.0, 7 + i as u32);
             row.push((kind, e));
@@ -936,6 +947,48 @@ fn mp_tank(mut player: Query<&mut Health, With<Player>>) {
         && h.max != hp
     {
         *h = Health::new(hp);
+    }
+}
+
+// ── Ladder autopilot (FLOWERBOX_AUTOPILOT=ladder) ──────────────────────
+
+/// At 1 s: E (get on), climb up (toward the wall) to the top; once off, E again (get on from the
+/// top), climb down (away from the wall) to the bottom. Logs the action and height.
+fn ladder_script(
+    time: Res<Time>,
+    mut stage: Local<u32>,
+    mut player: Query<(&Transform, &CharacterAction, &mut crate::input::PlayerInput, Has<crate::ladder::Climbing>), With<Player>>,
+    ladders: Query<&crate::ladder::Ladder>,
+) {
+    let Ok((tf, action, mut input, climbing)) = player.single_mut() else { return };
+    let Some(l) = ladders.iter().min_by(|a, b| a.foot.distance(tf.translation).total_cmp(&b.foot.distance(tf.translation))) else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let set = |v: Vec3| *LEVEL_DIR.lock().unwrap() = (v, false, false);
+    match *stage {
+        0 if t > 1.0 => {
+            input.interact = true;
+            *stage = 1;
+            set(l.toward);
+        }
+        1 if !climbing && action.current.is_none() && t > 2.0 => {
+            info!("ladder: at the top, y {:.2}", tf.translation.y);
+            set(Vec3::ZERO);
+            *stage = 2;
+        }
+        2 => {
+            input.interact = true;
+            *stage = 3;
+            set(-l.toward);
+        }
+        3 if !climbing && action.current.is_none() => {
+            info!("ladder: back at the bottom, y {:.2}", tf.translation.y);
+            set(Vec3::ZERO);
+            *stage = 4;
+        }
+        _ => {}
+    }
+    if (t * 4.0).floor() != ((t - dt) * 4.0).floor() {
+        info!("ladder: stage {} {:?} pos {:.2}", *stage, action.current.map(|a| a.kind), tf.translation);
     }
 }
 

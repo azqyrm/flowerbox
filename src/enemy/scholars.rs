@@ -150,7 +150,7 @@ fn page_hound() -> QuadrupedSpec {
         eye_glow: INK_GLOW * 3.0,
         shag: 18.0,
         shag_length: 0.14,
-        fur_tex: Some(Tex::Books),
+        fur_tex: Some(Tex::Bone),
         mane: false,
         extras,
     };

@@ -750,7 +750,7 @@ fn right_handed_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
                 p.set(Bone::ThighR, rx((0.75 + 0.45 * s) * w)).set(Bone::ShinR, rx((-1.0 - 0.4 * s) * w)).set(Bone::FootR, rx(0.25 * w));
                 p.add(Bone::Chest, rx(-0.08 * w)).set(Bone::Head, rx(-0.25 * w));
             };
-            let k = (a.elapsed / d.active.max(1e-3)).clamp(0.0, 1.0);
+            let k = (a.elapsed / step.duration()).clamp(0.0, 1.0);
             match step {
                 ClimbMove::Climbing => rungs(&mut p, a.charge, 1.0),
                 ClimbMove::OnBottom => rungs(&mut p, 0.0, ease(k)),

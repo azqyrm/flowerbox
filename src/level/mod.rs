@@ -341,6 +341,36 @@ mod tests {
             assert_eq!(l.floor_at(beyond), Some(ld.top), "the top of ladder {:?} leads onto its upper floor", ld.at);
             assert!(l.doors.iter().any(|door| door.centre.distance(at + ld.facing.vec() * (d + 0.25)) < 1.2 && door.floor == ld.top), "a doorway over ladder {:?}", ld.at);
         }
+        // Every room can be reached from the entrance (through doors, archways, stairs, ladders).
+        let room = |p: Vec2| l.room_at(p);
+        let mut links: Vec<(usize, usize)> = vec![];
+        for d in &l.doors {
+            let v = d.opens.vec() * 0.6;
+            if let (Some(a), Some(b)) = (room(d.centre + v), room(d.centre - v)) {
+                links.push((a, b));
+            }
+        }
+        for s in &l.stairs {
+            let (c, v) = ((s.min + s.max) * 0.5, s.down.vec());
+            let half = if s.down.is_ns() { (s.max.y - s.min.y) * 0.5 } else { (s.max.x - s.min.x) * 0.5 };
+            if let (Some(a), Some(b)) = (room(c + v * (half + 0.4)), room(c - v * (half + 0.4))) {
+                links.push((a, b));
+            }
+        }
+        for ld in &l.file.ladders {
+            let at = l.world(ld.at);
+            let d = l.wall_distance(at, ld.facing).unwrap_or(0.0);
+            if let (Some(a), Some(b)) = (room(at), room(at + ld.facing.vec() * (d + LEVEL_WALL_THICKNESS + 0.7))) {
+                links.push((a, b));
+            }
+        }
+        let mut seen = vec![0usize];
+        while let Some(&(a, b)) = links.iter().find(|(a, b)| seen.contains(a) != seen.contains(b)) {
+            seen.push(if seen.contains(&a) { b } else { a });
+        }
+        for (n, r) in l.file.rooms.iter().enumerate() {
+            assert!(seen.contains(&n), "{} can't be reached", r.name);
+        }
         // Every room's ceiling is under the walls' top (else you'd see out over them).
         for r in 0..l.file.rooms.len() {
             assert!(l.room_ceiling(r) <= l.ceiling(), "{} pokes out of the level", l.file.rooms[r].name);

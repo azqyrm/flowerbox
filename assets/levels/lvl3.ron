@@ -38,6 +38,8 @@
     doors: [
         // The other half of lvl2's door 17 (the Choir's south door).
         (id: 31, at: (0.0, 160.0), width: 2.6, hinge: West, opens: South, arch: true),
+        // The Ink Stair opens into the hall.
+        (id: 41, at: (0.0, 166.0), width: 2.6, hinge: West, opens: South, arch: true),
         // Top of the west ladder (floor 1 → 2).
         (id: 32, at: (-16.0, 176.0), width: 1.6, hinge: North, opens: West, arch: true),
         // Hall → cistern passage.

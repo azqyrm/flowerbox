@@ -241,7 +241,7 @@ pub fn spawn_library_prop(
         }
         PropKind::Orrery => {
             // A brass armillary turning above the floor round a glowing star.
-            let c = Vec3::new(0.0, (height * 0.55).max(4.0), 0.0);
+            let c = Vec3::new(0.0, (height * 0.4).clamp(3.5, 5.0), 0.0);
             piece(commands, meshes, root, Sphere::new(0.45).mesh().ico(3).unwrap(), &m.star, Transform::from_translation(c));
             commands.spawn((PointLight { color: Color::srgb(0.6, 0.7, 1.0), intensity: 250_000.0, range: 22.0, ..default() }, Transform::from_translation(c), ChildOf(root)));
             for (i, (r, axis, speed)) in [(1.6, Vec3::X, 0.25), (2.4, Vec3::Z, -0.18), (3.3, Vec3::new(1.0, 0.0, 1.0).normalize(), 0.12)].into_iter().enumerate() {

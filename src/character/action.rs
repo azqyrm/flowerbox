@@ -64,6 +64,19 @@ pub enum ClimbMove {
     OffBottom,
 }
 
+impl ClimbMove {
+    /// How long the step takes (climbing: until you reach an end).
+    pub fn duration(self) -> f32 {
+        match self {
+            ClimbMove::OnBottom => LADDER_ON_BOTTOM,
+            ClimbMove::OnTop => LADDER_ON_TOP,
+            ClimbMove::Climbing => f32::INFINITY,
+            ClimbMove::OffTop => LADDER_OFF_TOP,
+            ClimbMove::OffBottom => LADDER_OFF_BOTTOM,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ActionKind {
     Roll,
@@ -406,17 +419,11 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             ground: GroundRule::Ground,
             hop: 0.0,
         },
-        Climb(step) => {
-            let t = match step {
-                ClimbMove::OnBottom => LADDER_ON_BOTTOM,
-                ClimbMove::OnTop => LADDER_ON_TOP,
-                ClimbMove::Climbing => f32::INFINITY,
-                ClimbMove::OffTop => LADDER_OFF_TOP,
-                ClimbMove::OffBottom => LADDER_OFF_BOTTOM,
-            };
+        // Never ends by itself: the ladder moves on to the next step (`ClimbMove::duration`).
+        Climb(_) => {
             ActionDef {
                 startup: 0.0,
-                active: t,
+                active: f32::INFINITY,
                 recovery: 0.0,
                 cancel: f32::INFINITY, // the ladder ends it
                 stamina_cost: 0.0,

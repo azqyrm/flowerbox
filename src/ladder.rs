@@ -172,8 +172,9 @@ fn climb(
             continue;
         };
         let ActionKind::Climb(step) = cur.kind else { continue };
-        let done = cur.elapsed >= cur.def.active;
-        let k = ease(cur.elapsed / cur.def.active.max(1e-3));
+        let duration = step.duration();
+        let done = cur.elapsed >= duration;
+        let k = ease(cur.elapsed / duration);
         let len = l.length();
         let pos = match step {
             ClimbMove::OnBottom => {
@@ -218,8 +219,8 @@ fn climb(
                     finish(&mut commands, e, &mut action);
                 }
                 // Up first (pulled over the edge), then forward onto the floor.
-                let up = ease(cur.elapsed / (cur.def.active * 0.55));
-                let fwd = ease((cur.elapsed - cur.def.active * 0.35) / (cur.def.active * 0.65));
+                let up = ease(cur.elapsed / (duration * 0.55));
+                let fwd = ease((cur.elapsed - duration * 0.35) / (duration * 0.65));
                 Vec3::new(from.x + (to.x - from.x) * fwd, from.y + (to.y - from.y) * up + 0.15 * (std::f32::consts::PI * fwd).sin(), from.z + (to.z - from.z) * fwd)
             }
             ClimbMove::OffBottom => {
