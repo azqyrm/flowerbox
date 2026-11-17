@@ -189,6 +189,8 @@ pub enum WorldEvent {
     RestWaiting { who: NetId, resting: u32, total: u32 },
     /// Every player rests: enemies respawn, everyone is restored.
     RestComplete,
+    /// Every player fell (together, or within `WIPE_WINDOW`): enemies respawn as after a rest.
+    Wipe,
     /// The training dummy was struck (on the host): animate it, show the number.
     DummyHit { amount: f32, from: Option<[f32; 3]>, killed: bool, hp: f32 },
 }

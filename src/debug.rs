@@ -39,6 +39,7 @@
 //!   takes the dropped Forge Key, resets the world, kills it again: the unique key doesn't drop twice.
 //! - `FLOWERBOX_AUTOPILOT=mp` → multiplayer soak test: enemies on, nobody moves; every 2 s logs the
 //!   puppets seen (players / enemies) and how many puppets (re)appeared so far.
+//!   `FLOWERBOX_MP_HP=n` gives this player n HP (outlast a boss).
 //!   `FLOWERBOX_MP_DIE_AT=secs` kills this player then. `FLOWERBOX_MP_FIGHT=1`: run at the nearest
 //!   living enemy (within 25 m) and keep attacking it.
 //! - `FLOWERBOX_AUTOPILOT=weapons` → at the training dummy: right, left and dual sword attacks, a
@@ -138,7 +139,7 @@ impl Plugin for DebugPlugin {
                     app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
                         .add_systems(Update, mp_fight);
                 }
-                app.add_systems(Update, log_puppets);
+                app.add_systems(Update, (log_puppets, mp_tank));
             }
             Ok("wargkill") => {
                 app.add_systems(Update, wargkill_script);
@@ -925,6 +926,16 @@ fn log_action_changes(
             *last, now, hp.current, st.current, tf.translation
         );
         *last = now;
+    }
+}
+
+/// `FLOWERBOX_MP_HP=n`: this player has n HP (so it outlasts a boss in an online test).
+fn mp_tank(mut player: Query<&mut Health, With<Player>>) {
+    let Some(hp) = std::env::var("FLOWERBOX_MP_HP").ok().and_then(|v| v.parse::<f32>().ok()) else { return };
+    if let Ok(mut h) = player.single_mut()
+        && h.max != hp
+    {
+        *h = Health::new(hp);
     }
 }
 
@@ -1975,7 +1986,7 @@ fn wargkill_script(
     if (at(3.0) || at(10.0))
         && let Some((e, _, _)) = warg {
             info!("autopilot: killing the vault warg");
-            damage.write(DamageMessage::plain(e, 10_000.0, None, None));
+            damage.write(DamageMessage::plain(e, 1.0e9, None, None));
         }
     let key = pickups.iter().find(|(p, _)| p.item == ItemId::ForgeKey);
     if at(5.0)
@@ -1999,8 +2010,9 @@ fn wargkill_script(
 fn log_puppets(
     time: Res<Time>,
     mut damage: MessageWriter<DamageMessage>,
-    me: Query<Entity, With<Player>>,
+    me: Query<(Entity, &crate::character::stats::HitImmunity), With<Player>>,
     mut timer: Local<f32>,
+    mut died: Local<bool>,
     mut appeared: Local<u32>,
     new: Query<(), Added<crate::net::sync::Puppet>>,
     puppets: Query<&crate::net::sync::Puppet>,
@@ -2010,11 +2022,14 @@ fn log_puppets(
     *appeared += new.iter().count() as u32;
     // `FLOWERBOX_MP_DIE_AT=secs`: this player dies then (online: no world reset).
     if let Some(at) = std::env::var("FLOWERBOX_MP_DIE_AT").ok().and_then(|v| v.parse::<f32>().ok())
-        && crossed(time.elapsed_secs(), time.delta_secs(), at)
-        && let Ok(e) = me.single()
+        && time.elapsed_secs() >= at
+        && !*died
+        && let Ok((e, immune)) = me.single()
+        && immune.0 <= 0.0
     {
+        *died = true;
         info!("autopilot: dying now");
-        damage.write(DamageMessage::plain(e, 10_000.0, None, None));
+        damage.write(DamageMessage::plain(e, 1.0e9, None, None));
     }
     *timer += time.delta_secs();
     if *timer < 2.0 {

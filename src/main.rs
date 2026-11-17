@@ -13,6 +13,7 @@ mod character;
 mod combat;
 mod critical;
 mod light;
+mod spectate;
 mod debug;
 mod enemy;
 mod grab;
@@ -76,6 +77,7 @@ fn main() {
             critical::CriticalPlugin,
             light::LightPlugin,
         ))
+        .add_plugins(spectate::SpectatePlugin)
         .add_plugins((
             level::LevelPlugin,
             enemy::EnemyPlugin,

@@ -207,6 +207,15 @@ pub const PARRY_STUN_TIME: f32 = 1.8;
 /// Damage multiplier for hitting a stunned (parried) character: the riposte.
 pub const RIPOSTE_MULT: f32 = 2.5;
 
+// ── Party wipes and spectating (online) ──
+/// Every player composted within this many seconds of each other (or still dead) = a wipe: the
+/// world resets as after a rest.
+pub const WIPE_WINDOW: f32 = 6.0;
+/// A boss this close to where you fell (and alive) keeps you watching the survivors (m).
+pub const SPECTATE_RANGE: f32 = 40.0;
+/// When a death in a boss fight turns into spectating (s after falling; the death text has shown).
+pub const SPECTATE_AT: f32 = 3.0;
+
 // ── Light (`crate::light`) ──
 /// Who gets the Light of a kill (user request: everyone, for now).
 pub const LIGHT_SHARE: crate::light::LightShare = crate::light::LightShare::Everyone;

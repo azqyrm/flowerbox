@@ -460,7 +460,11 @@ fn update_death_screen(
 ) {
     let Ok(seq) = player.single() else { return };
     let t = seq.map(|s| s.t);
-    let (text_a, black_a) = t.map_or((0.0, 0.0), death_screen);
+    let (mut text_a, black_a) = t.map_or((0.0, 0.0), death_screen);
+    // Spectating a boss fight: the words fade away while you watch.
+    if let Some(s) = seq.filter(|s| s.hold || s.held > 0.0) {
+        text_a *= (1.0 - s.held / 0.8).clamp(0.0, 1.0);
+    }
     for mut b in &mut band {
         b.0 = Color::srgba(0.0, 0.0, 0.0, 0.7 * text_a);
     }
