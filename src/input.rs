@@ -24,11 +24,11 @@ impl Plugin for InputPlugin {
             .init_resource::<GameplayBlocked>()
             .init_resource::<MenuInput>()
             .configure_sets(Update, (InputSystems::Menus, InputSystems::Apply, InputSystems::Cursor, InputSystems::Gather).chain())
-            .add_systems(Startup, grab_cursor)
+            .add_systems(Startup, grab_cursor.run_if(cursor_lock_allowed))
             .add_systems(
                 Update,
                 (
-                    toggle_cursor.in_set(InputSystems::Cursor),
+                    toggle_cursor.in_set(InputSystems::Cursor).run_if(cursor_lock_allowed),
                     apply_menu_block.in_set(InputSystems::Apply),
                     gather_player_input.in_set(InputSystems::Gather),
                     rebind_player,
@@ -390,6 +390,12 @@ fn gather_player_input(
 /// A Shift press released before sprint kicked in counts as a roll (Souls-style: roll on release).
 pub fn is_dodge_tap(held_seconds: f32) -> bool {
     held_seconds < SPRINT_HOLD_THRESHOLD
+}
+
+/// Test runs (autopilots, screenshots) never capture the mouse: they script their input, and a
+/// handful of instances fighting over the pointer leaves the desktop unusable while they run.
+fn cursor_lock_allowed() -> bool {
+    !crate::test_run()
 }
 
 pub fn set_grab(options: &mut CursorOptions, grab: bool) {

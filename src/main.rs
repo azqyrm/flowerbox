@@ -50,6 +50,8 @@ fn main() {
                 // Test runs (autopilots, screenshots) don't wait for vsync: a desktop that throttles
                 // hidden windows (GNOME Wayland) otherwise slows them to a few frames per second.
                 present_mode: if test_run() { bevy::window::PresentMode::AutoNoVsync } else { bevy::window::PresentMode::default() },
+                // Nor do they take keyboard focus from whatever you're doing when they open.
+                focused: !test_run(),
                 ..default()
             }),
             ..default()

@@ -606,6 +606,7 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
 | 2026-11-16 | Movement: quick to speed up, gentler to slow down (short skid), pivots on hard reversals with a lean / hip-turn pose; never locks input (N32). |
 | 2026-11-16 | Player skins change only the look on the human skeleton (same animation, reach, feet, capsule); six skins; armour fitted to at least a human build. |
 | 2026-11-16 | Player names (settings; Host / GuestN / Player1 without one), made unique by the host with a German noun; chat on T through the host into the notification feed (face + name). |
+| 2026-11-17 | Test runs (`FLOWERBOX_AUTOPILOT` / `FLOWERBOX_SCREENSHOT`) never capture the mouse (`input::cursor_lock_allowed`) and open their window without taking focus, so tests can run while you keep using the desktop. Scripted attack/guard buttons already ignore the cursor state. |
 | 2026-11-14 | Attack: tap = light, hold of 0.25 s or longer = heavy, light while airborne = jump attack (user request). Shift: tap = roll, hold = sprint. Space = jump. |
 
 ---
