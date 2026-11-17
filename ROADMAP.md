@@ -577,15 +577,22 @@ Steps:
 - [x] Boss spectating: dead players in a boss fight spectate survivors (camera follows, Q/E to cycle), last death → everyone respawns, boss + bar + fog gate reset
 - [x] Docs, tests, merge `systems` → `master`
 
-### Phase 8.18 — Level 3 "The Drowned Library" (3 floors, after the Thorned Saint) (user request, 2026-11-17)
+### Phase 8.18 — Level 3 "The Drowned Library" (3 floors, after the Thorned Saint) (user request, 2026-11-17; branch `library`)
 Request (pasted brief): a dark, interconnected 3-floor library reached from the cathedral boss room; unique layouts, enemies, traps and exploration per floor; stairs and ladders between floors; a challenging boss with unique attacks, animations and boss bar on floor 3; secrets, rewards, challenging encounters; reuse systems; backstab (covered by 8.17).
+
+Design (N38): its own file `assets/levels/lvl3.ron` (Theme `Library`), south / south-east of the Choir of Thorns. The grid has one floor per cell, so the three floors are **terraced, not stacked**: tall rooms below, galleries beside them whose floors are higher, joined by ladders that top out through an archway in the shared wall (a riser wall fills the wall below a raised doorway).
+- Entry: a door in the Choir's south wall (lvl2 door 17, sealed until the Saint is defeated) + an archway in lvl3 at the same spot (cross-file joins = a real door on one side, an arch on the other).
+- **Floor 1 "The Flooded Stacks"** (floor −4, 12 m tall hall, x −16..16, z 166..200): aisles of tall shelves, reading desks, standing water; Scribes reading with their backs turned (backstabs), Page Hounds, a Hollow. Ladder up the west wall → floor 2. A cistern passage east → the long stair (shortcut, one-way door from the top).
+- **Floor 2 "The Reading Galleries"** (floor +2): a ring West Gallery → South Gallery (dart traps) → East Stacks (swinging censer pendulums) → East Gallery (sunflower; the stair shortcut). Secret: an illusory wall off the West Gallery hides the Forbidden Reading Room (reward). Mourner in the South Gallery.
+- **Floor 3 "The Astral Archive"** (floor +8): ladder from the East Gallery → antechamber (sunflower) → fog gate → the Orrery: boss **the Archivist** (unique moves).
 Steps:
-- [ ] Ladders: interact at top or bottom, climb up/down, auto mount/dismount animations, online pose
-- [ ] Trapdoors (floor/ceiling hatches) as door variants
-- [ ] Layout + theme (shelves, reading desks, candles, books, ink), three floors stacked, connected by stairs and ladders, shortcut loops
-- [ ] Traps (e.g. falling shelves / pressure plates firing darts / swinging lamps) and secrets (illusory shelf walls, hidden rewards)
-- [ ] New enemies (e.g. scribes / book-wraiths) and the floor-3 boss with unique attacks
-- [ ] Rewards, sunflower, connection from the cathedral boss room, Light values
+- [ ] Level plumbing: cross-file arch joins, risers under raised doorways, `after_boss` doors, enemy `facing`, theme `Library`, `Layout` room lookup by height
+- [ ] Ladders: interact at top or bottom, climb up/down (slide down holding sprint), mount/dismount animations, online (action kinds), ladder model
+- [ ] Library props: bookshelves (solid), desks, book piles, lecterns reuse, water, candles
+- [ ] Traps: pressure-plate darts, swinging censer pendulums; secret: illusory wall (hit it)
+- [ ] Enemies: Scribe (small humanoid, backstabbable, quill knife), Page Hound (paper warg), the Archivist (boss, own abilities)
+- [ ] lvl3.ron: three floors, enemies, treasures (new armour, boss weapon), sunflowers 31/32, ambiences (Library, Archive)
+- [ ] Tests, screenshots, walk test, docs; merge `library` → `master`
 
 ### Phase 8.19 — Level 4: a womb horror level (user request, 2026-11-17)
 User asked for "the uterus of Abeloth from Star Wars". Abeloth is a Star Wars character, so this level is an **original** fleshy, living womb dungeon (own name, own creature design; no Star Wars names or likeness). Attached to the central arena by a door or a floor hatch + ladder.
