@@ -18,6 +18,7 @@ use crate::character::{BodySize, character_bundle_sized};
 use crate::character::controller::CharacterController;
 use crate::combat::{Hurtbox, Team};
 use crate::humanoid::anim::HumanoidAnimator;
+use crate::humanoid::skirt::Skirt;
 use crate::humanoid::{Bone, HumanoidLook, HumanoidSpec, Paint, Part, Shape, spawn_humanoid, symmetric};
 use crate::lockon::Targetable;
 use crate::quadruped::anim::QuadrupedAnimator;
@@ -149,9 +150,9 @@ const ACOLYTE_PROFILE: FighterProfile = FighterProfile {
 fn acolyte() -> HumanoidSpec {
     let ash = Color::srgb(0.24, 0.22, 0.2);
     let mut extras = vec![
-        // Pointed hood and a long robe.
-        Part::new(Bone::Head, Shape::Cone(0.17, 0.42), Vec3::new(0.0, 0.17, 0.03), Vec3::new(-0.2, 0.0, 0.0), Paint::Textured(ash, Tex::Cloth)),
-        Part::new(Bone::Pelvis, Shape::Cone(0.33, 0.95), Vec3::new(0.0, -0.4, 0.0), Vec3::ZERO, Paint::Textured(ash, Tex::Cloth)),
+        // A pointed hood: a cowl round the head (the face looking out of it) and its peak.
+        Part::new(Bone::Head, Shape::Ball(0.162), Vec3::new(0.0, 0.126, 0.054), Vec3::ZERO, Paint::Textured(ash, Tex::Cloth)),
+        Part::new(Bone::Head, Shape::Cone(0.1, 0.26), Vec3::new(0.0, 0.3, 0.07), Vec3::new(0.3, 0.0, 0.0), Paint::Textured(ash, Tex::Cloth)),
         // A censer chain belt and a bone pendant.
         Part::new(Bone::Pelvis, Shape::Ring(0.015, 0.2), Vec3::new(0.0, 0.1, 0.0), Vec3::ZERO, Paint::Metal(Color::srgb(0.3, 0.28, 0.24))),
         Part::new(Bone::Chest, Shape::Box(Vec3::new(0.06, 0.1, 0.02)), Vec3::new(0.0, 0.3, -0.13), Vec3::ZERO, Paint::Textured(Color::srgb(0.85, 0.8, 0.7), Tex::Bone)),
@@ -172,6 +173,8 @@ fn acolyte() -> HumanoidSpec {
             eye_glow: Some(LinearRgba::rgb(2.0, 4.5, 6.0)),
             bald: true,
             extras,
+            // The long robe, down to the ankles.
+            skirts: vec![Skirt::robe(0.1, Vec2::new(0.2, 0.13), Vec2::new(0.3, 0.27), 0.98, Paint::Textured(ash, Tex::Cloth))],
             ..HumanoidSpec::hollow().look
         },
         ..HumanoidSpec::hollow()
@@ -217,12 +220,12 @@ fn mourner() -> HumanoidSpec {
     let bone = Color::srgb(0.86, 0.84, 0.78);
     let black = Color::srgb(0.03, 0.025, 0.03);
     let mut extras = vec![
-        // Veiled hood hanging past the shoulders, a blank bone mask, a glowing slit for a mouth.
-        Part::new(Bone::Head, Shape::Cone(0.2, 0.62), Vec3::new(0.0, 0.05, 0.04), Vec3::new(-0.12, 0.0, 0.0), Paint::Textured(black, Tex::Cloth)),
+        // A tall hood round the head (its veil hangs past the shoulders, below), a blank bone
+        // mask in its opening, a glowing slit for a mouth.
+        Part::new(Bone::Head, Shape::Ball(0.15), Vec3::new(0.0, 0.11, 0.05), Vec3::ZERO, Paint::Textured(black, Tex::Cloth)),
+        Part::new(Bone::Head, Shape::Cone(0.09, 0.3), Vec3::new(0.0, 0.3, 0.08), Vec3::new(0.35, 0.0, 0.0), Paint::Textured(black, Tex::Cloth)),
         Part::new(Bone::Head, Shape::Box(Vec3::new(0.15, 0.21, 0.03)), Vec3::new(0.0, 0.1, -0.11), Vec3::new(0.1, 0.0, 0.0), Paint::Textured(bone, Tex::Bone)),
         Part::new(Bone::Head, Shape::Box(Vec3::new(0.014, 0.12, 0.01)), Vec3::new(0.0, 0.05, -0.13), Vec3::new(0.1, 0.0, 0.0), Paint::Glow(LinearRgba::rgb(9.0, 0.6, 0.3))),
-        // The robe it glides in, trailing on the floor.
-        Part::new(Bone::Pelvis, Shape::Cone(0.42, 1.25), Vec3::new(0.0, -0.55, 0.05), Vec3::ZERO, Paint::Textured(black, Tex::Cloth)),
     ];
     // Vertebrae pushing through the back of the robe.
     for (i, y) in [0.08, 0.2, 0.32, 0.44].into_iter().enumerate() {
@@ -264,6 +267,12 @@ fn mourner() -> HumanoidSpec {
             bottom_tex: Some(Tex::Cloth),
             bald: true,
             extras,
+            skirts: vec![
+                // The robe it glides in, trailing on the floor.
+                Skirt::robe(0.1, Vec2::new(0.16, 0.1), Vec2::new(0.36, 0.34), 1.16, Paint::Textured(black, Tex::Cloth)),
+                // The hood's veil, hanging down the back past the shoulders.
+                Skirt { bone: Bone::Chest, top: 0.54, waist: Vec2::new(0.1, 0.09), hem: Vec2::new(0.24, 0.2), length: 0.5, span: 2.0, paint: Paint::Textured(black, Tex::Cloth) },
+            ],
             ..HumanoidSpec::human().look
         },
     }
@@ -417,9 +426,8 @@ fn saint() -> HumanoidSpec {
         // A crown of thorns and, behind the head, an iron halo set with glowing thorns.
         Part::new(Bone::Head, Shape::Ring(0.018, 0.13), Vec3::new(0.0, 0.2, 0.0), Vec3::ZERO, Paint::Textured(Color::srgb(0.2, 0.14, 0.08), Tex::Leather)),
         Part::new(Bone::Head, Shape::Ring(0.02, 0.32), Vec3::new(0.0, 0.18, 0.2), Vec3::new(FRAC_PI_2, 0.0, 0.0), Paint::TexturedMetal(iron, Tex::Rust)),
-        // A tabard to the knees and a tattered cape.
-        Part::new(Bone::Chest, Shape::Box(Vec3::new(0.34, 0.9, 0.03)), Vec3::new(0.0, -0.05, -0.17), Vec3::ZERO, Paint::Textured(crimson, Tex::Cloth)),
-        Part::new(Bone::Chest, Shape::Box(Vec3::new(0.5, 1.25, 0.03)), Vec3::new(0.0, -0.2, 0.18), Vec3::new(-0.12, 0.0, 0.0), Paint::Textured(Color::srgb(0.08, 0.06, 0.06), Tex::Cloth)),
+        // A tabard over the mail (its skirt and the cape are cloth, below).
+        Part::new(Bone::Chest, Shape::Box(Vec3::new(0.34, 0.5, 0.03)), Vec3::new(0.0, 0.2, -0.17), Vec3::ZERO, Paint::Textured(crimson, Tex::Cloth)),
         Part::new(Bone::Chest, Shape::Box(Vec3::new(0.46, 0.12, 0.3)), Vec3::new(0.0, 0.44, 0.0), Vec3::ZERO, Paint::TexturedMetal(iron, Tex::Rust)),
         Part::new(Bone::Pelvis, Shape::Ring(0.03, 0.22), Vec3::new(0.0, 0.08, 0.0), Vec3::ZERO, Paint::Metal(Color::srgb(0.5, 0.4, 0.2))),
     ];
@@ -454,6 +462,19 @@ fn saint() -> HumanoidSpec {
             bottom_tex: Some(Tex::Chainmail),
             bald: true,
             extras,
+            skirts: vec![
+                // The tabard's skirt, to the knees, and a tattered cape from the shoulders.
+                Skirt::robe(0.1, Vec2::new(0.28, 0.17), Vec2::new(0.36, 0.28), 0.62, Paint::Textured(crimson, Tex::Cloth)),
+                Skirt {
+                    bone: Bone::Chest,
+                    top: 0.42,
+                    waist: Vec2::new(0.28, 0.16),
+                    hem: Vec2::new(0.34, 0.3),
+                    length: 1.2,
+                    span: 1.7,
+                    paint: Paint::Textured(Color::srgb(0.08, 0.06, 0.06), Tex::Cloth),
+                },
+            ],
             ..HumanoidSpec::human().look
         },
         ..HumanoidSpec::human()

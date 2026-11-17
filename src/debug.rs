@@ -54,7 +54,8 @@
 //!   `FLOWERBOX_FACES=1`: a chat line per skin, for their faces).
 //! - `FLOWERBOX_AUTOPILOT=bestiary` → every enemy kind stands in a row in the arena (brains off),
 //!   for screenshots. `FLOWERBOX_SPECIAL="Saint:Whirlwind@2.0"` makes one of them perform an
-//!   ability at that time (several, comma-separated).
+//!   ability at that time (several, comma-separated). `FLOWERBOX_BESTIARY_WALK=secs`: from then on
+//!   they walk in circles; `FLOWERBOX_HIDE_PLAYER=1` hides the player (nothing in front of them).
 //! - `FLOWERBOX_KEYS="1.0:ShiftLeft+ 1.1:Tab+ 1.2:Tab- 1.4:ShiftLeft-"` → injects real key / mouse
 //!   events (`Name+` press, `Name-` release; `MouseLeft`, `MouseRight`, `MouseMiddle` for buttons) at
 //!   those game times, and logs menu / input-block / cursor changes. For input bugs.
@@ -666,14 +667,27 @@ fn bestiary_script(
     brains: Query<Entity, Or<(With<FighterAi>, With<crate::enemy::beast::BeastAi>)>>,
     mut row: Local<Vec<(crate::enemy::EnemyKind, Entity)>>,
     mut intents: Query<(&mut ActionIntent, &mut MoveIntent), With<Enemy>>,
+    mut player: Query<&mut Visibility, With<Player>>,
 ) {
     use crate::enemy::EnemyKind;
     let (t, dt) = (time.elapsed_secs(), time.delta_secs());
     for e in &brains {
         commands.entity(e).remove::<(FighterAi, crate::enemy::beast::BeastAi)>();
     }
-    for (_, mut m) in &mut intents {
+    // `FLOWERBOX_BESTIARY_WALK=secs`: from then on they walk in circles (clothes vs. moving legs).
+    let walk = std::env::var("FLOWERBOX_BESTIARY_WALK").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(f32::MAX);
+    for (i, (_, mut m)) in intents.iter_mut().enumerate() {
         *m = MoveIntent::default();
+        if t >= walk {
+            let a = (t - walk) * 1.2 + i as f32;
+            m.dir = Vec3::new(a.cos(), 0.0, a.sin()) * 0.5;
+        }
+    }
+    // `FLOWERBOX_HIDE_PLAYER=1`: the player is invisible (nothing in front of the row).
+    if std::env::var("FLOWERBOX_HIDE_PLAYER").is_ok() {
+        for mut v in &mut player {
+            *v = Visibility::Hidden;
+        }
     }
     if crossed(t, dt, 0.3) {
         let kinds = [EnemyKind::Hollow, EnemyKind::Acolyte, EnemyKind::Mourner, EnemyKind::Saint, EnemyKind::Contorted, EnemyKind::Warg];
@@ -681,6 +695,10 @@ fn bestiary_script(
             let x = -8.0 + 3.2 * i as f32;
             let e = crate::enemy::kinds::spawn_enemy(&mut commands, &mut meshes, &mut materials, &mut equip, kind, Vec3::new(x, 0.0, 3.0), None, 0.0, 7 + i as u32);
             row.push((kind, e));
+        }
+        if std::env::var("FLOWERBOX_HIDE_PLAYER").is_ok() {
+            // Lit from the front for close-ups.
+            commands.spawn((PointLight { intensity: 900_000.0, range: 14.0, shadow_maps_enabled: true, ..default() }, Transform::from_xyz(0.0, 3.5, -1.0)));
         }
         info!("bestiary: {} kinds", row.len());
     }

@@ -18,6 +18,7 @@
 pub mod anim;
 pub mod pose;
 pub mod skins;
+pub mod skirt;
 
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::prelude::*;
@@ -28,7 +29,7 @@ pub struct HumanoidPlugin;
 
 impl Plugin for HumanoidPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (anim::animate_humanoids, sway_tails));
+        app.add_systems(Update, (anim::animate_humanoids, sway_tails, skirt::drape_skirts.after(anim::animate_humanoids)));
     }
 }
 
@@ -149,6 +150,8 @@ pub struct HumanoidLook {
     pub covered: Covered,
     /// An optional tail that sways on its own.
     pub tail: Option<Tail>,
+    /// Robes, skirts and capes: cloth that keeps clear of the legs ([`skirt`]).
+    pub skirts: Vec<skirt::Skirt>,
 }
 
 /// A tail: a chain of segments growing from the pelvis, each joint swinging a little side to side
@@ -446,6 +449,7 @@ impl HumanoidSpec {
                 eyes: Eyes::Bar,
                 covered: Covered::ALL,
                 tail: None,
+                skirts: vec![],
             },
         }
     }
@@ -499,6 +503,7 @@ impl HumanoidSpec {
                 eyes: Eyes::Bar,
                 covered: Covered::ALL,
                 tail: None,
+                skirts: vec![],
             },
             ..Self::human()
         }
@@ -527,6 +532,7 @@ impl HumanoidSpec {
         self.torso *= f;
         self.scale *= f;
         self.look.extras = self.look.extras.iter().map(|p| p.scaled(f)).collect();
+        self.look.skirts = self.look.skirts.iter().map(|k| k.scaled(f)).collect();
         if let Some(t) = &mut self.look.tail {
             t.root *= f;
             t.length *= f;
@@ -743,6 +749,9 @@ pub fn spawn_humanoid(
     }
     for (p, m) in s.look.extras.iter().zip(&extra_mats) {
         part(p.bone, p.shape.mesh(), m, p.transform());
+    }
+    for k in &s.look.skirts {
+        skirt::spawn(commands, meshes, materials, &body, &bones, s, k);
     }
     if let Some(tail) = look.tail {
         let fur = tail.paint.material(materials, &body);
