@@ -1,5 +1,5 @@
 //! Every enemy kind as data: an [`EnemyDef`] per [`EnemyKind`] — its body (humanoid or
-//! quadruped spec), capsule, health, poise, weapon and brain (a fighter or beast profile).
+//! quadruped spec), capsule, health, stance, Light, weapon and brain (a fighter or beast profile).
 //! [`spawn_enemy`] builds any of them; [`attach_body`] gives a body to an entity that already
 //! exists (also used for online puppets, so a guest's copy looks and swings the same).
 //!
@@ -13,7 +13,7 @@ use super::beast::{BeastAi, BeastProfile};
 use super::fighter::{Enrage, FighterAi, FighterProfile, Special};
 use super::{Enemy, EnemyKind, warg};
 use crate::ability::AbilityId;
-use crate::character::stats::Poise;
+use crate::character::stats::Stance;
 use crate::character::{BodySize, character_bundle_sized};
 use crate::character::controller::CharacterController;
 use crate::combat::{Hurtbox, Team};
@@ -47,8 +47,12 @@ pub struct EnemyDef {
     pub name: &'static str,
     pub hp: f32,
     pub stamina: f32,
-    /// 0 = flinches at every hit.
-    pub poise: f32,
+    /// Stance: how much stance damage breaks it (`character::stats::Stance`; a break stuns it).
+    pub stance: f32,
+    /// Light every player gets when it dies (`crate::light`): the harder, the more.
+    pub light: u32,
+    /// A small humanoid: can be backstabbed (`crate::critical`).
+    pub backstab: bool,
     pub size: BodySize,
     /// Lock-on aim / health bar height above the capsule centre.
     pub target_height: f32,
@@ -106,7 +110,9 @@ const HOLLOW: EnemyDef = EnemyDef {
     name: "Hollow",
     hp: HOLLOW_HP,
     stamina: HOLLOW_STAMINA,
-    poise: 0.0,
+    stance: 25.0,
+    light: 40,
+    backstab: true,
     size: STANDARD,
     target_height: 0.55,
     body: Body::Humanoid(HumanoidSpec::hollow),
@@ -120,7 +126,9 @@ const WARG: EnemyDef = EnemyDef {
     hp: WARG_HP,
     stamina: WARG_STAMINA,
     // A single light hit doesn't break its pounce wind-up any more (ROADMAP 8.9's open question).
-    poise: 30.0,
+    stance: 40.0,
+    light: 90,
+    backstab: false,
     size: STANDARD,
     target_height: warg::WARG_TARGET_HEIGHT,
     body: Body::Quadruped(QuadrupedSpec::warg),
@@ -185,7 +193,9 @@ const ACOLYTE: EnemyDef = EnemyDef {
     name: "Ashen Acolyte",
     hp: 110.0,
     stamina: 110.0,
-    poise: 15.0,
+    stance: 30.0,
+    light: 70,
+    backstab: true,
     size: STANDARD,
     target_height: 0.55,
     body: Body::Humanoid(acolyte),
@@ -283,7 +293,9 @@ const MOURNER: EnemyDef = EnemyDef {
     name: "Mourner",
     hp: 280.0,
     stamina: 300.0,
-    poise: 60.0,
+    stance: 50.0,
+    light: 200,
+    backstab: false,
     size: BodySize { radius: 0.38, length: 1.65 },
     target_height: 0.9,
     body: Body::Humanoid(mourner),
@@ -319,6 +331,7 @@ pub static CONTORTED_MAW: WeaponDef = WeaponDef {
     blade: (0.0, 0.0),
     model: ModelSource::Parts(&[]),
     guard_block: 0.0,
+    stance_damage: 20.0,
 };
 
 fn contorted() -> QuadrupedSpec {
@@ -385,7 +398,9 @@ const CONTORTED: EnemyDef = EnemyDef {
     name: "Contorted",
     hp: 220.0,
     stamina: 200.0,
-    poise: 45.0,
+    stance: 55.0,
+    light: 160,
+    backstab: false,
     size: STANDARD,
     target_height: 0.25,
     body: Body::Quadruped(contorted),
@@ -486,7 +501,9 @@ const SAINT: EnemyDef = EnemyDef {
     name: "The Thorned Saint",
     hp: 1300.0,
     stamina: 600.0,
-    poise: 140.0,
+    stance: 140.0,
+    light: 2500,
+    backstab: false,
     size: BodySize { radius: 0.62, length: 1.66 },
     target_height: 1.0,
     body: Body::Humanoid(saint),
@@ -526,8 +543,11 @@ pub fn spawn_enemy(
         Brain::Fighter(p) => commands.entity(e).insert(FighterAi::new(p, seed)),
         Brain::Beast(p) => commands.entity(e).insert(BeastAi::new(p, seed)),
     };
-    if def.poise > 0.0 {
-        commands.entity(e).insert(Poise::new(def.poise));
+    if def.backstab {
+        commands.entity(e).insert(crate::critical::Backstabbable);
+    }
+    if def.stance > 0.0 {
+        commands.entity(e).insert(Stance::new(def.stance, true));
     }
     attach_body(commands, meshes, materials, equip, e, kind);
     commands.entity(e).insert(CharacterController { facing, ..default() });

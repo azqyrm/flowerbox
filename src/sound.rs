@@ -58,6 +58,8 @@ pub enum Sound {
     Shockwave,
     /// A horror's shriek.
     Shriek,
+    /// A blade run through a body: a wet crunch.
+    Critical,
 }
 
 #[derive(Message, Debug, Clone, Copy)]
@@ -156,6 +158,34 @@ pub fn hit(pitch: f32, seed: u32) -> Vec<f32> {
     })
 }
 
+/// A critical: a deep thud, a wet tearing squelch and a crack of bone.
+pub fn critical(seed: u32) -> Vec<f32> {
+    let (mut n, mut lp, mut lp2) = (Noise(seed.max(1)), LowPass { y: 0.0 }, LowPass { y: 0.0 });
+    let mut phase = 0.0;
+    samples(0.7, |t| {
+        phase += TAU * 70.0 * (1.0 + 2.0 * (-t * 18.0).exp()) / RATE as f32;
+        let thud = phase.sin() * (-t * 9.0).exp() * 0.9;
+        let x = n.next();
+        // Squelch: noise through a sweeping low-pass, wobbling.
+        let cutoff = 400.0 + 1600.0 * (-t * 6.0).exp() * (1.0 + 0.5 * (t * 60.0).sin());
+        let squelch = lp.step(x, cutoff) * (t * 30.0).min(1.0) * (-t * 5.0).exp() * 1.6;
+        let crack = lp2.step(x, 5000.0) * (-((t - 0.04).abs()) * 160.0).exp() * 0.9;
+        (thud + squelch + crack).clamp(-1.0, 1.0)
+    })
+}
+
+/// A stance breaking: a heavy, dull crack and a short grunt-like groan.
+pub fn stagger(seed: u32) -> Vec<f32> {
+    let (mut n, mut lp) = (Noise(seed.max(1)), LowPass { y: 0.0 });
+    let mut phase = 0.0;
+    samples(0.5, |t| {
+        phase += TAU * (110.0 - 40.0 * t) / RATE as f32;
+        let groan = (phase.sin() + 0.4 * (phase * 2.0).sin()) * (t * 20.0).min(1.0) * (-t * 7.0).exp() * 0.5;
+        let crack = lp.step(n.next(), 2200.0) * (-t * 35.0).exp() * 1.2;
+        (groan + crack).clamp(-1.0, 1.0)
+    })
+}
+
 /// Struck metal: inharmonic partials ringing out (`ring` = how long).
 pub fn metal(partials: &[(f32, f32)], ring: f32, seed: u32) -> Vec<f32> {
     let mut n = Noise(seed.max(1));
@@ -247,6 +277,8 @@ struct Sounds {
     bell: Handle<AudioSource>,
     boom: Handle<AudioSource>,
     shriek: Handle<AudioSource>,
+    critical: Handle<AudioSource>,
+    stagger: Handle<AudioSource>,
 }
 
 fn build_sounds(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
@@ -266,6 +298,8 @@ fn build_sounds(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>
         bell: add(bell(196.0)),
         boom: add(boom(41)),
         shriek: add(shriek(43)),
+        critical: add(critical(47)),
+        stagger: add(stagger(53)),
     };
     commands.insert_resource(sounds);
 }
@@ -390,6 +424,8 @@ fn action_sounds(
             ActionKind::HeavyAttack if cur.phase() == ActionPhase::Active => &sounds.heavy_swing,
             ActionKind::Roll | ActionKind::Backstep => &sounds.roll,
             ActionKind::DrinkAle | ActionKind::UseItem if cur.phase() == ActionPhase::Active => &sounds.gulp,
+            // Reeling (parried or stance broken): the stagger's crack. Works for puppets too.
+            ActionKind::Stunned => &sounds.stagger,
             _ => continue,
         };
         if played.get(&e) == Some(&key) {
@@ -408,6 +444,7 @@ fn play_requests(mut commands: Commands, sounds: Option<Res<Sounds>>, mut reques
             Sound::Bell => &sounds.bell,
             Sound::Shockwave => &sounds.boom,
             Sound::Shriek => &sounds.shriek,
+            Sound::Critical => &sounds.critical,
         };
         play(&mut commands, s, r.pos, r.volume);
     }

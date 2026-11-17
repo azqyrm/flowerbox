@@ -16,7 +16,7 @@ use crate::items::inventory::EquipSlot;
 use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 16;
+pub const PROTOCOL_VERSION: u16 = 17;
 
 /// The equipment other players see on you (rings and the quick item don't show).
 pub const SHOWN_SLOTS: [EquipSlot; 6] =
@@ -74,6 +74,8 @@ pub struct BodyState {
     /// Skidding (0..1) and pivoting (-1, 0, +1): the controller's `brake` / `pivot`, so puppets
     /// skid and pivot too.
     pub skid: (f32, i8),
+    /// How full the stance bar is (0..1), for the bars over puppets.
+    pub stance: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -127,8 +129,8 @@ pub enum Reliable {
     Welcome { your_id: NetId },
     /// Host → client: the session can't take you.
     Refused { reason: String },
-    /// Client → host: my weapon hit `target` (an enemy) for `amount`.
-    Damage { target: NetId, amount: f32, from: [f32; 3] },
+    /// Client → host: my weapon hit `target` (an enemy) for `amount` (and `stance` stance damage).
+    Damage { target: NetId, amount: f32, from: [f32; 3], stance: f32 },
     /// Client → host: I parried `attacker` (stun it).
     Parried { attacker: NetId },
     /// Host → new guest: the world as it is (revived sunflowers, open doors, items on the floor).
@@ -149,6 +151,8 @@ pub enum Reliable {
     Event(WorldEvent),
     /// Host → guest: another player parried you (you're stunned).
     Stun,
+    /// Client → host: my critical pins `target` (an enemy) on my blade, turned to `facing`.
+    Pin { target: NetId, kind: crate::character::action::CritKind, facing: f32 },
 }
 
 /// An item on the floor.
@@ -227,6 +231,7 @@ pub(crate) mod tests {
             pvp: false,
             two_hand: None,
             skid: (0.0, 0),
+            stance: 0.0,
         }
     }
 
@@ -252,7 +257,7 @@ pub(crate) mod tests {
         assert!(bytes.len() < 1000, "{} bytes for 8 bodies", bytes.len());
         let Some(Datagram::Snapshot(back)) = decode::<Datagram>(&bytes) else { panic!() };
         assert_eq!(back[3], body(3));
-        let r = encode(&Reliable::Damage { target: 1000, amount: 20.0, from: [0.0; 3] });
+        let r = encode(&Reliable::Damage { target: 1000, amount: 20.0, from: [0.0; 3], stance: 10.0 });
         assert!(matches!(decode::<Reliable>(&r), Some(Reliable::Damage { target: 1000, .. })));
     }
 }

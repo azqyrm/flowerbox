@@ -396,7 +396,7 @@ fn shockwaves(
             shake.trauma = (shake.trauma + 0.5).min(1.0);
             info!("{} hits us for {} ({})", id.def().name, wave.damage, if wave.blockable { "blockable" } else { "unblockable" });
             let from = wave.blockable.then_some(tf.translation);
-            damage.write(DamageMessage { target: victim, amount: wave.damage, from, attacker: Some(entity) });
+            damage.write(DamageMessage::plain(victim, wave.damage, from, Some(entity)));
         }
     }
 }

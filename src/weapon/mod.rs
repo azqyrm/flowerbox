@@ -276,6 +276,9 @@ pub struct WeaponDef {
     pub model: ModelSource,
     /// Share of damage stopped when guarding with it held in both hands (weaker than a shield).
     pub guard_block: f32,
+    /// Stance damage of a hit (× the attack's damage multiplier): fills the target's stance bar
+    /// (`character::stats::Stance`); a full bar staggers.
+    pub stance_damage: f32,
 }
 
 /// A hand.

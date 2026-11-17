@@ -39,4 +39,5 @@ pub static WARG_FANGS: WeaponDef = WeaponDef {
     blade: (0.0, 0.0),
     model: ModelSource::Parts(&[]),
     guard_block: 0.0,
+    stance_damage: 18.0,
 };

@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use super::icons::{NoticeIcon, spawn_icon};
 use super::notifications::Notify;
 use super::{Banner, DISPLAY_FONT, strings};
-use crate::character::stats::{Health, Stamina};
+use crate::character::stats::{Health, Stamina, Stance};
 use crate::healing::HealingAle;
 use crate::hearth::{DeathSequence, death_screen};
 use crate::interact::{InteractPrompt, InteractSystems};
@@ -55,6 +55,11 @@ struct HpLag {
 struct StaminaFrame;
 #[derive(Component)]
 struct StaminaFill;
+/// The thin stance strip under the stamina bar (fills from the middle; hidden when empty).
+#[derive(Component)]
+struct StanceStrip;
+#[derive(Component)]
+struct StanceFill;
 /// Text showing the Ale charges; both the top-left counter and the quadrant slot.
 #[derive(Component)]
 struct AleCount;
@@ -133,6 +138,10 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
     };
     bar(&mut commands, 16.0, HP_RED, true);
     bar(&mut commands, 11.0, STAMINA_GREEN, false);
+    let strip = commands
+        .spawn((Name::new("Stance"), StanceStrip, Node { height: px(3.0), width: px(160.0), margin: UiRect::top(px(-3.0)), ..default() }, Visibility::Hidden, ChildOf(top_left)))
+        .id();
+    commands.spawn((Node { height: Val::Percent(100.0), ..absolute() }, BackgroundColor(crate::ui::markers::STANCE_COLOR), StanceFill, ChildOf(strip)));
     let ale_row = commands
         .spawn((
             Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: px(6.0), margin: UiRect::top(px(4.0)), ..default() },
@@ -288,16 +297,18 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
 
 fn update_bars(
     time: Res<Time>,
-    player: Query<(&Health, &Stamina), With<Player>>,
+    player: Query<(&Health, &Stamina, Option<&Stance>), With<Player>>,
     mut nodes: ParamSet<(
         Query<&mut Node, With<HpFrame>>,
         Query<&mut Node, With<HpFill>>,
         Query<(&mut Node, &mut HpLag)>,
         Query<&mut Node, With<StaminaFrame>>,
         Query<&mut Node, With<StaminaFill>>,
+        Query<(&mut Node, &mut Visibility), With<StanceStrip>>,
+        Query<&mut Node, With<StanceFill>>,
     )>,
 ) {
-    let Ok((hp, st)) = player.single() else { return };
+    let Ok((hp, st, stance)) = player.single() else { return };
     let dt = time.delta_secs();
     let hp_frac = (hp.current / hp.max).clamp(0.0, 1.0);
     for mut n in &mut nodes.p0() {
@@ -323,6 +334,15 @@ fn update_bars(
     }
     for mut n in &mut nodes.p4() {
         n.width = Val::Percent((st.current / st.max).clamp(0.0, 1.0) * 100.0);
+    }
+    let strained = stance.map_or(0.0, Stance::fraction);
+    for (mut n, mut vis) in &mut nodes.p5() {
+        n.width = px(st.max * STAMINA_BAR_PX_PER_POINT);
+        vis.set_if_neq(if strained > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    for mut n in &mut nodes.p6() {
+        n.width = Val::Percent(strained * 100.0);
+        n.left = Val::Percent(50.0 - strained * 50.0);
     }
 }
 

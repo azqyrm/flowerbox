@@ -54,4 +54,5 @@ pub static MOURNER_CLAWS: WeaponDef = WeaponDef {
     blade: (0.0, 0.5),
     model: ModelSource::Parts(&[]),
     guard_block: 0.0,
+    stance_damage: 9.0,
 };

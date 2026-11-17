@@ -149,7 +149,7 @@ fn hold_grabbed(
             let pounce = gaction.current.and_then(|a| a.weapon.moveset().pounce);
             let amount = pounce.map_or(100.0, |p| p.damage);
             info!("the jaws close: {amount} damage");
-            damage.write(DamageMessage { target: victim, amount, from: Some(gtf.translation), attacker: Some(grab.by) });
+            damage.write(DamageMessage { target: victim, amount, from: Some(gtf.translation), attacker: Some(grab.by), stance: 0.0 });
         }
     }
 }

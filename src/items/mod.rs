@@ -183,6 +183,8 @@ pub struct ItemDef {
     pub weight: f32,
     /// Fraction of incoming damage absorbed while worn (armour).
     pub absorption: f32,
+    /// Stance added while worn (armour): more stance damage before you stagger.
+    pub stance: f32,
     /// Fraction of damage stopped when blocking (shields; blocking comes in Phase 8).
     pub block: f32,
     /// Extra max HP while worn (rings).
@@ -215,6 +217,7 @@ impl ItemDef {
             icon,
             weight: 0.0,
             absorption: 0.0,
+            stance: 0.0,
             block: 0.0,
             max_hp_bonus: 0.0,
             weapon: None,
@@ -285,6 +288,7 @@ static STUDDED_BUCKLER: ItemDef = ItemDef {
 static LEATHER_HOOD: ItemDef = ItemDef {
     weight: 1.0,
     absorption: 0.06,
+    stance: 3.0,
     model: Some(ItemModel { bone: Bone::Head, build: models::leather_hood, pair: false }),
     ..ItemDef::base(
         "Leather Hood",
@@ -388,6 +392,7 @@ static FORGE_KEY: ItemDef = ItemDef {
 static PENITENT_HAUBERK: ItemDef = ItemDef {
     weight: 6.0,
     absorption: 0.12,
+    stance: 12.0,
     model: Some(ItemModel { bone: Bone::Chest, build: models::hauberk, pair: false }),
     ..ItemDef::base(
         "Penitent's Hauberk",
@@ -400,6 +405,7 @@ static PENITENT_HAUBERK: ItemDef = ItemDef {
 static ASHEN_GAUNTLETS: ItemDef = ItemDef {
     weight: 2.0,
     absorption: 0.05,
+    stance: 4.0,
     model: Some(ItemModel { bone: Bone::ForearmR, build: models::gauntlet, pair: true }),
     ..ItemDef::base(
         "Ashen Gauntlets",
@@ -412,6 +418,7 @@ static ASHEN_GAUNTLETS: ItemDef = ItemDef {
 static GRAVE_GREAVES: ItemDef = ItemDef {
     weight: 3.5,
     absorption: 0.07,
+    stance: 6.0,
     model: Some(ItemModel { bone: Bone::ShinR, build: models::greave, pair: true }),
     ..ItemDef::base(
         "Grave Greaves",

@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use super::pose::{HumanoidPose, PoseMask, bone_model_transform, reach_left_hand};
 use super::{Bone, HumanoidRig, HumanoidSpec};
-use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction};
+use crate::character::action::{ActionKind, ActionPhase, ActiveAction, CharacterAction, CritKind};
 use crate::character::controller::CharacterController;
 use crate::character::guard::Guard;
 use crate::tuning::*;
@@ -668,6 +668,75 @@ fn right_handed_pose(a: &ActiveAction) -> Option<(HumanoidPose, PoseMask)> {
             p.add(Bone::Chest, ry(-0.35 * reach) * rx(-0.2 * reach - 0.15 * push));
             p.set(Bone::ThighL, rx(0.35 * reach)).set(Bone::ShinL, rx(-0.3 * reach));
             p.set(Bone::ThighR, rx(-0.35 * push)).set(Bone::ShinR, rx(-0.2 * push)).set(Bone::FootR, rx(0.3 * push));
+            Some((p, PoseMask::Full))
+        }
+        ActionKind::Critical(kind) => {
+            // Grab with the free hand and draw the blade back; drive it straight through at chest
+            // height; hold it in, then wrench it out to the side and shove the body off.
+            let low = if kind == CritKind::Riposte { -0.12 } else { 0.0 };
+            let rest = Key { chest: Quat::IDENTITY, shoulder: p.get(Bone::UpperArmR) };
+            let drawn = key(&SwingKey::new(-0.4, 0.05, -0.75, 1.1));
+            let thrust = key(&SwingKey::new(0.25, 0.1, 0.12, 1.25 + low));
+            let wrench = key(&SwingKey::new(-0.45, 0.0, -1.0, 1.35));
+            let rec = (a.elapsed - d.startup - d.active) / d.recovery.max(1e-3);
+            let (from, to, t) = match a.phase() {
+                ActionPhase::Startup => (rest, drawn, a.elapsed / d.startup.max(1e-3)),
+                ActionPhase::Active => (drawn, thrust, (a.elapsed - d.startup) / (d.active * 0.6)),
+                _ if rec < 0.35 => (thrust, thrust, 1.0),
+                _ if rec < 0.6 => (thrust, wrench, (rec - 0.35) / 0.25),
+                _ => (wrench, rest, (rec - 0.6) / 0.4),
+            };
+            let t = ease(t.clamp(0.0, 1.0));
+            p.add(Bone::Chest, from.chest.slerp(to.chest, t));
+            p.set(Bone::UpperArmR, from.shoulder.slerp(to.shoulder, t));
+            let guard = guard_pose(a.weapon);
+            let out = if a.phase() == ActionPhase::Recovery && rec >= 0.6 { 1.0 - ease((rec - 0.6) / 0.4) } else { ease(a.elapsed / 0.1) };
+            p.set(Bone::ForearmR, guard.get(Bone::ForearmR).slerp(Quat::IDENTITY, out))
+                .set(Bone::HandR, guard.get(Bone::HandR).slerp(extended_grip(), out));
+            // The free hand: reaches for the shoulder, holds on, shoves.
+            let reach = match a.phase() {
+                ActionPhase::Startup => ease(a.elapsed / d.startup.max(1e-3)),
+                ActionPhase::Active => 1.0,
+                _ if rec < 0.6 => 1.0 + 0.25 * ease((rec - 0.35).max(0.0) / 0.25),
+                _ => 1.25 * (1.0 - ease((rec - 0.6) / 0.4)),
+            };
+            p.set(Bone::UpperArmL, Quat::IDENTITY.slerp(rx(1.25 + low) * rz(0.3), reach.min(1.0)) * rx(0.25 * (reach - 1.0).max(0.0)))
+                .set(Bone::ForearmL, rx(0.5 * reach.min(1.0)));
+            // Lunge stance, deeper on the thrust.
+            let stance = match a.phase() {
+                ActionPhase::Startup => ease(a.elapsed / d.startup.max(1e-3)),
+                ActionPhase::Active => 1.0,
+                _ => 1.0 - ease(((rec - 0.5) / 0.5).max(0.0)),
+            };
+            p.set(Bone::ThighL, rx(0.55 * stance)).set(Bone::ShinL, rx(-0.5 * stance)).set(Bone::FootL, rx(-0.05 * stance));
+            p.set(Bone::ThighR, rx(-0.4 * stance)).set(Bone::ShinR, rx(-0.3 * stance)).set(Bone::FootR, rx(0.55 * stance));
+            p.pelvis_offset.y = -0.1 * stance;
+            Some((p, PoseMask::Full))
+        }
+        ActionKind::Pinned(kind) => {
+            // Run through: from behind the body arches back, head thrown up, arms flung wide; from
+            // the front it doubles over the blade. Then it's thrown down (face first / onto the
+            // back), lies there, and gets up.
+            let stab = d.startup + CRIT_ACTIVE * 0.6;
+            let arch = ease(((a.elapsed - d.startup * 0.6) / (stab - d.startup * 0.6)).clamp(0.0, 1.0));
+            // Shoved off when the attacker wrenches the blade free.
+            let thrown_at = d.startup + CRIT_ACTIVE + CRIT_RECOVERY * 0.4;
+            let fall = ease(((a.elapsed - thrown_at) / 0.45).clamp(0.0, 1.0));
+            let up = if a.phase() == ActionPhase::Recovery { ease((a.elapsed - d.startup - d.active) / d.recovery.max(1e-3)) } else { 0.0 };
+            let down = fall * (1.0 - up);
+            let hold = arch * (1.0 - fall);
+            let back = if kind == CritKind::Backstab { 1.0 } else { -1.0 };
+            p.add(Bone::Chest, rx(0.45 * back * hold)).set(Bone::Head, rx(0.5 * back * hold));
+            p.set(Bone::UpperArmL, Quat::IDENTITY.slerp(rz(-1.05) * rx(0.3 * (1.0 - back)), hold.max(down * 0.8)))
+                .set(Bone::UpperArmR, Quat::IDENTITY.slerp(rz(1.0) * rx(0.3 * (1.0 - back)), hold.max(down * 0.8)));
+            p.set(Bone::ForearmL, rx(0.4 * hold)).set(Bone::ForearmR, rx(0.4 * hold));
+            p.set(Bone::ThighL, rx(0.25 * hold + 0.5 * down)).set(Bone::ShinL, rx(-0.5 * hold - 0.8 * down));
+            p.set(Bone::ThighR, rx(0.1 * hold + 0.3 * down)).set(Bone::ShinR, rx(-0.4 * hold - 0.5 * down));
+            p.pelvis_offset.y = -0.08 * hold;
+            // Thrown down: forward onto the face from behind, back onto the back from the front.
+            p.root_rot = rx(-1.45 * back * down);
+            p.root_pivot = 0.05;
+            p.root_offset.y = -0.05 * down;
             Some((p, PoseMask::Full))
         }
         // Creatures only (`crate::quadruped`).

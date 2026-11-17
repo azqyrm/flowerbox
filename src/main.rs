@@ -11,6 +11,7 @@ mod camera;
 mod chat;
 mod character;
 mod combat;
+mod critical;
 mod debug;
 mod enemy;
 mod grab;
@@ -87,6 +88,7 @@ fn main() {
             net::NetPlugin,
             chat::ChatPlugin,
             textures::TexturesPlugin,
+            critical::CriticalPlugin,
         ))
         .run();
 }

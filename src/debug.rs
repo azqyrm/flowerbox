@@ -23,6 +23,8 @@
 //!   back (see `net_movement`), with the Hollow in the arena.
 //! - `FLOWERBOX_AUTOPILOT=pvp` → for two instances: both eat a Poppy, the guest attacks the host
 //!   (damage), eats a Camomile, attacks again (no damage); the host dies (PvP off, Poppy back).
+//! - `FLOWERBOX_AUTOPILOT=crit` → backstabs the arena Hollow, then breaks its stance with plain
+//!   hits and ripostes it (see `crit_script`); logs its stance and actions.
 //! - `FLOWERBOX_AUTOPILOT=netrest` → for two instances: the guest hits the dummy (both see it), both
 //!   rest at the sunflower (shared rest completes), the guest walks away (stands up).
 //! - `FLOWERBOX_AUTOPILOT=hearth` → Healing Ale, Hearth rest and death/respawn (see `hearth_script`).
@@ -213,6 +215,10 @@ impl Plugin for DebugPlugin {
                 })
                 .init_resource::<EnemyScript>()
                 .add_systems(Update, (enemy_script, log_ale, log_audio));
+            }
+            Ok("crit") => {
+                app.insert_resource(Autopilot { movement: Some(|_, _| (Vec3::ZERO, false, false)), attack_button: None, guard_button: None })
+                    .add_systems(Update, crit_script);
             }
             Ok("netrest") => {
                 app.insert_resource(Autopilot {
@@ -487,11 +493,11 @@ fn debug_keys(
     for (key, side) in [(KeyCode::KeyH, 1.0), (KeyCode::KeyJ, -1.0)] {
         if keys.just_pressed(key) {
             let from = tf.translation + forward * side * 1.5;
-            damage.write(DamageMessage { target: entity, amount: 15.0, from: Some(from), attacker: None });
+            damage.write(DamageMessage::plain(entity, 15.0, Some(from), None));
         }
     }
     if keys.just_pressed(KeyCode::KeyK) {
-        damage.write(DamageMessage { target: entity, amount: f32::MAX, from: None, attacker: None });
+        damage.write(DamageMessage::plain(entity, f32::MAX, None, None));
     }
     let requests = [
         (KeyCode::Digit1, ActionRequest::Roll),
@@ -616,7 +622,7 @@ fn boss_script(
     run.tick += dt;
     if run.tick > 0.5 {
         run.tick = 0.0;
-        damage.write(DamageMessage { target: be, amount: 12.0, from: Some(ptf.translation), attacker: Some(pe) });
+        damage.write(DamageMessage::plain(be, 12.0, Some(ptf.translation), Some(pe)));
     }
     if t > 170.0 {
         info!("boss test: timed out; Saint HP {:.0}", bhp.current);
@@ -858,11 +864,11 @@ fn autopilot_script(
     }
     if at(1.2) {
         info!("autopilot: 10 damage during roll");
-        damage.write(DamageMessage { target: entity, amount: 10.0, from: None, attacker: None });
+        damage.write(DamageMessage::plain(entity, 10.0, None, None));
     }
     if at(2.5) {
         info!("autopilot: 10 damage while free");
-        damage.write(DamageMessage { target: entity, amount: 10.0, from: None, attacker: None });
+        damage.write(DamageMessage::plain(entity, 10.0, None, None));
     }
     for s in [2.9, 3.25, 3.6] {
         if at(s) {
@@ -875,7 +881,7 @@ fn autopilot_script(
     }
     if at(7.5) {
         info!("autopilot: lethal damage");
-        damage.write(DamageMessage { target: entity, amount: 500.0, from: None, attacker: None });
+        damage.write(DamageMessage::plain(entity, 500.0, None, None));
     }
     if at(13.5) {
         info!("autopilot: roll while standing still (expect Backstep)");
@@ -919,6 +925,48 @@ fn log_action_changes(
             *last, now, hp.current, st.current, tf.translation
         );
         *last = now;
+    }
+}
+
+// ── Critical autopilot (FLOWERBOX_AUTOPILOT=crit) ────────────────────────
+
+/// Backstabs the arena Hollow (placed with its back to the player at 1.5 s, attack at 1.6 s), then
+/// stance-breaks it with plain hits once it's up (logs its stance) and ripostes it.
+fn crit_script(
+    time: Res<Time>,
+    mut player: Query<(&mut Transform, &mut CharacterController, &CharacterAction, &mut ActionIntent), With<Player>>,
+    mut hollows: Query<(&Enemy, &mut Transform, &mut CharacterController, &CharacterAction, &Health, &crate::character::stats::Stance), Without<Player>>,
+) {
+    let Ok((mut ptf, mut pctrl, paction, mut intent)) = player.single_mut() else { return };
+    let (t, dt) = (time.elapsed_secs(), time.delta_secs());
+    let Some((_, mut htf, mut hctrl, haction, hhp, stance)) = hollows.iter_mut().find(|h| h.0.home.with_y(0.0).length() < ARENA_RADIUS) else { return };
+    if t < 1.6 {
+        // Hold both in place: the Hollow faces -Z at (0, 4), the player 1.1 m behind it
+        // (`FLOWERBOX_CRIT_SIDE=1`: both face -X instead, filmed side on).
+        let side = std::env::var("FLOWERBOX_CRIT_SIDE").is_ok();
+        let (facing, back) = if side { (std::f32::consts::FRAC_PI_2, Vec3::X) } else { (0.0, Vec3::Z) };
+        htf.translation.x = 0.0;
+        htf.translation.z = 4.0;
+        hctrl.facing = facing;
+        let p = Vec3::new(0.0, 0.0, 4.0) + back * 1.1;
+        ptf.translation.x = p.x;
+        ptf.translation.z = p.z;
+        pctrl.facing = facing;
+    }
+    if crossed(t, dt, 1.6) {
+        info!("autopilot: attack from behind");
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
+    }
+    // Once it's up again: face it and keep hitting (three hits break a Hollow's stance), then riposte.
+    if t > 5.0 && !hhp.is_dead() && paction.current.is_none() && intent.buffered.is_none() {
+        let to = (htf.translation - ptf.translation).with_y(0.0);
+        pctrl.facing = f32::atan2(-to.x, -to.z);
+        if to.length() < 2.0 {
+            intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
+        }
+    }
+    if (t * 4.0).floor() != ((t - dt) * 4.0).floor() {
+        info!("crit: hollow {:?} hp {:.0} stance {:.0}/{:.0}; player {:?}", haction.current.map(|a| a.kind), hhp.current, stance.damage, stance.max, paction.current.map(|a| a.kind));
     }
 }
 
@@ -1050,7 +1098,7 @@ fn hearth_script(
     for (when, amount) in [(1.0, 50.0), (3.7, 10.0), (8.5, 40.0), (12.0, 500.0)] {
         if at(when) {
             info!("autopilot: {amount} damage");
-            damage.write(DamageMessage { target: entity, amount, from: None, attacker: None });
+            damage.write(DamageMessage::plain(entity, amount, None, None));
         }
     }
     for when in [2.0, 3.5, 4.5, 6.0, 7.5] {
@@ -1123,7 +1171,7 @@ fn inventory_script(
     }
     if at(5.0) {
         info!("autopilot: 50 damage");
-        damage.write(DamageMessage { target: entity, amount: 50.0, from: None, attacker: None });
+        damage.write(DamageMessage::plain(entity, 50.0, None, None));
     }
     if at(6.0) {
         select(&mut menu, Filter::Weapons, 2);
@@ -1167,7 +1215,7 @@ fn guard_script(
         if crossed(t, dt, at) {
             let from = tf.translation + forward * if behind { -1.5 } else { 1.5 };
             info!("autopilot: {amount} damage from the {} (stamina {:.0})", if behind { "back" } else { "front" }, stamina.current);
-            damage.write(DamageMessage { target: entity, amount, from: Some(from), attacker: None });
+            damage.write(DamageMessage::plain(entity, amount, Some(from), None));
         }
     }
 }
@@ -1417,7 +1465,7 @@ fn pvp_script(
     if session.is_host() {
         if at(13.0) {
             info!("autopilot: lethal damage");
-            damage.write(DamageMessage { target: entity, amount: 1000.0, from: None, attacker: None });
+            damage.write(DamageMessage::plain(entity, 1000.0, None, None));
         }
         return;
     }
@@ -1927,7 +1975,7 @@ fn wargkill_script(
     if (at(3.0) || at(10.0))
         && let Some((e, _, _)) = warg {
             info!("autopilot: killing the vault warg");
-            damage.write(DamageMessage { target: e, amount: 10_000.0, from: None, attacker: None });
+            damage.write(DamageMessage::plain(e, 10_000.0, None, None));
         }
     let key = pickups.iter().find(|(p, _)| p.item == ItemId::ForgeKey);
     if at(5.0)
@@ -1966,7 +2014,7 @@ fn log_puppets(
         && let Ok(e) = me.single()
     {
         info!("autopilot: dying now");
-        damage.write(DamageMessage { target: e, amount: 10_000.0, from: None, attacker: None });
+        damage.write(DamageMessage::plain(e, 10_000.0, None, None));
     }
     *timer += time.delta_secs();
     if *timer < 2.0 {

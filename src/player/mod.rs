@@ -15,7 +15,7 @@ use crate::humanoid::spawn_humanoid;
 use crate::input::{PlayerInput, input_map};
 use crate::settings::Settings;
 use crate::tuning::*;
-use crate::character::stats::DamageAbsorption;
+use crate::character::stats::{DamageAbsorption, Stance};
 use crate::items::ItemId;
 use crate::items::inventory::{EquipStats, EquipVisuals, Equipment, Inventory};
 
@@ -65,5 +65,5 @@ fn spawn_player(
     let mut equipment = Equipment::default();
     equipment.equip(&inventory, 0);
     equipment.equip(&inventory, 1);
-    commands.entity(player).insert((inventory, equipment, EquipStats::default(), EquipVisuals::default(), DamageAbsorption::default()));
+    commands.entity(player).insert((inventory, equipment, EquipStats::default(), EquipVisuals::default(), DamageAbsorption::default(), Stance::new(PLAYER_STANCE, false)));
 }

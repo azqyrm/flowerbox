@@ -9,7 +9,7 @@ use bevy::transform::TransformSystems;
 
 use super::hud::FRAME;
 use crate::character::Remote;
-use crate::character::stats::Health;
+use crate::character::stats::{Health, Stance};
 use crate::combat::Team;
 use crate::enemy::Enemy;
 use crate::lockon::{LockOn, Targetable};
@@ -40,6 +40,12 @@ struct LockMarker;
 struct EnemyBar(Entity);
 #[derive(Component)]
 struct EnemyBarFill;
+/// The stance bar under an enemy's health bar (fills with stance damage, from the middle out).
+#[derive(Component)]
+struct EnemyStanceFill;
+
+/// Stance bar colour: pale gold, like straining.
+pub const STANCE_COLOR: Color = Color::srgb(0.95, 0.8, 0.35);
 
 fn spawn_lock_marker(mut commands: Commands) {
     commands.spawn((
@@ -114,6 +120,19 @@ fn spawn_enemy_bars(mut commands: Commands, enemies: Query<Entity, Added<Enemy>>
             BackgroundColor(Color::srgb(0.62, 0.08, 0.06)),
             ChildOf(bar),
         ));
+        commands.spawn((
+            EnemyStanceFill,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(7.0),
+                height: Val::Px(2.0),
+                width: Val::Percent(0.0),
+                left: Val::Percent(50.0),
+                ..default()
+            },
+            BackgroundColor(STANCE_COLOR),
+            ChildOf(bar),
+        ));
     }
 }
 
@@ -122,18 +141,20 @@ fn update_enemy_bars(
     mut commands: Commands,
     cams: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     player: Query<&LockOn, With<Player>>,
-    enemies: Query<(&GlobalTransform, &Health), With<Enemy>>,
-    mut bars: Query<(Entity, &EnemyBar, &mut Node, &mut Visibility, &Children), Without<EnemyBarFill>>,
-    mut fills: Query<&mut Node, With<EnemyBarFill>>,
+    enemies: Query<(&GlobalTransform, &Health, Option<&Stance>), With<Enemy>>,
+    mut bars: Query<(Entity, &EnemyBar, &mut Node, &mut Visibility, &Children), (Without<EnemyBarFill>, Without<EnemyStanceFill>)>,
+    mut fills: Query<&mut Node, (With<EnemyBarFill>, Without<EnemyStanceFill>)>,
+    mut stance_fills: Query<&mut Node, (With<EnemyStanceFill>, Without<EnemyBarFill>)>,
 ) {
     let Ok((camera, cam_tf)) = cams.single() else { return };
     let locked = player.single().ok().and_then(|l| l.target);
     for (bar, EnemyBar(enemy), mut node, mut vis, children) in &mut bars {
-        let Ok((tf, health)) = enemies.get(*enemy) else {
+        let Ok((tf, health, stance)) = enemies.get(*enemy) else {
             commands.entity(bar).despawn();
             continue;
         };
-        let wanted = !health.is_dead() && (health.current < health.max || locked == Some(*enemy));
+        let strained = stance.map_or(0.0, Stance::fraction);
+        let wanted = !health.is_dead() && (health.current < health.max || strained > 0.0 || locked == Some(*enemy));
         let spot = wanted.then(|| to_screen(camera, cam_tf, tf.translation() + Vec3::Y * BAR_HEIGHT)).flatten();
         let Some(p) = spot else {
             vis.set_if_neq(Visibility::Hidden);
@@ -145,6 +166,10 @@ fn update_enemy_bars(
         for child in children.iter() {
             if let Ok(mut fill) = fills.get_mut(child) {
                 fill.width = Val::Percent((health.current / health.max).clamp(0.0, 1.0) * 100.0);
+            }
+            if let Ok(mut fill) = stance_fills.get_mut(child) {
+                fill.width = Val::Percent(strained * 100.0);
+                fill.left = Val::Percent(50.0 - strained * 50.0);
             }
         }
     }
