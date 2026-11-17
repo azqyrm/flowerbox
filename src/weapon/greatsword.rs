@@ -93,7 +93,8 @@ pub static PENITENCE: WeaponDef = WeaponDef {
     blade: (0.24, 1.62),
     model: ModelSource::Styled(&PENITENCE_PARTS),
     guard_block: 0.55,
+    stance_damage: 22.0,
 };
 
 /// The Saint's own blade: the same shape, its body is 1.6× as big (the blade reach matches).
-pub static SAINT_BLADE: WeaponDef = WeaponDef { name: "Saint's Penitence", base_damage: 30.0, blade: (0.35, 2.55), ..PENITENCE };
+pub static SAINT_BLADE: WeaponDef = WeaponDef { name: "Saint's Penitence", base_damage: 30.0, blade: (0.35, 2.55), stance_damage: 30.0, ..PENITENCE };

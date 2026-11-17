@@ -2,7 +2,7 @@
 //! a body (humanoid or quadruped), a weapon with its moveset, and a brain that writes the same
 //! `MoveIntent` / `ActionIntent` the player's input does.
 //!
-//! - [`kinds`]: every enemy as data (`EnemyDef`: body, size, health, poise, weapon, brain) and the
+//! - [`kinds`]: every enemy as data (`EnemyDef`: body, size, health, stance, Light, weapon, brain) and the
 //!   one spawner for all of them.
 //! - [`ai`]: what every brain shares (senses, sight, steering, combos);
 //!   [`fighter`]: the humanoid brain (Hollow, Acolyte, Mourner, Thorned Saint);
@@ -40,7 +40,7 @@ impl Plugin for EnemyPlugin {
         // Fog gates, the boss bar and defeated bosses belong to the level, enemies or not.
         app.add_plugins(boss::BossPlugin);
         // The older autopilot scripts (combat, hearth, …) were written for an empty arena.
-        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll" | "wargkill" | "mp" | "bestiary" | "boss")) {
+        if std::env::var("FLOWERBOX_AUTOPILOT").is_ok_and(|a| !matches!(a.as_str(), "enemy" | "net" | "netfight" | "warg" | "wargroll" | "wargkill" | "mp" | "bestiary" | "boss" | "crit")) {
             return;
         }
         app.init_resource::<EnemiesSuppressed>()
@@ -104,7 +104,7 @@ pub use crate::character::Dormant;
 
 /// Lying dead for this many seconds.
 #[derive(Component)]
-struct Corpse(f32);
+pub struct Corpse(f32);
 
 /// True while this machine is a guest in someone else's world: the host's enemies are the real
 /// ones (they arrive as puppets), so none are spawned here (`crate::net`).

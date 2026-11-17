@@ -121,6 +121,7 @@ pub static LONGSWORD: WeaponDef = WeaponDef {
     blade: (0.13, 1.03),
     model: ModelSource::Parts(&LONGSWORD_PARTS),
     guard_block: 0.45,
+    stance_damage: 10.0,
 };
 
 const BRASS: Color = Color::srgb(0.8, 0.6, 0.25);
@@ -151,6 +152,7 @@ pub static WELL_FORGED_SWORD: WeaponDef = WeaponDef {
     blade: (0.13, 1.08),
     model: ModelSource::Styled(&WELL_FORGED_STYLED),
     guard_block: 0.5,
+    stance_damage: 11.0,
 };
 
 /// The forged sword's new look: a wire-wrapped grip, a brass guard with curled quillons, and a
@@ -204,6 +206,7 @@ pub static SHORTSWORD: WeaponDef = WeaponDef {
     blade: (0.12, 0.73),
     model: ModelSource::Parts(&SHORTSWORD_PARTS),
     guard_block: 0.35,
+    stance_damage: 8.0,
 };
 
 /// Nothing in the right hand: the same swings, but with the fist.
@@ -214,4 +217,5 @@ pub static FISTS: WeaponDef = WeaponDef {
     blade: (-0.02, 0.1),
     model: ModelSource::Parts(&[]),
     guard_block: 0.0,
+    stance_damage: 5.0,
 };

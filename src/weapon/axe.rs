@@ -131,6 +131,7 @@ pub static RUSTED_AXE: WeaponDef = WeaponDef {
     blade: (0.5, 0.72),
     model: ModelSource::Styled(&RUSTED_AXE_STYLED),
     guard_block: 0.3,
+    stance_damage: 14.0,
 };
 
 const WOOD: Color = Color::srgb(0.42, 0.29, 0.16);
@@ -151,4 +152,5 @@ pub static WOODCUTTER_HATCHET: WeaponDef = WeaponDef {
     blade: (0.4, 0.56),
     model: ModelSource::Parts(&HATCHET_PARTS),
     guard_block: 0.25,
+    stance_damage: 12.0,
 };

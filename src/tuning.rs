@@ -207,6 +207,47 @@ pub const PARRY_STUN_TIME: f32 = 1.8;
 /// Damage multiplier for hitting a stunned (parried) character: the riposte.
 pub const RIPOSTE_MULT: f32 = 2.5;
 
+// ── Ambience (`crate::ambience`) ──
+/// Cross-fade between two areas' soundscapes (s).
+pub const AMBIENCE_FADE: f32 = 3.0;
+/// Overall loudness of the soundscapes (× master volume).
+pub const AMBIENCE_VOLUME: f32 = 0.35;
+
+// ── Party wipes and spectating (online) ──
+/// Every player composted within this many seconds of each other (or still dead) = a wipe: the
+/// world resets as after a rest.
+pub const WIPE_WINDOW: f32 = 6.0;
+/// A boss this close to where you fell (and alive) keeps you watching the survivors (m).
+pub const SPECTATE_RANGE: f32 = 40.0;
+/// When a death in a boss fight turns into spectating (s after falling; the death text has shown).
+pub const SPECTATE_AT: f32 = 3.0;
+
+// ── Light (`crate::light`) ──
+/// Who gets the Light of a kill (user request: everyone, for now).
+pub const LIGHT_SHARE: crate::light::LightShare = crate::light::LightShare::Everyone;
+/// `LightShare::Nearby`: within this distance of the kill (m).
+pub const LIGHT_NEARBY_RANGE: f32 = 40.0;
+
+// ── Critical hits (`crate::critical`) ──
+/// Reach for a critical: centre to centre, beyond both capsules (m).
+pub const CRIT_RANGE: f32 = 1.6;
+/// The target must be within this angle of where the attacker faces (rad).
+pub const CRIT_AIM: f32 = 0.7;
+/// Backstab: the attacker must be within this angle of straight behind the target (rad).
+pub const BACKSTAB_ARC: f32 = 0.9;
+/// Grab and draw back / run through (damage lands at the start) / wrench free.
+pub const CRIT_STARTUP: f32 = 0.32;
+pub const CRIT_ACTIVE: f32 = 0.22;
+pub const CRIT_RECOVERY: f32 = 0.95;
+/// The victim lies thrown down, then gets up.
+pub const PINNED_DOWN: f32 = 1.0;
+pub const PINNED_GETUP: f32 = 0.9;
+/// Damage of a critical × the weapon's base damage.
+pub const BACKSTAB_MULT: f32 = 3.0;
+pub const CRIT_RIPOSTE_MULT: f32 = 3.5;
+/// Where the attacker stands from the victim's centre during a critical (m).
+pub const CRIT_DISTANCE: f32 = 0.85;
+
 // ── Lock-on and gamepad camera ─────────────────────────────────────────
 /// Max distance to lock onto a target, and the cone (radians either side of the view) to look in.
 pub const LOCK_RANGE: f32 = 15.0;
@@ -278,8 +319,12 @@ pub const LOAD_MEDIUM: f32 = 0.7;
 /// Thrown-out items land this far in front of the player (m).
 pub const THROW_OUT_DISTANCE: f32 = 0.9;
 
-/// Poise refills after this long without being hit (s).
-pub const POISE_REGEN_DELAY: f32 = 3.0;
+/// Stance damage starts draining this long after the last hit (s).
+pub const STANCE_DRAIN_DELAY: f32 = 1.5;
+/// Then it drains by this share of the full bar per second.
+pub const STANCE_DRAIN_RATE: f32 = 0.35;
+/// A player's own stance (armour adds its `stance`): about one enemy hit staggers you unarmoured.
+pub const PLAYER_STANCE: f32 = 15.0;
 
 /// Enemies wake when a player comes this close (m) and sleep again beyond `DORMANCY_SLEEP`
 /// (`enemy::dormancy`): asleep they cost nothing (no AI, movement, animation or drawing).

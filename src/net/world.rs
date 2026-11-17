@@ -39,7 +39,7 @@ pub struct WorldSyncPlugin;
 
 impl Plugin for WorldSyncPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (world_inbox, local_events, bells_and_bosses, shared_rest_flag, host_rest_circle).chain());
+        app.add_systems(Update, (world_inbox, local_events, bells_and_bosses, shared_rest_flag, host_rest_circle, host_wipe_watch).chain());
     }
 }
 
@@ -78,6 +78,7 @@ fn notice(notify: &mut MessageWriter<Notify>, session: &NetSession, event: &Worl
         WorldEvent::Pvp { who, on, item } => Notify::new(NoticeIcon::Item(item.def().icon), strings::ate(&player_name(who), item.def().name, on)),
         WorldEvent::RestWaiting { who, resting, total } => Notify::new(NoticeIcon::Sunflower, strings::rest_waiting(&player_name(who), resting, total)),
         WorldEvent::RestComplete => Notify::new(NoticeIcon::Sunflower, strings::REST_COMPLETE),
+        WorldEvent::Wipe => Notify::new(NoticeIcon::Died, strings::WIPE),
         WorldEvent::DoorTried { who } => Notify::new(NoticeIcon::Door, strings::door_tried(&player_name(who))),
         WorldEvent::DoorOpened { by, .. } => Notify::new(NoticeIcon::Door, strings::opened_door(&player_name(by))),
         WorldEvent::Dropped { by: Some(by), item, .. } => {
@@ -258,7 +259,9 @@ fn world_inbox(
                             continue; // we pushed it open ourselves
                         }
                     }
-                    WorldEvent::RestComplete => {
+                    // A wipe resets the world like a rest (nobody is kneeling, so nobody is restored:
+                    // everyone respawns by dying).
+                    WorldEvent::RestComplete | WorldEvent::Wipe => {
                         rest_done.write(RestComplete);
                     }
                     WorldEvent::DummyHit { amount, from, killed, hp } => {
@@ -497,4 +500,50 @@ fn host_rest_circle(
         }
     }
     *was_resting = resting;
+}
+
+/// Host: when every player is down — dead now, or composted within `WIPE_WINDOW` (a party wipe,
+/// also the last survivor of a boss fight falling while the others watch) — the world resets for
+/// everyone as after a rest. Offline every death resets it anyway.
+#[allow(clippy::too_many_arguments)]
+fn host_wipe_watch(
+    time: Res<Time>,
+    session: Res<NetSession>,
+    link: Res<NetLink>,
+    mut deaths: Local<std::collections::HashMap<NetId, f32>>,
+    mut dead_before: Local<Vec<NetId>>,
+    mut last_wipe: Local<f32>,
+    mut notify: MessageWriter<Notify>,
+    mut done: MessageWriter<RestComplete>,
+    me: Query<&CharacterAction, With<Player>>,
+    puppets: Query<&Puppet>,
+) {
+    if !session.is_host() || session.peers.is_empty() {
+        deaths.clear();
+        dead_before.clear();
+        return;
+    }
+    let now = time.elapsed_secs();
+    let is_dead = |a: Option<ActionKind>| a == Some(ActionKind::Dead);
+    let mut players: Vec<(NetId, Option<bool>)> = vec![(session.my_id, me.single().ok().map(|a| is_dead(a.current.map(|c| c.kind))))];
+    for id in session.peers.values() {
+        let dead = puppets.iter().find(|p| p.id == *id).map(|p| is_dead(p.state.action.map(|a| a.kind)));
+        players.push((*id, dead));
+    }
+    let dead_now: Vec<NetId> = players.iter().filter(|(_, d)| *d == Some(true)).map(|(id, _)| *id).collect();
+    for id in &dead_now {
+        if !dead_before.contains(id) {
+            deaths.insert(*id, now);
+        }
+    }
+    *dead_before = dead_now.clone();
+    let down = |id: &NetId| dead_now.contains(id) || deaths.get(id).is_some_and(|t| now - t <= crate::tuning::WIPE_WINDOW);
+    let fresh = deaths.values().any(|t| *t > *last_wipe);
+    if players.iter().all(|(id, _)| down(id)) && fresh {
+        *last_wipe = now;
+        info!("every player is down: the world resets");
+        done.write(RestComplete);
+        link.send(NetCmd::Reliable { to: None, bytes: encode(&Reliable::Event(WorldEvent::Wipe)) });
+        notice(&mut notify, &session, &WorldEvent::Wipe);
+    }
 }

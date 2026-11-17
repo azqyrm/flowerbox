@@ -40,6 +40,15 @@ pub enum ActionRequest {
     Special(AbilityId),
 }
 
+/// A critical hit's kind (`crate::critical`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum CritKind {
+    /// From behind a small humanoid that hasn't noticed the blade.
+    Backstab,
+    /// Into a reeling (parried or stance-broken) foe, from the front.
+    Riposte,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ActionKind {
     Roll,
@@ -74,6 +83,11 @@ pub enum ActionKind {
     Ability(AbilityId),
     /// Held in a creature's jaws: no control; bitten, then let go (`crate::grab`).
     Grabbed,
+    /// Delivering a critical hit (`crate::critical`): grab, run through (damage at the start of
+    /// the active phase), wrench free. Invulnerable throughout.
+    Critical(CritKind),
+    /// On the receiving end of a critical: pinned, run through, thrown down, getting up.
+    Pinned(CritKind),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -362,6 +376,28 @@ pub fn action_def(kind: ActionKind, weapon: WeaponClass) -> ActionDef {
             ground: GroundRule::Any,
             hop: 0.0,
         },
+        Critical(_) => ActionDef {
+            startup: CRIT_STARTUP,
+            active: CRIT_ACTIVE,
+            recovery: CRIT_RECOVERY,
+            cancel: CRIT_STARTUP + CRIT_ACTIVE + CRIT_RECOVERY * 0.75,
+            stamina_cost: 0.0,
+            iframes: Some((0.0, CRIT_STARTUP + CRIT_ACTIVE + CRIT_RECOVERY * 0.75)),
+            movement: ActionMovement::Locked,
+            ground: GroundRule::Ground,
+            hop: 0.0,
+        },
+        Pinned(_) => ActionDef {
+            startup: CRIT_STARTUP,
+            active: CRIT_ACTIVE + PINNED_DOWN,
+            recovery: PINNED_GETUP,
+            cancel: CRIT_STARTUP + CRIT_ACTIVE + PINNED_DOWN + PINNED_GETUP,
+            stamina_cost: 0.0,
+            iframes: None,
+            movement: ActionMovement::Locked,
+            ground: GroundRule::Any,
+            hop: 0.0,
+        },
         Dead => ActionDef {
             startup: 0.0,
             active: 0.0,
@@ -593,7 +629,7 @@ pub fn resolve_request(
 }
 
 /// Starts a buffered action when allowed.
-pub(super) fn start_buffered_action(
+pub(crate) fn start_buffered_action(
     mut q: Query<(
         &mut CharacterAction,
         &mut ActionIntent,

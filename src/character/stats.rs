@@ -64,31 +64,52 @@ impl Stamina {
 #[derive(Component, Debug, Default, Clone, Copy)]
 pub struct HitImmunity(pub f32);
 
-/// Poise (optional): how much punishment a character takes without flinching, Souls-style. Every
-/// hit wears it down by its damage; while some is left the hit doesn't stagger (hyper armour), when
-/// it breaks the hit staggers and poise refills. It refills after `POISE_REGEN_DELAY` without hits.
-/// Without this component every hit staggers (the player, Hollows).
+/// Stance (optional), Elden Ring style: a bar that fills with the stance damage of every hit
+/// (`DamageMessage::stance`). While it isn't full, hits don't flinch; the hit that fills it
+/// **breaks the stance**: an enemy reels (`Stunned`, open to a critical riposte), a player
+/// staggers (`Hurt`). Then it empties. Stance damage drains after `STANCE_DRAIN_DELAY` without
+/// hits. Without this component every hit flinches (the dummy).
 #[derive(Component, Debug, Clone, Copy)]
-pub struct Poise {
+pub struct Stance {
+    /// How much stance damage breaks it (creature base, plus armour for players).
     pub max: f32,
-    pub current: f32,
+    /// Stance damage taken so far.
+    pub damage: f32,
     pub since_hit: f32,
+    /// A break stuns (enemies: riposte window) instead of a plain stagger (players).
+    pub break_stuns: bool,
 }
 
-impl Poise {
-    pub fn new(max: f32) -> Self {
-        Self { max, current: max, since_hit: 0.0 }
+impl Stance {
+    pub fn new(max: f32, break_stuns: bool) -> Self {
+        Self { max, damage: 0.0, since_hit: 0.0, break_stuns }
     }
 
-    /// Takes a hit of `amount`; true if it breaks (the hit staggers).
+    /// Takes `amount` stance damage; true if that breaks the stance (the bar empties again).
     pub fn hit(&mut self, amount: f32) -> bool {
-        self.since_hit = 0.0;
-        self.current -= amount;
-        if self.current > 0.0 {
+        if amount <= 0.0 {
             return false;
         }
-        self.current = self.max;
+        self.since_hit = 0.0;
+        self.damage += amount;
+        if self.damage < self.max {
+            return false;
+        }
+        self.damage = 0.0;
         true
+    }
+
+    /// How full the bar is, 0..=1.
+    pub fn fraction(&self) -> f32 {
+        if self.max <= 0.0 { 0.0 } else { (self.damage / self.max).clamp(0.0, 1.0) }
+    }
+
+    /// Drains after a while without hits.
+    pub fn tick(&mut self, dt: f32) {
+        self.since_hit += dt;
+        if self.since_hit > STANCE_DRAIN_DELAY {
+            self.damage = (self.damage - self.max * STANCE_DRAIN_RATE * dt).max(0.0);
+        }
     }
 }
 
@@ -109,6 +130,15 @@ pub struct DamageMessage {
     pub from: Option<Vec3>,
     /// Who dealt it (a parry stuns them), if anyone.
     pub attacker: Option<Entity>,
+    /// Stance damage (see [`Stance`]).
+    pub stance: f32,
+}
+
+impl DamageMessage {
+    /// A hit whose stance damage equals its damage (traps, shockwaves, debug keys).
+    pub fn plain(target: Entity, amount: f32, from: Option<Vec3>, attacker: Option<Entity>) -> Self {
+        Self { target, amount, from, attacker, stance: amount }
+    }
 }
 
 /// Damage that was actually applied (not blocked by i-frames). For hit reactions.
@@ -137,11 +167,11 @@ pub fn apply_damage(
         Option<&DamageAbsorption>,
         Option<(&mut Guard, &mut Stamina, &CharacterController, &Transform)>,
         Option<&mut HitImmunity>,
-        Option<&mut Poise>,
+        Option<&mut Stance>,
     ), Without<super::Remote>>,
 ) {
     for msg in messages.read() {
-        let Ok((mut health, action, invulnerable, absorption, guard, immunity, poise)) = q.get_mut(msg.target) else { continue };
+        let Ok((mut health, action, invulnerable, absorption, guard, immunity, stance)) = q.get_mut(msg.target) else { continue };
         if invulnerable || health.is_dead() {
             info!("damage {} ignored (invulnerable={invulnerable})", msg.amount);
             continue;
@@ -187,26 +217,34 @@ pub fn apply_damage(
             i.0 = HIT_IMMUNITY;
         }
         let killed = health.is_dead();
-        // Poise holds: no flinch (a grab or a death still lands).
-        if stagger && let Some(mut p) = poise && !p.hit(amount) {
-            info!("poise holds ({:.0} left)", p.current);
+        // Pinned on a blade (a critical): nothing knocks it off but death.
+        if action.as_ref().is_some_and(|a| matches!(a.current.map(|c| c.kind), Some(ActionKind::Pinned(_)))) {
             stagger = false;
+        }
+        // The stance holds: no flinch (a grab or a death still lands). A break on an enemy stuns.
+        let mut flinch = ActionKind::Hurt;
+        if stagger && let Some(mut st) = stance {
+            if st.hit(msg.stance) {
+                info!("stance broken");
+                if st.break_stuns {
+                    flinch = ActionKind::Stunned;
+                }
+            } else {
+                stagger = false;
+            }
         }
         if let Some(mut action) = action
             && (killed || stagger)
         {
-            action.force(if killed { ActionKind::Dead } else { ActionKind::Hurt }, Vec3::ZERO);
+            action.force(if killed { ActionKind::Dead } else { flinch }, Vec3::ZERO);
         }
         taken.write(DamageTaken { target: msg.target, amount, from: msg.from, killed, attacker: msg.attacker });
     }
 }
 
-pub(super) fn regen_poise(time: Res<Time>, mut q: Query<&mut Poise>) {
-    for mut p in &mut q {
-        p.since_hit += time.delta_secs();
-        if p.since_hit > POISE_REGEN_DELAY && p.current < p.max {
-            p.current = p.max;
-        }
+pub(super) fn drain_stance(time: Res<Time>, mut q: Query<&mut Stance>) {
+    for mut st in &mut q {
+        st.tick(time.delta_secs());
     }
 }
 
@@ -237,6 +275,22 @@ pub(super) fn update_stamina(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn third_sword_hit_breaks_a_hollows_stance_and_it_drains() {
+        // The user's example: a sword deals 10 stance damage, a Hollow has 25.
+        let mut st = Stance::new(25.0, true);
+        assert!(!st.hit(10.0) && !st.hit(10.0), "two hits hold");
+        assert!(st.hit(10.0), "the third breaks it");
+        assert_eq!(st.damage, 0.0, "and the bar empties");
+        st.hit(10.0);
+        st.tick(STANCE_DRAIN_DELAY * 0.5);
+        assert_eq!(st.damage, 10.0, "no drain right after a hit");
+        st.tick(STANCE_DRAIN_DELAY);
+        st.tick(1.0 / STANCE_DRAIN_RATE);
+        assert_eq!(st.damage, 0.0, "drained");
+        assert!(!st.hit(0.0), "no stance damage, no break");
+    }
 
     #[test]
     fn stamina_waits_then_regens() {

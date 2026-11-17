@@ -102,6 +102,10 @@ pub struct WorldReset;
 pub struct DeathSequence {
     pub t: f32,
     pub respawned: bool,
+    /// Watching the survivors of a boss fight (`crate::spectate`): the sequence waits (no fade to
+    /// black, no respawn) and `held` counts how long.
+    pub hold: bool,
+    pub held: f32,
 }
 
 /// (death text alpha, black screen alpha) `t` seconds after death.
@@ -561,6 +565,10 @@ fn run_death_sequence(
     >,
 ) {
     for (entity, mut seq, mut tf, mut ctrl, mut action, mut intent, mut health, mut stamina, ale, point) in &mut dying {
+        if seq.hold {
+            seq.held += time.delta_secs();
+            continue;
+        }
         seq.t += time.delta_secs();
         if !seq.respawned && seq.t >= DEATH_FADE_OUT_AT + DEATH_FADE_OUT {
             // Fully black: come back at the last Hearth rested at (or the first Hearth).

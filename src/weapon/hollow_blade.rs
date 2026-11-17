@@ -35,4 +35,5 @@ pub static HOLLOW_SWORD: WeaponDef = WeaponDef {
     blade: (0.12, 0.73),
     model: ModelSource::Parts(&light_sword::SHORTSWORD_PARTS),
     guard_block: 0.3,
+    stance_damage: 16.0,
 };

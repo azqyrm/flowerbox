@@ -18,7 +18,7 @@ use super::models::ModelBuilder;
 use super::{ArmorSlot, ItemId, ItemKind};
 use crate::character::action::RollWeight;
 use crate::character::guard::Guard;
-use crate::character::stats::{DamageAbsorption, Health};
+use crate::character::stats::{DamageAbsorption, Health, Stance};
 use crate::humanoid::{Bone, HumanoidRig, HumanoidSpec};
 use crate::tuning::*;
 use super::ItemIcon;
@@ -350,6 +350,8 @@ pub struct EquipStats {
     pub weight: f32,
     pub max_load: f32,
     pub max_hp_bonus: f32,
+    /// Stance from armour (added to `PLAYER_STANCE`).
+    pub stance: f32,
 }
 
 impl EquipStats {
@@ -363,6 +365,7 @@ impl EquipStats {
             kept *= 1.0 - def.absorption;
             s.block = s.block.max(def.block);
             s.max_hp_bonus += def.max_hp_bonus;
+            s.stance += def.stance;
         }
         s.absorption = 1.0 - kept;
         // Two-handing: the shield is put away; you guard with the weapon instead.
@@ -442,11 +445,12 @@ fn apply_equip_stats(
             Option<&mut DamageAbsorption>,
             Option<&mut Guard>,
             Option<&mut RollWeight>,
+            Option<&mut Stance>,
         ),
         Or<(Changed<Equipment>, Changed<Inventory>)>,
     >,
 ) {
-    for (inventory, equipment, mut stats, health, absorption, guard, roll) in &mut q {
+    for (inventory, equipment, mut stats, health, absorption, guard, roll, stance) in &mut q {
         let new = EquipStats::compute(inventory, equipment);
         if let Some(mut health) = health {
             let delta = new.max_hp_bonus - stats.max_hp_bonus;
@@ -462,6 +466,9 @@ fn apply_equip_stats(
         }
         if let Some(mut r) = roll {
             r.set_if_neq(new.roll_weight());
+        }
+        if let Some(mut st) = stance {
+            st.max = PLAYER_STANCE + new.stance;
         }
         if let Some(mut g) = guard {
             g.strength = new.block; // 0 without a shield: can't guard

@@ -25,7 +25,7 @@ use crate::character::Remote;
 use crate::character::action::{ActionKind, ActiveAction, CharacterAction, action_def};
 use crate::character::controller::CharacterController;
 use crate::character::guard::{Guard, Parried};
-use crate::character::stats::{DamageMessage, Health};
+use crate::character::stats::{DamageMessage, Health, Stance};
 use crate::combat::{Dummy, Hitstop, Hurtbox, Team};
 use crate::character::BodySize;
 use crate::enemy::{self, Enemy, EnemiesSuppressed};
@@ -129,6 +129,7 @@ fn body_state(
     gear: [Option<crate::items::ItemId>; SHOWN_SLOTS.len()],
     pvp: bool,
     two_hand: Option<Hand>,
+    stance: Option<&Stance>,
 ) -> BodyState {
     BodyState {
         id,
@@ -146,6 +147,7 @@ fn body_state(
         pvp,
         two_hand,
         skid: (ctrl.brake, ctrl.pivot as i8),
+        stance: stance.map_or(0.0, Stance::fraction),
     }
 }
 
@@ -192,6 +194,8 @@ fn receive(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut equip_weapon: MessageWriter<EquipWeapon>,
     mut damage: MessageWriter<DamageMessage>,
+    mut pins: MessageWriter<crate::critical::PinRequest>,
+    mut light: MessageWriter<crate::light::LightGained>,
     mut inbox: MessageReader<NetInbox>,
     session: Res<NetSession>,
     mut puppets: Query<(Entity, &mut Puppet)>,
@@ -220,16 +224,16 @@ fn receive(
             NetInbox::Datagram(HOST_PEER, Datagram::Roster(ids)) if session.is_client() => {
                 roster = Some(ids.iter().copied().collect());
             }
-            NetInbox::Reliable(peer, Reliable::Damage { target, amount, from }) if session.is_host() => {
+            NetInbox::Reliable(peer, Reliable::Damage { target, amount, from, stance }) if session.is_host() => {
                 let attacker = session.peers.get(peer).and_then(|id| puppets.iter().find(|(_, p)| p.id == *id).map(|(e, _)| e));
                 if *target == DUMMY_ID {
                     if let Some(e) = dummy.iter().next() {
                         info!("a guest hit the dummy for {amount}");
-                        damage.write(DamageMessage { target: e, amount: *amount, from: Some(Vec3::from_array(*from)), attacker });
+                        damage.write(DamageMessage { target: e, amount: *amount, from: Some(Vec3::from_array(*from)), attacker, stance: *stance });
                     }
                 } else if let Some((e, _, _)) = real_enemies.iter().find(|(_, id, _)| id.0 == *target) {
                     info!("a guest hit enemy {target} for {amount}");
-                    damage.write(DamageMessage { target: e, amount: *amount, from: Some(Vec3::from_array(*from)), attacker });
+                    damage.write(DamageMessage { target: e, amount: *amount, from: Some(Vec3::from_array(*from)), attacker, stance: *stance });
                 }
             }
             NetInbox::Reliable(_, Reliable::Parried { attacker }) if session.is_host() => {
@@ -242,6 +246,15 @@ fn receive(
                     // One guest parried another: tell the parried one.
                     link.send(NetCmd::Reliable { to: Some(peer), bytes: encode(&Reliable::Stun) });
                 }
+            }
+            NetInbox::Reliable(_, Reliable::Pin { target, kind, facing }) if session.is_host() => {
+                if let Some((e, _, _)) = real_enemies.iter().find(|(_, id, _)| id.0 == *target) {
+                    info!("a guest's critical pins enemy {target}");
+                    pins.write(crate::critical::PinRequest { victim: e, kind: *kind, facing: *facing });
+                }
+            }
+            NetInbox::Reliable(HOST_PEER, Reliable::Light { amount }) if session.is_client() => {
+                light.write(crate::light::LightGained { amount: *amount });
             }
             NetInbox::Reliable(HOST_PEER, Reliable::Stun) if session.is_client() => {
                 stun_me = true;
@@ -368,6 +381,8 @@ fn spawn_puppet(
             CharacterAction::default(),
             Guard::default(),
             Health { current: body.hp, max: body.hp_max },
+            // Only shown (the bar); its owner applies stance damage.
+            Stance { damage: body.stance, ..Stance::new(1.0, false) },
             // Solid, and something for weapons to hit.
             RigidBody::Kinematic,
             size.collider(),
@@ -400,6 +415,9 @@ fn spawn_puppet(
                 Targetable { height: kind.def().target_height },
                 Enemy { home: pos, patrol: None, kind },
             ));
+            if kind.def().backstab {
+                commands.entity(e).insert(crate::critical::Backstabbable);
+            }
         }
     }
     info!("puppet {} appeared", body.id);
@@ -417,11 +435,12 @@ fn drive_puppets(
         &mut Health,
         Option<(&mut Inventory, &mut Equipment)>,
         Option<&mut Pvp>,
+        Option<&mut Stance>,
     )>,
 ) {
     let dt = time.delta_secs();
     let follow = 1.0 - (-PUPPET_FOLLOW * dt).exp();
-    for (mut p, mut tf, mut ctrl, mut action, mut guard, mut health, gear, pvp) in &mut puppets {
+    for (mut p, mut tf, mut ctrl, mut action, mut guard, mut health, gear, pvp, stance) in &mut puppets {
         p.age += dt;
         let s = p.state.clone();
         // Position: where it was reported, extrapolated by its movement (briefly), eased.
@@ -479,6 +498,10 @@ fn drive_puppets(
         if health.current != s.hp || health.max != s.hp_max {
             *health = Health { current: s.hp, max: s.hp_max };
         }
+        if let Some(mut st) = stance {
+            st.damage = s.stance;
+            st.since_hit = 0.0;
+        }
         // Equipment: rebuild the puppet's tiny bag when it changes (weapon, shield and armour
         // models follow; each item goes back into the slot it was sent for).
         if let Some((mut inv, mut eq)) = gear
@@ -515,7 +538,7 @@ fn changed(last: &BodyState, now: &BodyState) -> bool {
         || Vec3::from_array(now.moved).length() > 0.05;
     // A running action changes every tick (its time), except lying dead.
     let acting = now.action.is_some_and(|a| !(a.kind == ActionKind::Dead && a.elapsed > 2.0));
-    moved || acting || now.hp != last.hp || now.grounded != last.grounded || now.action.map(|a| a.kind) != last.action.map(|a| a.kind)
+    moved || acting || now.hp != last.hp || (now.stance - last.stance).abs() > 0.03 || now.grounded != last.grounded || now.action.map(|a| a.kind) != last.action.map(|a| a.kind)
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -526,9 +549,9 @@ fn send_states(
     mut sent: Local<SentEnemies>,
     link: Res<NetLink>,
     session: Res<NetSession>,
-    player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment, &Pvp, &Skin), With<Player>>,
+    player: Query<(&Transform, &CharacterController, &CharacterAction, &Guard, &Health, &Inventory, &Equipment, &Pvp, &Skin, Option<&Stance>), With<Player>>,
     puppets: Query<&Puppet>,
-    enemies: Query<(&EnemyNetId, &Enemy, &Transform, &CharacterController, &CharacterAction, &Health), Without<Remote>>,
+    enemies: Query<(&EnemyNetId, &Enemy, &Transform, &CharacterController, &CharacterAction, &Health, Option<&Stance>), Without<Remote>>,
 ) {
     if !session.online() {
         return;
@@ -540,17 +563,17 @@ fn send_states(
     }
     let tick = *timer;
     *timer = 0.0;
-    let Ok((tf, ctrl, action, guard, health, inv, eq, pvp, skin)) = player.single() else { return };
+    let Ok((tf, ctrl, action, guard, health, inv, eq, pvp, skin, stance)) = player.single() else { return };
     let gear = SHOWN_SLOTS.map(|s| eq.item(s, inv));
-    let me = body_state(session.my_id, BodyKind::Player(*skin), tf, ctrl, action, Some(guard), health, gear, pvp.0, eq.two_hand);
+    let me = body_state(session.my_id, BodyKind::Player(*skin), tf, ctrl, action, Some(guard), health, gear, pvp.0, eq.two_hand, stance);
     if session.is_host() {
         let mut bodies = vec![me];
         bodies.extend(puppets.iter().filter(|p| matches!(p.state.kind, BodyKind::Player(_))).map(|p| p.state.clone()));
         let mut ids: Vec<NetId> = bodies.iter().map(|b| b.id).collect();
         let mut live = HashSet::new();
-        for (id, enemy, tf, ctrl, action, health) in &enemies {
+        for (id, enemy, tf, ctrl, action, health, stance) in &enemies {
             let kind = BodyKind::Enemy(enemy.kind);
-            let state = body_state(id.0, kind, tf, ctrl, action, None, health, [None; SHOWN_SLOTS.len()], false, None);
+            let state = body_state(id.0, kind, tf, ctrl, action, None, health, [None; SHOWN_SLOTS.len()], false, None, stance);
             ids.push(state.id);
             live.insert(state.id);
             // Only what changed, plus a keepalive for idle ones: most enemies stand still far away.
@@ -588,10 +611,18 @@ fn forward_hits(
     mut hitstop: ResMut<Hitstop>,
     mut damage: MessageReader<DamageMessage>,
     mut parries: MessageReader<Parried>,
+    mut pins: MessageReader<crate::critical::PinRequest>,
+    mut light: MessageReader<crate::light::LightForGuest>,
     puppets: Query<&Puppet>,
     dummies: Query<(), With<Dummy>>,
 ) {
     if session.is_host() {
+        pins.clear();
+        for l in light.read() {
+            if let Some((&peer, _)) = session.peers.iter().find(|(_, id)| **id == l.guest) {
+                link.send(NetCmd::Reliable { to: Some(peer), bytes: encode(&Reliable::Light { amount: l.amount }) });
+            }
+        }
         // The host parried a guest: stun them on their machine.
         damage.clear();
         for parry in parries.read() {
@@ -606,7 +637,14 @@ fn forward_hits(
     if session.role != super::Role::Client {
         damage.clear();
         parries.clear();
+        pins.clear();
+        light.clear();
         return;
+    }
+    for pin in pins.read() {
+        if let Ok(p) = puppets.get(pin.victim) {
+            link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Pin { target: p.id, kind: pin.kind, facing: pin.facing }) });
+        }
     }
     for d in damage.read() {
         let target = match puppets.get(d.target) {
@@ -615,7 +653,7 @@ fn forward_hits(
             Err(_) => continue,
         };
         let from = d.from.unwrap_or_default();
-        link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Damage { target, amount: d.amount, from: v3(from) }) });
+        link.send(NetCmd::Reliable { to: Some(HOST_PEER), bytes: encode(&Reliable::Damage { target, amount: d.amount, from: v3(from), stance: d.stance }) });
         hitstop.remaining = hitstop.remaining.max(HITSTOP_LIGHT);
     }
     for parry in parries.read() {

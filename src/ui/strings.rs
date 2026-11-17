@@ -44,6 +44,12 @@ pub fn rest_waiting(who: &str, resting: u32, total: u32) -> String {
     format!("{who} waiting for other players at rest site {resting}/{total}")
 }
 pub const REST_COMPLETE: &str = "Everyone rests at the sunflower: the world stirs";
+/// Watching another player fight on after being composted in a boss fight.
+pub fn spectating(who: &str, several: bool) -> String {
+    if several { format!("Watching {who} fight on   ·   Q / E: someone else") } else { format!("Watching {who} fight on") }
+}
+/// Every player was composted (together): the world resets as after a rest.
+pub const WIPE: &str = "All were composted: the world stirs anew";
 /// The menu (Esc).
 pub const MENU_TITLE: &str = "Menu";
 pub const MENU_HINTS: &str = "[Up/Down] Select   [Left/Right] Change   [Enter] Choose   [Esc] Back";

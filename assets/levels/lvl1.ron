@@ -18,7 +18,7 @@
         (name: "North Hall", floor: -3.5, rects: [(584, 436, 672, 564)]),
         // Back up to the upper halls' level (stairs 3 climb north), along the top, down the west.
         // Diagonal walls in the drawing are stepped rectangles here.
-        (name: "Forge Loop", floor: -1.5, rects: [
+        (name: "Forge Loop", floor: -1.5, ambience: Some(Forge), rects: [
             (336, 340, 621, 372),                        // the long hall along the top
             (320, 318, 360, 340),                        // NW nook
             (440, 312, 508, 340), (456, 298, 492, 312),  // the peaked hall

@@ -184,6 +184,9 @@ pub struct RoomDef {
     /// level's ceiling.
     #[serde(default)]
     pub height: Option<f32>,
+    /// Its soundscape (`crate::ambience`). Default: the theme's.
+    #[serde(default)]
+    pub ambience: Option<crate::ambience::Ambience>,
 }
 
 /// Stairs inside `rect`, going down toward `down`, from floor height `top` to `bottom`. Open at both
@@ -384,6 +387,15 @@ impl Layout {
             return Cell::Empty;
         }
         self.cells[(j * self.nx + i) as usize]
+    }
+
+    /// The room at (x, z) (index into the file's rooms), if it's a room cell.
+    pub fn room_at(&self, p: Vec2) -> Option<usize> {
+        let (i, j) = self.index(p)?;
+        match self.cell(i, j) {
+            Cell::Room(r) => Some(r as usize),
+            _ => None,
+        }
     }
 
     /// Walkable floor height at (x, z), if any.

@@ -157,7 +157,8 @@ fn sword_hits(
                     let riposte = target_action.and_then(|a| a.current).is_some_and(|a| a.kind == ActionKind::Stunned);
                     let amount = (weapon.base_damage * mult * bonus * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
                     info!("{} {target} with {:?} ({:?}) for {amount}", if riposte { "RIPOSTE on" } else { "hit" }, cur.kind, cur.hand);
-                    damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
+                    let stance = weapon.stance_damage * mult * bonus;
+                    damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity), stance });
                 }
             }
         }
@@ -254,7 +255,8 @@ fn bite_hits(
                 let riposte = target_action.and_then(|a| a.current).is_some_and(|a| a.kind == ActionKind::Stunned);
                 let amount = (equipped.right.base_damage * mult * if riposte { RIPOSTE_MULT } else { 1.0 }).round();
                 info!("bite on {target} with {:?} for {amount}", cur.kind);
-                damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity) });
+                let stance = equipped.right.stance_damage * mult;
+                damage.write(DamageMessage { target, amount, from: Some(tf.translation), attacker: Some(entity), stance });
             }
         }
     }

@@ -25,10 +25,15 @@ pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_camera)
+        app.init_resource::<CameraFocus>()
+            .add_systems(Startup, spawn_camera)
             .add_systems(PostUpdate, follow_camera.before(TransformSystems::Propagate));
     }
 }
+
+/// Someone else to follow instead of the player (spectating a boss fight, `crate::spectate`).
+#[derive(Resource, Debug, Default)]
+pub struct CameraFocus(pub Option<Entity>);
 
 #[derive(Component)]
 pub struct ThirdPersonCamera {
@@ -79,8 +84,10 @@ fn follow_camera(
     targets: Query<(&Transform, &Targetable), (Without<Player>, Without<ThirdPersonCamera>)>,
     mut cams: Query<(&mut ThirdPersonCamera, &mut Transform)>,
     characters: Query<(), Or<(With<CharacterController>, With<Hurtbox>)>>,
+    (focus_on, others): (Res<CameraFocus>, Query<&Transform, (Without<Player>, Without<ThirdPersonCamera>)>),
 ) {
     let (player_entity, player_tf, actions, lock) = player.into_inner();
+    let player_tf = focus_on.0.and_then(|e| others.get(e).ok()).unwrap_or(player_tf);
     let dt = time.delta_secs();
     let target = lock.and_then(|l| l.target).and_then(|t| targets.get(t).ok());
     for (mut cam, mut tf) in &mut cams {
