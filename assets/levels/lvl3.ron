@@ -1,0 +1,154 @@
+// Level 3: "The Drowned Library", behind the Choir of Thorns (lvl2) — south and south-east of it.
+// World metres (x east, y = world z, growing south). Format: see src/level/layout.rs.
+//
+// The grid holds one floor per cell, so the three floors are terraced side by side; tall rooms
+// below, galleries beside them, joined by ladders that top out through archways in the shared wall.
+//
+// Route: the Choir's south door (lvl2 door 17, unsealed by the Saint's death) → the Ink Stair →
+// FLOOR 1, the Flooded Stacks (−4): readers with their backs turned, hounds in the corners.
+//   West wall: ladder up → FLOOR 2, the West Gallery (+2) → illusory wall (strike it) → the
+//   Forbidden Reading Room (reward). → South Gallery (dart plates; a Mourner) → East Stacks
+//   (swinging censers) → East Gallery (sunflower 31; one-way door down the Long Stair to the
+//   Cistern Passage and the hall: the shortcut).
+//   East Gallery: ladder up → FLOOR 3, the Archive Antechamber (+8, sunflower 32) → fog → the
+//   Orrery: the Archivist.
+(
+    name: "The Drowned Library",
+    px_per_m: 1.0,
+    origin_px: (0.0, 0.0),
+    origin_world: (0.0, 0.0),
+    theme: Library,
+    ceiling: Some(20.0),
+    seed_base: 700,
+    rooms: [
+        (name: "Ink Stair", floor: -4.0, height: Some(4.5), rects: [(-1.5, 160.0, 1.5, 166.0)]),
+        (name: "Flooded Stacks", floor: -4.0, height: Some(12.0), rects: [(-16.0, 166.0, 16.0, 200.0)]),
+        (name: "Cistern Passage", floor: -4.0, height: Some(5.0), rects: [(16.0, 192.0, 22.0, 200.0)]),
+        (name: "West Gallery", floor: 2.0, height: Some(6.0), rects: [(-28.0, 166.0, -16.0, 200.0)]),
+        (name: "Forbidden Reading Room", floor: 2.0, height: Some(4.5), rects: [(-36.0, 180.0, -28.0, 190.0)]),
+        (name: "South Gallery", floor: 2.0, height: Some(6.0), rects: [(-28.0, 200.0, 28.0, 210.0)]),
+        (name: "East Stacks", floor: 2.0, height: Some(6.0), rects: [(22.0, 176.0, 28.0, 200.0)]),
+        (name: "East Gallery", floor: 2.0, height: Some(10.0), rects: [(16.0, 164.0, 28.0, 176.0)]),
+        (name: "Archive Antechamber", floor: 8.0, height: Some(5.0), ambience: Some(Archive), rects: [(16.0, 152.0, 30.0, 164.0)]),
+        (name: "The Orrery", floor: 8.0, height: Some(12.0), ambience: Some(Archive), rects: [(30.0, 140.0, 56.0, 170.0)]),
+    ],
+    stairs: [
+        (rect: (16.0, 176.0, 22.0, 192.0), down: South, top: 2.0, bottom: -4.0),
+    ],
+    doors: [
+        // The other half of lvl2's door 17 (the Choir's south door).
+        (id: 31, at: (0.0, 160.0), width: 2.6, hinge: West, opens: South, arch: true),
+        // Top of the west ladder (floor 1 → 2).
+        (id: 32, at: (-16.0, 176.0), width: 1.6, hinge: North, opens: West, arch: true),
+        // Hall → cistern passage.
+        (id: 33, at: (16.0, 196.0), width: 2.6, hinge: North, opens: East),
+        // East Gallery → down the Long Stair: opens only from the gallery (the shortcut).
+        (id: 34, at: (19.0, 176.0), width: 2.6, hinge: West, opens: South),
+        (id: 35, at: (-22.0, 200.0), width: 3.0, hinge: West, opens: South, arch: true),
+        (id: 36, at: (25.0, 200.0), width: 3.0, hinge: West, opens: North, arch: true),
+        (id: 37, at: (25.0, 176.0), width: 3.0, hinge: West, opens: North, arch: true),
+        // The secret: an archway the illusory wall stands in.
+        (id: 38, at: (-28.0, 185.0), width: 2.0, hinge: North, opens: West, arch: true),
+        // Top of the east ladder (floor 2 → 3).
+        (id: 39, at: (22.0, 164.0), width: 1.6, hinge: West, opens: North, arch: true),
+        // Antechamber → the Orrery (the fog gate stands in it).
+        (id: 40, at: (30.0, 158.0), width: 3.0, hinge: North, opens: East, arch: true),
+    ],
+    ladders: [
+        (at: (-15.2, 176.0), facing: West, bottom: -4.0, top: 2.0),
+        (at: (22.0, 164.8), facing: North, bottom: 2.0, top: 8.0),
+    ],
+    torches: [
+        (at: (-1.2, 163.0), wall: West),
+        (at: (-15.7, 170.0), wall: West), (at: (-15.7, 192.0), wall: West), (at: (15.7, 170.0), wall: East), (at: (15.7, 186.0), wall: East),
+        (at: (-8.0, 199.7), wall: South), (at: (8.0, 199.7), wall: South),
+        (at: (21.7, 196.0), wall: East),
+        (at: (-27.7, 170.0), wall: West), (at: (-27.7, 195.0), wall: West), (at: (-16.3, 186.0), wall: East),
+        (at: (-35.7, 185.0), wall: West),
+        (at: (-20.0, 209.7), wall: South), (at: (0.0, 209.7), wall: South), (at: (20.0, 209.7), wall: South),
+        (at: (27.7, 180.0), wall: East), (at: (27.7, 196.0), wall: East),
+        (at: (27.7, 170.0), wall: East), (at: (16.3, 168.0), wall: West),
+        (at: (16.3, 158.0), wall: West), (at: (29.7, 154.0), wall: East),
+        (at: (30.3, 146.0), wall: West), (at: (55.7, 150.0), wall: East), (at: (55.7, 162.0), wall: East), (at: (43.0, 169.7), wall: South), (at: (43.0, 140.3), wall: North),
+    ],
+    enemies: [
+        // Floor 1: readers at their desks (backs to the door), one wandering the aisles.
+        (kind: Scribe, at: (0.0, 180.6), facing: Some(South)),
+        (kind: Scribe, at: (-8.0, 182.6), facing: Some(South)),
+        (kind: Scribe, at: (8.0, 170.0), patrol: Some((8.0, 196.0))),
+        (kind: Hollow, at: (-13.0, 170.0)),
+        (kind: PageHound, at: (12.0, 197.0)),
+        (kind: PageHound, at: (-12.0, 197.0)),
+        // Floor 2: the West Gallery.
+        (kind: Scribe, at: (-22.0, 172.0), facing: Some(South)),
+        (kind: Acolyte, at: (-20.0, 192.0), patrol: Some((-25.0, 170.0))),
+        // The South Gallery: a Mourner among the dart plates, two scribes.
+        (kind: Mourner, at: (0.0, 205.0)),
+        (kind: Scribe, at: (-15.0, 205.0), facing: Some(West)),
+        (kind: Scribe, at: (15.0, 204.0), patrol: Some((22.0, 207.0))),
+        // The East Stacks: a hound beyond the censers.
+        (kind: PageHound, at: (25.0, 179.0)),
+        // The East Gallery.
+        (kind: Scribe, at: (26.0, 166.0), facing: Some(West)),
+        // Floor 3: the Archivist.
+        (kind: Archivist, at: (45.0, 152.0), drops: [(item: ArchivistQuill, unique: Some(410))]),
+    ],
+    treasures: [
+        (id: 330, item: HopCone, at: (-14.5, 198.5)),
+        (id: 331, item: Poppy, at: (-2.0, 198.5)),
+        (id: 332, item: InkboundRobe, at: (-34.0, 185.0)),
+        (id: 333, item: HopCone, at: (-34.5, 181.5)),
+        (id: 334, item: Camomile, at: (26.5, 198.5)),
+        (id: 335, item: HopCone, at: (27.0, 165.0)),
+    ],
+    sunflowers: [
+        (id: 31, at: (18.5, 171.0), facing: East),
+        (id: 32, at: (18.5, 156.0), facing: East),
+    ],
+    props: [
+        // ── Floor 1: the Flooded Stacks ──
+        (kind: Water, at: (0.0, 183.0), size: (31.5, 33.5)),
+        (kind: Bookshelf, at: (-6.0, 174.0), facing: East, size: (8.0, 5.0)),
+        (kind: Bookshelf, at: (-10.5, 174.0), facing: East, size: (8.0, 5.0)),
+        (kind: Bookshelf, at: (6.0, 174.0), facing: East, size: (8.0, 5.0)),
+        (kind: Bookshelf, at: (10.5, 174.0), facing: East, size: (8.0, 5.0)),
+        (kind: Bookshelf, at: (-6.0, 190.0), facing: East, size: (8.0, 5.0)),
+        (kind: Bookshelf, at: (-10.5, 190.0), facing: East, size: (8.0, 5.0)),
+        (kind: Bookshelf, at: (6.0, 190.0), facing: East, size: (8.0, 5.0)),
+        (kind: Bookshelf, at: (10.5, 190.0), facing: East, size: (8.0, 5.0)),
+        (kind: Desk, at: (0.0, 182.0), facing: North),
+        (kind: Desk, at: (-8.0, 184.0), facing: North),
+        (kind: BookPile, at: (2.5, 181.0)), (kind: BookPile, at: (-13.5, 196.0)), (kind: BookPile, at: (13.0, 168.5)),
+        (kind: Chandelier, at: (0.0, 172.0)), (kind: Chandelier, at: (0.0, 192.0)),
+        (kind: Plaque, at: (2.0, 167.5), facing: South, text: "THE DROWNED LIBRARY. | Here the Saint's order kept every name it ever wrote, and every name it crossed out. | When the cistern broke, the keepers would not leave their books. | Read quietly."),
+        // ── Floor 2: the galleries ──
+        (kind: Bookshelf, at: (-27.3, 176.0), facing: East, size: (12.0, 4.0)),
+        (kind: Bookshelf, at: (-27.3, 195.0), facing: East, size: (8.0, 4.0)),
+        (kind: Desk, at: (-22.0, 174.0), facing: North),
+        (kind: IllusoryWall, at: (-28.0, 185.0), facing: East, size: (2.5, 3.2)),
+        (kind: Bookshelf, at: (-32.0, 189.3), facing: North, size: (7.0, 3.5)),
+        (kind: Candles, at: (-31.0, 182.0)),
+        (kind: Plaque, at: (-30.0, 187.5), facing: East, text: "The keepers bound the forbidden books here, behind a wall that was never built. | What is written cannot be unwritten — only crossed out, and hidden."),
+        (kind: DartTrap, at: (-10.0, 207.0), facing: North),
+        (kind: DartTrap, at: (2.0, 203.0), facing: South),
+        (kind: DartTrap, at: (12.0, 206.5), facing: North),
+        (kind: Bookshelf, at: (-18.0, 209.4), facing: North, size: (6.0, 4.0)),
+        (kind: Bookshelf, at: (8.0, 209.4), facing: North, size: (6.0, 4.0)),
+        (kind: BookPile, at: (-5.0, 201.0)), (kind: BookPile, at: (20.0, 208.5)),
+        (kind: Pendulum, at: (25.0, 194.0), facing: East),
+        (kind: Pendulum, at: (25.0, 188.0), facing: East),
+        (kind: Pendulum, at: (25.0, 182.0), facing: East),
+        (kind: Bookshelf, at: (16.6, 170.0), facing: East, size: (6.0, 4.0)),
+        (kind: Desk, at: (24.0, 171.0), facing: South),
+        (kind: Chandelier, at: (22.0, 170.0)),
+        // ── Floor 3: the Astral Archive ──
+        (kind: Candles, at: (28.0, 154.0)), (kind: BookPile, at: (17.0, 162.5)),
+        (kind: FogGate, at: (30.4, 158.0), facing: East, size: (3.2, 3.6), boss: Some(Archivist)),
+        (kind: Orrery, at: (43.0, 155.0)),
+        (kind: Bookshelf, at: (31.0, 146.0), facing: East, size: (8.0, 6.0)),
+        (kind: Bookshelf, at: (55.3, 155.0), facing: West, size: (14.0, 6.0)),
+        (kind: Bookshelf, at: (43.0, 140.7), facing: South, size: (14.0, 6.0)),
+        (kind: Bookshelf, at: (43.0, 169.3), facing: North, size: (14.0, 6.0)),
+        (kind: Candles, at: (34.0, 166.0)), (kind: Candles, at: (52.0, 144.0)), (kind: Candles, at: (52.0, 166.0)),
+    ],
+)

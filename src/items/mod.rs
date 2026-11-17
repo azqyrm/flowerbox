@@ -52,11 +52,15 @@ pub enum ItemId {
     GraveGreaves,
     BellringerRing,
     Penitence,
+    /// The library: a scholar's ink-dark robe.
+    InkboundRobe,
+    /// The Archivist's reward.
+    ArchivistQuill,
 }
 
 impl ItemId {
     #[allow(dead_code)] // tests
-    pub const ALL: [ItemId; 20] = [
+    pub const ALL: [ItemId; 22] = [
         ItemId::Longsword,
         ItemId::RustedShortsword,
         ItemId::RustedAxe,
@@ -77,6 +81,8 @@ impl ItemId {
         ItemId::GraveGreaves,
         ItemId::BellringerRing,
         ItemId::Penitence,
+        ItemId::InkboundRobe,
+        ItemId::ArchivistQuill,
     ];
 
     pub fn def(self) -> &'static ItemDef {
@@ -101,6 +107,8 @@ impl ItemId {
             ItemId::GraveGreaves => &GRAVE_GREAVES,
             ItemId::BellringerRing => &BELLRINGER_RING,
             ItemId::Penitence => &PENITENCE,
+            ItemId::InkboundRobe => &INKBOUND_ROBE,
+            ItemId::ArchivistQuill => &ARCHIVIST_QUILL,
         }
     }
 }
@@ -450,6 +458,31 @@ static PENITENCE: ItemDef = ItemDef {
         ItemKind::Weapon,
         ItemIcon::Greatsword,
         "The Thorned Saint's blade, grown to fit a human grip as its bearer fell. Slow, wide and crushing; its runes still drink the light. Ability: Penitent Whirl.",
+    )
+};
+
+static INKBOUND_ROBE: ItemDef = ItemDef {
+    weight: 3.0,
+    absorption: 0.09,
+    stance: 7.0,
+    model: Some(ItemModel { bone: Bone::Chest, build: models::inkbound_robe, pair: false }),
+    ..ItemDef::base(
+        "Inkbound Robe",
+        ItemKind::Armor(ArmorSlot::Chest),
+        ItemIcon::Mail,
+        "A reader's robe, so soaked in ink over the years that it turns a blade like leather. Light enough to run the stacks in.",
+    )
+};
+
+static ARCHIVIST_QUILL: ItemDef = ItemDef {
+    weight: 8.0,
+    weapon: Some(&crate::enemy::scholars::ARCHIVIST_QUILL),
+    rare: true,
+    ..ItemDef::base(
+        "Archivist's Quill",
+        ItemKind::Weapon,
+        ItemIcon::Greatsword,
+        "The keeper of the Drowned Library wrote the names of the dead with it, then crossed them out. A lance-long steel nib on a black shaft; its runes still weep ink. Ability: Penitent Whirl.",
     )
 };
 

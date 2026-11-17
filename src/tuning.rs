@@ -228,6 +228,31 @@ pub const LIGHT_SHARE: crate::light::LightShare = crate::light::LightShare::Ever
 /// `LightShare::Nearby`: within this distance of the kill (m).
 pub const LIGHT_NEARBY_RANGE: f32 = 40.0;
 
+// ── Library traps (`crate::level::library`) ──
+/// A plate fires this long after it's stepped on, then rests this long (s).
+pub const DART_FUSE: f32 = 0.3;
+pub const DART_REARM: f32 = 2.5;
+pub const DART_SPEED: f32 = 16.0;
+pub const DART_DAMAGE: f32 = 22.0;
+/// A censer swings ± this many radians, once there and back in this many seconds.
+pub const PENDULUM_SWING: f32 = 1.0;
+pub const PENDULUM_PERIOD: f32 = 2.8;
+pub const PENDULUM_DAMAGE: f32 = 45.0;
+
+// ── Ladders (`crate::ladder`) ──
+/// Climbing speed (m/s); sliding down (sprint held while going down) is faster.
+pub const LADDER_SPEED: f32 = 1.7;
+pub const LADDER_SLIDE_SPEED: f32 = 5.5;
+/// Height climbed per full hand-over-hand cycle (m).
+pub const LADDER_CYCLE: f32 = 0.7;
+/// Getting on and off (s).
+pub const LADDER_ON_BOTTOM: f32 = 0.35;
+pub const LADDER_ON_TOP: f32 = 0.75;
+pub const LADDER_OFF_TOP: f32 = 0.8;
+pub const LADDER_OFF_BOTTOM: f32 = 0.3;
+/// From how far you can get on (m, from the ladder's foot or its top exit).
+pub const LADDER_REACH: f32 = 1.1;
+
 // ── Critical hits (`crate::critical`) ──
 /// Reach for a critical: centre to centre, beyond both capsules (m).
 pub const CRIT_RANGE: f32 = 1.6;

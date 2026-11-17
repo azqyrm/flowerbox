@@ -99,6 +99,15 @@ pub fn spawn_gothic_prop(
     };
     let t = Transform::from_xyz;
     match prop.kind {
+        // Not gothic (`super::props`, `super::library`).
+        PropKind::Bookshelf
+        | PropKind::Desk
+        | PropKind::BookPile
+        | PropKind::Water
+        | PropKind::DartTrap
+        | PropKind::Pendulum
+        | PropKind::IllusoryWall
+        | PropKind::Orrery => {}
         PropKind::Column => {
             let r = if prop.size.0 > 0.0 { prop.size.0 } else { 0.55 };
             part(commands, Cylinder::new(r, height).into(), &m.marble, t(0.0, height * 0.5, 0.0));

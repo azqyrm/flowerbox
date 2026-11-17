@@ -17,6 +17,7 @@
 pub mod door;
 pub mod gothic;
 pub mod layout;
+pub mod library;
 pub mod props;
 pub mod riddle;
 
@@ -37,9 +38,10 @@ pub struct LevelPlugin;
 
 /// The levels loaded at start (asset path, embedded copy): the Sunken Halls north of the arena,
 /// the Cathedral of Ashes south of it.
-pub const LEVELS: [(&str, &str); 2] = [
+pub const LEVELS: [(&str, &str); 3] = [
     ("levels/lvl1.ron", include_str!("../../assets/levels/lvl1.ron")),
     ("levels/lvl2.ron", include_str!("../../assets/levels/lvl2.ron")),
+    ("levels/lvl3.ron", include_str!("../../assets/levels/lvl3.ron")),
 ];
 
 /// Every loaded level.
@@ -55,7 +57,7 @@ impl Levels {
 
 impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((door::DoorPlugin, props::PropsPlugin, riddle::RiddlePlugin));
+        app.add_plugins((door::DoorPlugin, props::PropsPlugin, riddle::RiddlePlugin, library::LibraryPlugin));
         let mut levels = vec![];
         let mut openings = vec![];
         let mut riddles = vec![];
@@ -156,6 +158,14 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
             stone(materials, 0.4, 0.38, 0.4, Some(Tex::Marble)),
             Some(2.4),
         ),
+        // Dark oak: panelled walls, plank floors, a soot-dark coffered ceiling.
+        Theme::Library => (
+            stone(materials, 0.42, 0.3, 0.2, Some(Tex::Planks)),
+            [stone(materials, 0.34, 0.23, 0.15, Some(Tex::Panels)), stone(materials, 0.31, 0.21, 0.14, Some(Tex::Panels))],
+            stone(materials, 0.14, 0.1, 0.08, Some(Tex::Panels)),
+            stone(materials, 0.4, 0.29, 0.2, Some(Tex::Planks)),
+            Some(3.0),
+        ),
     };
     let ceiling_y = layout.ceiling();
     let wall_top = layout.wall_top();
@@ -207,6 +217,14 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
             (Vec3::new(w.line - t, bottom, w.from - t), Vec3::new(w.line + t, wall_top, w.to + t))
         };
         block(&mut commands, "Wall", min, max, &wall_mats[n % 2], true);
+        // A doorway between floors of different heights: wall below it, from the lower floor up
+        // (a ladder climbs it).
+        if let EdgeKind::Lintel(d) = w.kind
+            && layout.doors[d].floor - layout.doors[d].low > 0.3
+        {
+            let riser_top = layout.doors[d].floor - 0.01;
+            block(&mut commands, "Riser", Vec3::new(min.x, LEVEL_BOTTOM, min.z), Vec3::new(max.x, riser_top, max.z), &wall_mats[n % 2], true);
+        }
     }
 
     // Stairs: an invisible ramp to walk on, and steps to look at.
@@ -275,7 +293,8 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
         spawn_sunflower(&mut commands, meshes, materials, f.id, layout.ground(f.at), f.facing.yaw());
     }
     for (n, e) in layout.file.enemies.iter().enumerate() {
-        let point = SpawnPoint::new(e.kind, layout.ground(e.at), e.patrol.map(|p| layout.ground(p)), layout.file.seed_base + n as u32).with_drops(e.drops.clone());
+        let mut point = SpawnPoint::new(e.kind, layout.ground(e.at), e.patrol.map(|p| layout.ground(p)), layout.file.seed_base + n as u32).with_drops(e.drops.clone());
+        point.facing = e.facing.map(|d| d.yaw());
         commands.spawn((Name::new(format!("Spawn point: {:?}", e.kind)), point));
     }
 }
@@ -283,6 +302,50 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_library_builds_and_hangs_together() {
+        let file: LevelFile = ron::from_str(LEVELS[2].1).expect("lvl3.ron parses");
+        let l = Layout::build(file);
+        let on_floor = |p: layout::Px| l.floor_at(l.world(p)).is_some();
+        for t in &l.file.treasures {
+            assert!(on_floor(t.at), "treasure {} off the floor", t.id);
+        }
+        for e in &l.file.enemies {
+            assert!(on_floor(e.at), "{:?} at {:?} off the floor", e.kind, e.at);
+            if let Some(p) = e.patrol {
+                assert!(on_floor(p), "patrol {p:?} off the floor");
+            }
+        }
+        for f in &l.file.sunflowers {
+            assert!(on_floor(f.at), "sunflower {}", f.id);
+        }
+        for p in &l.file.props {
+            // An illusory wall stands in its doorway (on the wall line).
+            if p.kind != layout::PropKind::IllusoryWall {
+                assert!(on_floor(p.at), "{:?} at {:?} off the floor", p.kind, p.at);
+            }
+        }
+        for (n, t) in l.file.torches.iter().enumerate() {
+            let d = l.wall_distance(l.world(t.at), t.wall);
+            assert!(d.is_some_and(|d| d < 3.0), "torch {n} at {:?} is {d:?} m from its wall", t.at);
+        }
+        // Each ladder: its foot on the lower floor, close to the wall it climbs, and a raised
+        // doorway right above it onto the upper floor.
+        for ld in &l.file.ladders {
+            let at = l.world(ld.at);
+            assert_eq!(l.floor_at(at), Some(ld.bottom), "ladder foot at {:?}", ld.at);
+            let d = l.wall_distance(at, ld.facing).expect("a wall to climb");
+            assert!(d < 1.0, "ladder {:?} is {d} m from its wall", ld.at);
+            let beyond = at + ld.facing.vec() * (d + LEVEL_WALL_THICKNESS + 0.7);
+            assert_eq!(l.floor_at(beyond), Some(ld.top), "the top of ladder {:?} leads onto its upper floor", ld.at);
+            assert!(l.doors.iter().any(|door| door.centre.distance(at + ld.facing.vec() * (d + 0.25)) < 1.2 && door.floor == ld.top), "a doorway over ladder {:?}", ld.at);
+        }
+        // Every room's ceiling is under the walls' top (else you'd see out over them).
+        for r in 0..l.file.rooms.len() {
+            assert!(l.room_ceiling(r) <= l.ceiling(), "{} pokes out of the level", l.file.rooms[r].name);
+        }
+    }
 
     #[test]
     fn the_cathedral_builds_and_hangs_together() {

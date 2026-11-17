@@ -57,16 +57,30 @@ pub enum Ambience {
     Crypt,
     /// A boss's hall: a dissonant pulse and slow booms.
     Boss,
+    /// The library: a hush — paper rustle, creaking wood, a far clock, a low glassy drone.
+    Library,
+    /// The Astral Archive: a slow, shimmering drone of bell-like partials.
+    Archive,
 }
 
 impl Ambience {
-    pub const ALL: [Ambience; 6] = [Ambience::Arena, Ambience::Halls, Ambience::Forge, Ambience::Cathedral, Ambience::Crypt, Ambience::Boss];
+    pub const ALL: [Ambience; 8] = [
+        Ambience::Arena,
+        Ambience::Halls,
+        Ambience::Forge,
+        Ambience::Cathedral,
+        Ambience::Crypt,
+        Ambience::Boss,
+        Ambience::Library,
+        Ambience::Archive,
+    ];
 
     /// The default of a level theme.
     pub fn of_theme(theme: Theme) -> Self {
         match theme {
             Theme::Sunken => Ambience::Halls,
             Theme::Gothic => Ambience::Cathedral,
+            Theme::Library => Ambience::Library,
         }
     }
 
@@ -79,6 +93,8 @@ impl Ambience {
             Ambience::Cathedral => 0.5,
             Ambience::Crypt => 0.6,
             Ambience::Boss => 0.55,
+            Ambience::Library => 0.5,
+            Ambience::Archive => 0.5,
         }
     }
 }
@@ -233,6 +249,8 @@ pub fn bed(kind: Ambience) -> Vec<f32> {
         Ambience::Forge => (0.18, 2.5),
         Ambience::Crypt => (0.25, 1.6),
         Ambience::Boss => (0.5, 1.8),
+        Ambience::Library => (0.35, 1.2),
+        Ambience::Archive => (0.2, 4.0),
         _ => (0.0, 0.0),
     };
     let mut at = 0.5;
@@ -324,6 +342,45 @@ pub fn bed(kind: Ambience) -> Vec<f32> {
                     .sum();
                 let air = lp.step(n, 300.0) * 0.8;
                 cluster + booms + air
+            }
+            Ambience::Library => {
+                // Hush: a soft room tone, a low glassy drone, a clock's slow tick, now and then a
+                // page turned or a shelf creaking.
+                let room = lp.step(n, 220.0) * 0.9;
+                let drone_ = drone(t, 65.4, &[(1.0, 0.12), (3.0, 0.05), (4.01, 0.03)], 0.3) * breathe(t, 13.0, 0.0, 0.5);
+                // (Half a beat off, so no tick falls on the loop seam.)
+                let beat = (t + 0.5).fract();
+                let tick = bp2.step(n, 2600.0, 8.0) * (-beat * 90.0).exp() * 0.5;
+                let rustle: f32 = events
+                    .iter()
+                    .filter(|(s, _)| t >= *s && t < *s + 1.2)
+                    .map(|(s, kind)| {
+                        let d = (t - s) / 1.2;
+                        if *kind > 1.0 {
+                            // A creak: a slow, grinding low tone.
+                            (TAU * (90.0 + 30.0 * d) * t).sin().signum() * 0.04 * (std::f32::consts::PI * d).sin()
+                        } else {
+                            (std::f32::consts::PI * d).sin().powi(3) * 0.6
+                        }
+                    })
+                    .sum();
+                let paper = bp.step(n, 3500.0, 1.5) * rustle.max(0.0) * 0.5 + rustle.min(0.0);
+                room + drone_ + tick + paper
+            }
+            Ambience::Archive => {
+                // Stars turning: bell-like partials, slowly fading in and out over a deep hum.
+                let hum = drone(t, 49.0, &[(1.0, 0.2), (2.0, 0.06)], 0.4);
+                let chimes: f32 = events
+                    .iter()
+                    .filter(|(s, _)| t >= *s && t < *s + 4.0)
+                    .map(|(s, pitch)| {
+                        let d = t - s;
+                        let f = 392.0 * (1.0 + (pitch * 3.0).floor() * 0.25);
+                        [(1.0, 0.3), (2.76, 0.15), (5.4, 0.08)].iter().map(|(h, a)| (TAU * f * h * d).sin() * a).sum::<f32>() * (d * 4.0).min(1.0) * (-d * 0.9).exp() * 0.25
+                    })
+                    .sum();
+                let shimmer = bp.step(n, 5000.0 + 1500.0 * (t * 0.3).sin(), 6.0) * 0.12 * breathe(t, 6.0, 0.0, 0.2);
+                hum + chimes + shimmer
             }
         };
         out.push(s);

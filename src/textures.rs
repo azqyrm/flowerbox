@@ -50,10 +50,16 @@ pub enum Tex {
     Marble,
     /// Soft fur: fine wavy strands and darker patches (cat and bear people).
     Fur,
+    /// Worn floorboards: long planks, grain, dark seams (the library).
+    Planks,
+    /// Wood panelling: framed panels with bevelled edges (the library's walls).
+    Panels,
+    /// Rows of book spines on shelves: carries its own colours (leather reds, greens, browns, gilt bands).
+    Books,
 }
 
 impl Tex {
-    pub const ALL: [Tex; 12] = [
+    pub const ALL: [Tex; 15] = [
         Tex::Bricks,
         Tex::Flagstones,
         Tex::Chainmail,
@@ -66,6 +72,9 @@ impl Tex {
         Tex::Leather,
         Tex::Marble,
         Tex::Fur,
+        Tex::Planks,
+        Tex::Panels,
+        Tex::Books,
     ];
 }
 
@@ -172,6 +181,68 @@ fn masonry(u: f32, v: f32, cols: f32, rows: f32) -> (f32, (i32, i32)) {
 
 fn sample(t: Tex, u: f32, v: f32) -> [f32; 3] {
     match t {
+        Tex::Planks => {
+            // Five planks across, butt joints staggered along them.
+            let n = 5.0;
+            let row = (u * n).floor();
+            let fu = u * n - row;
+            let shift = hash(row as i32, 0, 61);
+            let along = (v + shift).fract() * 2.0;
+            let piece = along.floor();
+            let fv = along - piece;
+            let tone = 0.62 + 0.25 * hash(row as i32, piece as i32, 67);
+            let grain = 0.8 + 0.2 * (fbm(u * 0.2, v * 3.0, 32, 3, 71) * 18.0).sin().abs();
+            let knots = smooth(0.82, 0.9, fbm(u, v, 12, 3, 73));
+            let seam = smooth(0.0, 0.04, fu.min(1.0 - fu)) * smooth(0.0, 0.015, fv.min(1.0 - fv));
+            grey(tone * grain * (1.0 - 0.35 * knots) * (0.25 + 0.75 * seam))
+        }
+        Tex::Panels => {
+            // Two by two framed panels: a raised field, bevel shading, the frame's grain.
+            let (x, y) = ((u * 2.0).fract(), (v * 2.0).fract());
+            let frame = x.min(1.0 - x).min(y.min(1.0 - y));
+            let field = smooth(0.1, 0.13, frame);
+            let bevel = if frame > 0.08 && frame < 0.13 { if x < 0.5 || y < 0.5 { 1.15 } else { 0.7 } } else { 1.0 };
+            let grain = 0.85 + 0.15 * (fbm(u, v * 0.3, 16, 3, 79) * 14.0).sin().abs();
+            grey((0.55 + 0.15 * field) * bevel * grain)
+        }
+        Tex::Books => {
+            // Four shelves of spines; each spine its own width, colour and gilt bands.
+            let shelves = 4.0;
+            let shelf = (v * shelves).floor();
+            let fv = v * shelves - shelf;
+            let board = fv > 0.9;
+            let mut x = u * 22.0 + hash(shelf as i32, 1, 83) * 3.0;
+            let mut id = 0;
+            // Variable widths: walk spines of 0.6..1.4 units.
+            let mut start = 0.0;
+            loop {
+                let w = 0.6 + 0.8 * hash(id, shelf as i32, 89);
+                if x < start + w || id > 64 {
+                    x = (x - start) / w;
+                    break;
+                }
+                start += w;
+                id += 1;
+            }
+            let height = 0.62 + 0.26 * hash(id, shelf as i32, 97);
+            if board {
+                return grey(0.16 + 0.04 * fbm(u, v, 16, 2, 101));
+            }
+            if 0.9 - fv > height {
+                return grey(0.03); // the dark gap above a short book
+            }
+            let palette = [[0.38, 0.08, 0.06], [0.12, 0.2, 0.1], [0.3, 0.2, 0.1], [0.1, 0.1, 0.18], [0.42, 0.32, 0.18], [0.2, 0.06, 0.12]];
+            let c = palette[(hash(id, shelf as i32 + 7, 103) * 5.99) as usize];
+            let edge = smooth(0.0, 0.12, x.min(1.0 - x));
+            let band = (fv - (0.9 - height)) / height;
+            let gilt = (band - 0.15).abs() < 0.025 || (band - 0.8).abs() < 0.025;
+            let wear = 0.75 + 0.25 * fbm(u, v, 32, 2, 107);
+            if gilt {
+                return [0.65 * wear, 0.5 * wear, 0.2 * wear];
+            }
+            let k = (0.45 + 0.55 * edge) * wear;
+            [c[0] * k * 1.6, c[1] * k * 1.6, c[2] * k * 1.6]
+        }
         Tex::Bricks => {
             let (edge, (cx, cy)) = masonry(u, v, 4.0, 8.0);
             let block = 0.72 + 0.22 * hash(cx, cy, 3);

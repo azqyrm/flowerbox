@@ -72,7 +72,17 @@ pub struct Boss {
 impl EnemyKind {
     /// Every kind (tests walk the table).
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const ALL: [EnemyKind; 6] = [EnemyKind::Hollow, EnemyKind::Warg, EnemyKind::Acolyte, EnemyKind::Mourner, EnemyKind::Contorted, EnemyKind::Saint];
+    pub const ALL: [EnemyKind; 9] = [
+        EnemyKind::Hollow,
+        EnemyKind::Warg,
+        EnemyKind::Acolyte,
+        EnemyKind::Mourner,
+        EnemyKind::Contorted,
+        EnemyKind::Saint,
+        EnemyKind::Scribe,
+        EnemyKind::PageHound,
+        EnemyKind::Archivist,
+    ];
 
     pub fn def(self) -> &'static EnemyDef {
         match self {
@@ -82,6 +92,9 @@ impl EnemyKind {
             EnemyKind::Mourner => &MOURNER,
             EnemyKind::Contorted => &CONTORTED,
             EnemyKind::Saint => &SAINT,
+            EnemyKind::Scribe => &super::scholars::SCRIBE,
+            EnemyKind::PageHound => &super::scholars::PAGE_HOUND,
+            EnemyKind::Archivist => &super::scholars::ARCHIVIST,
         }
     }
 }
@@ -611,9 +624,9 @@ mod tests {
     }
 
     #[test]
-    fn the_boss_is_the_only_boss() {
+    fn the_bosses_are_the_bosses() {
         let bosses: Vec<_> = EnemyKind::ALL.iter().filter(|k| k.def().boss).collect();
-        assert_eq!(bosses, vec![&EnemyKind::Saint]);
+        assert_eq!(bosses, vec![&EnemyKind::Saint, &EnemyKind::Archivist]);
     }
 }
 

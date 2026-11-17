@@ -30,7 +30,7 @@ impl Plugin for BossPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DefeatedBosses>()
             .add_systems(Startup, spawn_boss_bar)
-            .add_systems(Update, (boss_deaths, lift_fog, fog_interaction.in_set(InteractSystems::Doors), animate_fog, boss_bar).chain());
+            .add_systems(Update, (boss_deaths, lift_fog, unseal_after_bosses, fog_interaction.in_set(InteractSystems::Doors), animate_fog, boss_bar).chain());
     }
 }
 
@@ -70,6 +70,20 @@ fn lift_fog(mut commands: Commands, defeated: Res<DefeatedBosses>, gates: Query<
         if defeated.0.contains(&gate.boss) {
             commands.entity(e).despawn();
             info!("the mist clears");
+        }
+    }
+}
+
+/// Doors sealed behind a boss (`Door::after_boss`) unseal once it's defeated (also on load and
+/// for guests, whose `DefeatedBosses` come from the host).
+fn unseal_after_bosses(defeated: Res<DefeatedBosses>, mut doors: Query<&mut crate::level::door::Door>, mut notify: MessageWriter<crate::ui::notifications::Notify>) {
+    for mut door in &mut doors {
+        if door.sealed && door.after_boss.is_some_and(|b| defeated.0.contains(&b)) {
+            door.sealed = false;
+            info!("door {} unseals: its boss is dead", door.id);
+            if defeated.is_changed() {
+                notify.write(crate::ui::notifications::Notify::new(crate::ui::icons::NoticeIcon::Door, strings::WAY_OPENS.to_string()));
+            }
         }
     }
 }

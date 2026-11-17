@@ -31,6 +31,7 @@ pub mod boss;
 pub mod dormancy;
 pub mod fighter;
 pub mod kinds;
+pub mod scholars;
 pub mod warg;
 
 pub struct EnemyPlugin;
@@ -98,6 +99,12 @@ pub enum EnemyKind {
     Contorted,
     /// The Thorned Saint, the cathedral's boss.
     Saint,
+    /// The library's small, quick reader with a quill-knife.
+    Scribe,
+    /// A hound of pasted pages and ink.
+    PageHound,
+    /// The Archivist, the library's boss.
+    Archivist,
 }
 
 pub use crate::character::Dormant;
@@ -124,13 +131,15 @@ pub struct SpawnPoint {
     pub drops: Vec<DropDef>,
     /// The enemy it spawned (alive or a corpse) since the last reset.
     pub spawned: Option<Entity>,
+    /// Facing while idle (default: toward the world's centre).
+    pub facing: Option<f32>,
     seed: u32,
 }
 
 impl SpawnPoint {
     /// `n` makes each spawn point's AI rolls different (but the same every run).
     pub fn new(kind: EnemyKind, pos: Vec3, patrol: Option<Vec3>, n: u32) -> Self {
-        Self { kind, pos, patrol, drops: vec![], spawned: None, seed: 0x9E37_79B9 ^ (n * 7919 + 1) }
+        Self { kind, pos, patrol, drops: vec![], spawned: None, facing: None, seed: 0x9E37_79B9 ^ (n * 7919 + 1) }
     }
 
     pub fn with_drops(mut self, drops: Vec<DropDef>) -> Self {
@@ -175,7 +184,7 @@ fn trigger_spawn_points(
         }
         let home = point.pos;
         let to_centre = (-home).with_y(0.0).normalize_or(Vec3::NEG_Z);
-        let facing = f32::atan2(-to_centre.x, -to_centre.z);
+        let facing = point.facing.unwrap_or(f32::atan2(-to_centre.x, -to_centre.z));
         let enemy = kinds::spawn_enemy(&mut commands, &mut meshes, &mut materials, &mut equip, point.kind, home, point.patrol, facing, point.seed);
         commands.entity(enemy).insert(Drops(point.drops.clone()));
         point.spawned = Some(enemy);
