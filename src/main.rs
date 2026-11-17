@@ -6,6 +6,7 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 mod ability;
+mod ambience;
 mod arena;
 mod camera;
 mod chat;
@@ -77,7 +78,7 @@ fn main() {
             critical::CriticalPlugin,
             light::LightPlugin,
         ))
-        .add_plugins(spectate::SpectatePlugin)
+        .add_plugins((spectate::SpectatePlugin, ambience::AmbiencePlugin))
         .add_plugins((
             level::LevelPlugin,
             enemy::EnemyPlugin,

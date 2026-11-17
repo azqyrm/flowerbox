@@ -207,6 +207,12 @@ pub const PARRY_STUN_TIME: f32 = 1.8;
 /// Damage multiplier for hitting a stunned (parried) character: the riposte.
 pub const RIPOSTE_MULT: f32 = 2.5;
 
+// ── Ambience (`crate::ambience`) ──
+/// Cross-fade between two areas' soundscapes (s).
+pub const AMBIENCE_FADE: f32 = 3.0;
+/// Overall loudness of the soundscapes (× master volume).
+pub const AMBIENCE_VOLUME: f32 = 0.35;
+
 // ── Party wipes and spectating (online) ──
 /// Every player composted within this many seconds of each other (or still dead) = a wipe: the
 /// world resets as after a rest.

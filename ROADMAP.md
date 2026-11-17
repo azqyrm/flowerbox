@@ -569,13 +569,13 @@ Decisions:
 - Bosses and beasts can't be backstabbed (not "small humanoid"); bosses can be riposted after a stance break.
 
 Steps:
-- [ ] Ambience: synthesised looping beds per `Area` (noise drones, filtered wind/water, choir pads, heartbeats), area lookup from the player position, cross-fade, volume setting
+- [x] Ambience: synthesised looping beds per `Area` (noise drones, filtered wind/water, choir pads, heartbeats), area lookup from the player position, cross-fade, volume setting
 - [x] Stance component + weapon `stance_damage` + armour `stance` + creature base stance; drain; stagger = stance break; HUD bar (player) + enemy bar; online (host owns enemy stance; damage carries stance damage)
 - [x] Criticals: backstab / riposte detection, the critical action (pin → thrust → wrench out), victim pose, damage multiplier, sound + sparks/blood, online
 - [x] Light: `Light` counter in save, HUD counter, per-kind `light` in `EnemyDef`, `LightShare` modes (Everyone / Attackers / Nearby), host grants online
 - [x] Party wipe → world reset (online, all dead within `WIPE_WINDOW`), offline unchanged
 - [x] Boss spectating: dead players in a boss fight spectate survivors (camera follows, Q/E to cycle), last death → everyone respawns, boss + bar + fog gate reset
-- [ ] Docs, tests, merge `systems` → `master`
+- [x] Docs, tests, merge `systems` → `master`
 
 ### Phase 8.18 — Level 3 "The Drowned Library" (3 floors, after the Thorned Saint) (user request, 2026-11-17)
 Request (pasted brief): a dark, interconnected 3-floor library reached from the cathedral boss room; unique layouts, enemies, traps and exploration per floor; stairs and ladders between floors; a challenging boss with unique attacks, animations and boss bar on floor 3; secrets, rewards, challenging encounters; reuse systems; backstab (covered by 8.17).
@@ -939,3 +939,4 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - Wipe (host, `net::world::host_wipe_watch`): a player is "down" while dead or for `WIPE_WINDOW` (6 s) after falling; when every player in the session is down and someone fell since the last wipe, the host resets the world (`RestComplete`, nobody kneels so nobody is restored) and sends `WorldEvent::Wipe` (guests do the same; notice "All were composted: the world stirs anew"). Offline nothing changed (every death resets).
   - Spectating (`spectate.rs`): online, if you fall within `SPECTATE_RANGE` (40 m) of a living boss while another player within that range of it still lives, your `DeathSequence` holds at `SPECTATE_AT` (3 s, the death text fades) — no fade to black, no respawn — and `camera::CameraFocus` follows a survivor (Q / E switch), label "Watching X fight on". When the boss falls or no survivor is left the sequence continues (fade, respawn at the sunflower). The last survivor falling makes it a wipe → boss, its HP and bar reset with the world for everyone.
   - Test recipe: host `FLOWERBOX_AUTOPILOT=mp FLOWERBOX_MP_HP=100000 FLOWERBOX_POS=0,136,3.14 FLOWERBOX_MP_DIE_AT=12 … --host`, guest `… FLOWERBOX_MP_HP=100000 FLOWERBOX_MP_DIE_AT=26 --join`: host spectates, guest falls, both get the wipe and respawn. `FLOWERBOX_MP_DIE_AT` waits out hit immunity now.
+- **N37 (2026-11-17) — area ambience (Phase 8.17):** `ambience.rs`. Each level room may name `ambience: Some(Forge)` etc. (`RoomDef::ambience`; default by theme: Sunken → Halls, Gothic → Cathedral); outside every room within the arena radius = Arena; on stairs / doorways (no room cell, `Layout::room_at`) the last area holds. Beds (24 s, seam cross-faded, normalised) are synthesised on a background thread at start-up (`BedBank`) and played non-spatially, looping; switching areas cross-fades over `AMBIENCE_FADE` (sine-eased), loudness `AMBIENCE_VOLUME` × master volume. Kinds: Arena (wind + low fifth), Halls (drips, damp drone), Forge (fire rumble, crackle, far anvil), Cathedral (far "ah" choir in A minor + vault wind), Crypt (deep drone, whispers), Boss (throbbing tritone cluster, booms). New levels add a variant + its synthesis branch. Not judged by ear in this session (no audio here) — tune by listening.
