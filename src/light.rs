@@ -80,7 +80,7 @@ fn record_attackers(
                 s.0.insert(attacker);
             }
             Ok(None) => {
-                commands.entity(t.target).insert(StruckBy(HashSet::from([attacker])));
+                commands.entity(t.target).try_insert(StruckBy(HashSet::from([attacker])));
             }
             Err(_) => {}
         }

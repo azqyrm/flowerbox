@@ -143,7 +143,7 @@ fn pick_critical(
         ctrl.velocity = Vec3::ZERO;
         action.start(ActiveAction::new(ActionKind::Critical(kind), dir, wielded.class_for(hand)));
         intent.buffered = None;
-        commands.entity(me).insert(CriticalStrike { victim, kind, landed: false });
+        commands.entity(me).try_insert(CriticalStrike { victim, kind, landed: false });
         pins.write(PinRequest { victim, kind, facing: victim_facing });
         info!("CRITICAL {kind:?} on {victim}");
     }
@@ -170,7 +170,7 @@ fn land_critical(
 ) {
     for (me, tf, action, mut strike, wielded) in &mut attackers {
         let Some(cur) = action.current.filter(|c| c.kind == ActionKind::Critical(strike.kind)) else {
-            commands.entity(me).remove::<CriticalStrike>();
+            commands.entity(me).try_remove::<CriticalStrike>();
             continue;
         };
         if strike.landed || cur.elapsed < cur.def.startup {

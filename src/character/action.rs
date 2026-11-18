@@ -783,10 +783,10 @@ pub(super) fn tick_action(
         }
         match (iframes, invulnerable) {
             (true, false) => {
-                commands.entity(entity).insert(Invulnerable);
+                commands.entity(entity).try_insert(Invulnerable);
             }
             (false, true) => {
-                commands.entity(entity).remove::<Invulnerable>();
+                commands.entity(entity).try_remove::<Invulnerable>();
             }
             _ => {}
         }

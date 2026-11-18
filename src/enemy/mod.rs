@@ -212,7 +212,7 @@ fn enemy_death(
         match corpse {
             None if dead => {
                 info!("a {} falls", enemy.kind.def().name);
-                commands.entity(entity).insert(Corpse(0.0)).remove::<(Hurtbox, Targetable)>();
+                commands.entity(entity).try_insert(Corpse(0.0)).try_remove::<(Hurtbox, Targetable)>();
             }
             Some(mut c) => {
                 c.0 += time.delta_secs();

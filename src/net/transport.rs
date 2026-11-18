@@ -34,6 +34,8 @@ pub enum NetCmd {
     Datagram { to: Option<PeerId>, bytes: Vec<u8> },
     /// Reliable, ordered; `to: None` = every peer.
     Reliable { to: Option<PeerId>, bytes: Vec<u8> },
+    /// Host: close one peer's connection (it's reported as `PeerLeft`).
+    Kick(PeerId),
     Leave,
 }
 
@@ -132,6 +134,11 @@ async fn net_main(mut cmds: tmpsc::UnboundedReceiver<NetCmd>, events: mpsc::Send
             NetCmd::Reliable { to, bytes } => {
                 for (_, peer) in targets(&peers, to) {
                     let _ = peer.1.send(bytes.clone());
+                }
+            }
+            NetCmd::Kick(id) => {
+                if let Some(conn) = peers.lock().ok().and_then(|p| p.get(&id).map(|peer| peer.conn.clone())) {
+                    conn.close(1u32.into(), b"silent");
                 }
             }
             NetCmd::Leave => {

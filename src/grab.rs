@@ -107,7 +107,7 @@ fn pounce_grabs(
         }
         debug!("caught while {:?}", vaction.current.map(|a| (a.kind, a.elapsed)));
         vaction.force(ActionKind::Grabbed, -fwd);
-        commands.entity(victim).insert(Grabbed { by: creature, bitten: false });
+        commands.entity(victim).try_insert(Grabbed { by: creature, bitten: false });
         let into_leap = action.current.map_or(0.0, |a| a.elapsed - a.def.startup);
         info!("grabbed by {creature}! ({into_leap:.2} s into the leap)");
         return;
@@ -126,7 +126,7 @@ fn hold_grabbed(
     let dt = time.delta_secs().max(1e-4);
     for (victim, mut grab, tf, mut ctrl, mut action) in &mut victims {
         let Some(held) = action.current.filter(|a| a.kind == ActionKind::Grabbed) else {
-            commands.entity(victim).remove::<Grabbed>();
+            commands.entity(victim).try_remove::<Grabbed>();
             continue;
         };
         let holder = grabbers.get(grab.by).ok().filter(|(_, _, a)| a.current.is_some_and(|c| c.kind == ActionKind::Pounce));
@@ -134,7 +134,7 @@ fn hold_grabbed(
             // The creature stopped (killed, staggered): dropped, no bite.
             info!("let go");
             action.force(ActionKind::Hurt, Vec3::ZERO);
-            commands.entity(victim).remove::<Grabbed>();
+            commands.entity(victim).try_remove::<Grabbed>();
             continue;
         };
         // Kept in front of the jaws (walls still stop us: the controller slides this velocity).

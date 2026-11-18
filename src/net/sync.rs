@@ -112,7 +112,7 @@ impl Default for NextEnemyId {
 /// Gives every new real enemy its id.
 fn tag_enemies(mut commands: Commands, mut next: ResMut<NextEnemyId>, new: Query<Entity, (With<Enemy>, Without<Remote>, Without<EnemyNetId>)>) {
     for e in &new {
-        commands.entity(e).insert(EnemyNetId(next.0));
+        commands.entity(e).try_insert(EnemyNetId(next.0));
         next.0 += 1;
     }
 }

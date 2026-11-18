@@ -115,7 +115,7 @@ fn sword_hits(
     let dt = time.delta_secs();
     for (entity, tf, action, spec, rig, wielded, team, hits, local_player, remote, pvp, buff) in &mut attackers {
         let Some(mut hits) = hits else {
-            commands.entity(entity).insert(SwingHits::default());
+            commands.entity(entity).try_insert(SwingHits::default());
             continue;
         };
         if hits.serial != action.serial {
@@ -226,7 +226,7 @@ fn bite_hits(
     let dt = time.delta_secs();
     for (entity, tf, action, spec, rig, equipped, team, hits, remote) in &mut biters {
         let Some(mut hits) = hits else {
-            commands.entity(entity).insert(SwingHits::default());
+            commands.entity(entity).try_insert(SwingHits::default());
             continue;
         };
         if hits.serial != action.serial {

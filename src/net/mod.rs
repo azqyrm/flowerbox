@@ -52,6 +52,9 @@ impl Plugin for NetPlugin {
 
 /// Host + 4 guests.
 pub const MAX_PLAYERS: u32 = 5;
+/// Host: a guest unheard of for this long (s) gives up its place when someone joins a full
+/// session (a crashed game is only noticed after QUIC's 10 s idle timeout; guests send 30 Hz).
+pub const STALE_PEER: f32 = 3.0;
 const CODE_PREFIX: &str = "FBX1-";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -78,6 +81,8 @@ pub struct NetSession {
     pub status: String,
     /// Host: connected peers and their player ids.
     pub peers: HashMap<PeerId, NetId>,
+    /// Host: when each peer was last heard from (`Time::elapsed_secs`).
+    pub heard: HashMap<PeerId, f32>,
     /// Everyone's name, by player id (the host decides them; see `names.rs`).
     pub names: HashMap<NetId, String>,
 }
@@ -190,13 +195,18 @@ fn command_line(link: Res<NetLink>, mut session: ResMut<NetSession>) {
 
 /// Network thread → Bevy: session bookkeeping here, game messages to [`NetInbox`].
 fn pump_events(
+    time: Res<Time>,
     link: Res<NetLink>,
     settings: Res<Settings>,
     clipboard: Res<SystemClipboard>,
     mut session: ResMut<NetSession>,
     mut inbox: MessageWriter<NetInbox>,
 ) {
+    let now = time.elapsed_secs();
     for event in link.poll() {
+        if let NetEvent::Datagram(peer, _) | NetEvent::Reliable(peer, _) = &event {
+            session.heard.insert(*peer, now);
+        }
         match event {
             NetEvent::Hosting(addr) => {
                 let code = encode_code(&addr);
@@ -219,6 +229,7 @@ fn pump_events(
             NetEvent::PeerJoined(peer) => info!("peer {peer} connected"),
             NetEvent::PeerLeft(peer) => {
                 if session.is_host() {
+                    session.heard.remove(&peer);
                     if let Some(id) = session.peers.remove(&peer) {
                         info!("player {id} left");
                         // (Its name goes after the "left" notice: `world_inbox`.)
@@ -255,6 +266,21 @@ fn pump_events(
                         if version != PROTOCOL_VERSION {
                             refuse("Different game version.");
                             continue;
+                        }
+                        // Full, but someone has gone silent (crashed, cable pulled): their place
+                        // goes to the newcomer now rather than after the idle timeout.
+                        if session.peers.len() as u32 + 1 >= MAX_PLAYERS
+                            && let Some((&stale, &id)) = session
+                                .peers
+                                .iter()
+                                .filter(|(p, _)| now - session.heard.get(*p).copied().unwrap_or(0.0) > STALE_PEER)
+                                .min_by(|a, b| session.heard.get(a.0).partial_cmp(&session.heard.get(b.0)).unwrap_or(std::cmp::Ordering::Equal))
+                        {
+                            info!("player {id} (peer {stale}) is silent; dropped for a newcomer");
+                            link.send(NetCmd::Kick(stale));
+                            session.peers.remove(&stale);
+                            session.heard.remove(&stale);
+                            inbox.write(NetInbox::GuestLeft { id });
                         }
                         let used: Vec<NetId> = session.peers.values().copied().collect();
                         let Some(id) = (1..MAX_PLAYERS).map(|s| PLAYER_ID_BASE + s).find(|id| !used.contains(id)) else {

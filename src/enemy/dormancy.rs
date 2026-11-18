@@ -59,10 +59,10 @@ fn update_dormancy(
             continue;
         }
         if next {
-            commands.entity(entity).insert(Dormant);
+            commands.entity(entity).try_insert(Dormant);
             *vis = Visibility::Hidden;
         } else {
-            commands.entity(entity).remove::<Dormant>();
+            commands.entity(entity).try_remove::<Dormant>();
             *vis = Visibility::Inherited;
         }
     }
