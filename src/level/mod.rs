@@ -205,7 +205,6 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
         }
     };
     let ceiling_y = layout.ceiling();
-    let wall_top = layout.wall_top();
     let root = commands.spawn((Name::new(format!("Level: {}", layout.file.name)), Transform::default(), Visibility::default())).id();
     let mut block = |commands: &mut Commands, name: &str, min: Vec3, max: Vec3, mat: &Handle<StandardMaterial>, solid: bool| {
         let size = max - min;
@@ -246,18 +245,11 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
         }
     }
     let t = LEVEL_WALL_THICKNESS * 0.5;
+    let boxes = layout.wall_boxes();
     for (n, w) in layout.walls.iter().enumerate() {
-        let bottom = match w.kind {
-            EdgeKind::Wall => LEVEL_BOTTOM,
-            EdgeKind::Lintel(d) => layout.doors[d].floor + DOOR_HEIGHT,
-        };
-        let (min, max) = if w.along_x {
-            (Vec3::new(w.from - t, bottom, w.line - t), Vec3::new(w.to + t, wall_top, w.line + t))
-        } else {
-            (Vec3::new(w.line - t, bottom, w.from - t), Vec3::new(w.line + t, wall_top, w.to + t))
-        };
+        let (min, max) = boxes[n];
         // (A lintel above low parapets, under the open sky, has nothing to fill.)
-        if max.y > min.y + 0.01 {
+        if max.y > min.y + 0.01 && max.x > min.x + 0.01 && max.z > min.z + 0.01 {
             block(&mut commands, "Wall", min, max, &wall_mats[n % 2], true);
         }
         // A doorway between floors of different heights: wall below it, from the lower floor up
@@ -361,6 +353,27 @@ mod tests {
     #[test]
     fn the_storm_isle_builds_and_hangs_together() {
         hangs_together(4);
+    }
+
+    /// No two wall boxes overlap in any level: overlapping boxes share face planes, and with
+    /// neighbouring walls in alternating materials the shared faces flicker (z-fighting).
+    #[test]
+    fn no_wall_boxes_overlap() {
+        for (name, src) in LEVELS {
+            let l = Layout::build(ron::from_str(src).expect("level file parses"));
+            let boxes = l.wall_boxes();
+            let mut bad = vec![];
+            for i in 0..boxes.len() {
+                for j in i + 1..boxes.len() {
+                    let (a, b) = (boxes[i], boxes[j]);
+                    let o = a.1.min(b.1) - a.0.max(b.0);
+                    if o.x > 1e-3 && o.y > 1e-3 && o.z > 1e-3 {
+                        bad.push(format!("{:?} / {:?} by {o:?}", l.walls[i], l.walls[j]));
+                    }
+                }
+            }
+            assert!(bad.is_empty(), "{name}: {} overlapping wall pairs, e.g. {:?}", bad.len(), &bad[..bad.len().min(4)]);
+        }
     }
 
     /// Things on floors, torches on walls, ladders up walls to raised doorways, every room

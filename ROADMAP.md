@@ -606,6 +606,15 @@ We don't recreate an existing game (its name, characters, art or look). Interpre
 - [x] Open sky (no ceilings, parapets), rain + lightning, falling into the void kills, storm ambience
 - [x] Tests (reachability, ring stages, chest rolls), walk test, chest test, Stormcaller fight; merged `storm` → `master`
 
+### Phase 8.21 — Stability pass and release builds (user request, 2026-11-18)
+Network stability testing, flickering / overlapping surfaces (the cathedral's windows flicker at the top), general debugging, then release builds for Linux and Windows.
+- [x] Cathedral windows: one pointed-arch pane instead of three overlapping ones (N41)
+- [x] Walls: no two wall boxes overlap any more (collinear ends, T-junctions, jogs, lintels); test `no_wall_boxes_overlap` (N41)
+- [ ] Sweep the levels for other overlapping / flickering surfaces
+- [ ] Network stability: multi-instance runs (join, fights, rest, wipe, level travel, disconnect / rejoin)
+- [ ] Debugging: fix what the passes turn up; tests + clippy clean
+- [ ] Release builds: Linux (x86_64) and Windows (x86_64), packaged with `assets/`
+
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
 - [x] Pause menu (Esc): Resume / Settings / Quit; the world keeps running (Souls), gameplay input blocked
@@ -976,3 +985,4 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **The Stormcaller** (`enemy/stormfolk.rs`): 1.4× drowned figure, crown of sparking spikes, a lightning rod (greatsword class): Chain Lightning (Volley, `ProjectileKind::Spark`, fast and tight), Thunderclap (slam, radius 7.5), Dash Strike, Whirlwind; enraged below 50 %. Drops the **Stormcaller's Crown** (head: 8 %, stance 5; unique 430), +4500 Light.
   - The Light counter moved to the top right (the notification feed has the bottom right); its "+N" shadow now fades with it.
   - Known: the ring, rain and lightning run per machine (each player's own ring); the storm wall is far from the player in screenshots, check it in play.
+- **N41 (2026-11-18) Z-fighting: overlapping coplanar faces flicker.** The cathedral windows were three glass quads in one plane (the two leaning arch panes overlapped each other and the main pane): now one `arch_pane` mesh (a rectangle under an equilateral pointed arch, one convex fan). The level walls had the same fault on a larger scale: each wall run's box was padded by half a thickness at both ends, so collinear neighbours (a wall and the lintel over a door, two runs either side of a jog) and T-junctions overlapped in strips sharing face planes, and neighbouring walls alternate between two materials (`n % 2`), so those strips flickered. `Layout::wall_boxes` now sizes every box so none overlap: walls along Z stop at the face of a full wall along X; collinear (or jogging) neighbours meet halfway; walls along X stop at the face of a Z wall running on past them; lintels stop at the face of a wall across them; only free ends and corners get the half-thickness cap. Empty boxes (a jog shorter than a wall's thickness) are skipped. `no_wall_boxes_overlap` checks every level.

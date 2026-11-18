@@ -689,6 +689,74 @@ impl Layout {
         self.doors.iter().position(|d| d.along_x == along_x && d.line == line && (d.span.0..d.span.1).contains(&at))
     }
 
+    /// Each wall run's box (min, max), sized so that no two wall boxes overlap (overlapping
+    /// boxes share face planes and z-fight; neighbouring walls alternate materials):
+    /// - a wall along Z meeting a full wall along X stops at its face (the X wall covers the joint);
+    /// - an end at (or just short of) a collinear neighbour meets it halfway;
+    /// - a lintel's end near a wall across it stops at that wall's face (the wall's cap closes the corner);
+    /// - a short jog between two such walls can come out empty (min ≥ max): skip it;
+    /// - a wall along X ending against a wall along Z that runs on past it stops at its face;
+    /// - any other end is capped by half a wall's thickness (corners and free ends closed).
+    pub fn wall_boxes(&self) -> Vec<(Vec3, Vec3)> {
+        let t = LEVEL_WALL_THICKNESS * 0.5;
+        let wall_top = self.wall_top();
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        // A neighbour along the same line (or a parallel one a cell aside, where the wall jogs:
+        // their boxes overlap anyway) whose facing end is less than a wall's thickness beyond
+        // `at`: both meet halfway.
+        let neighbour = |w: &WallRun, at: f32, outward: f32| {
+            self.walls.iter().find_map(|o| {
+                let e = if outward > 0.0 { o.from } else { o.to };
+                let gap = (e - at) * outward;
+                (o != w && o.along_x == w.along_x && (o.line - w.line).abs() < 2.0 * t - 1e-3 && gap > -1e-3 && gap < 2.0 * t - 1e-3).then_some((at + e) * 0.5)
+            })
+        };
+        // A full-height wall across `line` (along the other axis) at `at`: touching it, or
+        // (`through`) running on past both sides.
+        let crossing = |along_x: bool, line: f32, at: f32, through: bool| {
+            self.walls.iter().any(|o| {
+                o.along_x == along_x && o.kind == EdgeKind::Wall && near(o.line, at) && if through { o.from + 1e-3 < line && line < o.to - 1e-3 } else { o.from - 1e-3 <= line && line <= o.to + 1e-3 }
+            })
+        };
+        // A full wall across a lintel near its end (within a wall's thickness): the lintel stops
+        // at that wall's face.
+        let jamb = |w: &WallRun, at: f32, outward: f32| {
+            self.walls.iter().find_map(|o| {
+                let inset = (at - o.line) * outward;
+                (o.along_x != w.along_x && o.kind == EdgeKind::Wall && inset > -1e-3 && inset < 2.0 * t - 1e-3 && o.from - 1e-3 <= w.line && w.line <= o.to + 1e-3)
+                    .then_some(o.line - outward * t)
+            })
+        };
+        self.walls
+            .iter()
+            .map(|w| {
+                let end = |at: f32, outward: f32| {
+                    if !w.along_x && crossing(true, w.line, at, false) {
+                        at - outward * t
+                    } else if let Some(face) = (w.kind != EdgeKind::Wall).then(|| jamb(w, at, outward)).flatten() {
+                        face // a lintel against a wall's end: the wall closes the corner
+                    } else if let Some(meet) = neighbour(w, at, outward) {
+                        meet
+                    } else if w.along_x && crossing(false, w.line, at, true) {
+                        at - outward * t
+                    } else {
+                        at + outward * t
+                    }
+                };
+                let (from, to) = (end(w.from, -1.0), end(w.to, 1.0));
+                let bottom = match w.kind {
+                    EdgeKind::Wall => LEVEL_BOTTOM,
+                    EdgeKind::Lintel(d) => self.doors[d].floor + DOOR_HEIGHT,
+                };
+                if w.along_x {
+                    (Vec3::new(from, bottom, w.line - t), Vec3::new(to, wall_top, w.line + t))
+                } else {
+                    (Vec3::new(w.line - t, bottom, from), Vec3::new(w.line + t, wall_top, to))
+                }
+            })
+            .collect()
+    }
+
     /// Every boundary that needs a wall, merged into straight runs.
     fn wall_runs(&self) -> Vec<WallRun> {
         let mut runs = vec![];
