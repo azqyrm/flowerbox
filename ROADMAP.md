@@ -612,7 +612,7 @@ Network stability testing, flickering / overlapping surfaces (the cathedral's wi
 - [x] Walls: no two wall boxes overlap any more (collinear ends, T-junctions, jogs, lintels); test `no_wall_boxes_overlap` (N41)
 - [x] Sweep the levels for other overlapping / flickering surfaces (`FLOWERBOX_ZFIGHT=1` scan, N41): stair headers, library water vs books, the library/cathedral join
 - [x] Network stability: multi-instance runs (5 players soak with fights and a death, crash + quick rejoin, host quitting, repeated fighting joins) (N42)
-- [ ] Debugging: fix what the passes turn up; tests + clippy clean
+- [x] Debugging: fix what the passes turn up; tests + clippy clean (the z-fight scan also skips the real save/settings now: `debug::test_run`)
 - [ ] Release builds: Linux (x86_64) and Windows (x86_64), packaged with `assets/`
 
 ### Phase 9 — Polish

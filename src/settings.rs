@@ -205,7 +205,7 @@ fn settings_path() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("FLOWERBOX_CONFIG_DIR") {
         return Some(PathBuf::from(dir).join("settings.ron"));
     }
-    if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() {
+    if crate::debug::test_run() {
         return None;
     }
     dirs::config_dir().map(|d| d.join("flowerbox").join("settings.ron"))

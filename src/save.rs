@@ -103,7 +103,7 @@ fn save_path() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("FLOWERBOX_DATA_DIR") {
         return Some(PathBuf::from(dir).join("save.ron"));
     }
-    if std::env::var("FLOWERBOX_AUTOPILOT").is_ok() || std::env::var("FLOWERBOX_SCREENSHOT").is_ok() {
+    if crate::debug::test_run() {
         return None;
     }
     dirs::data_dir().map(|d| d.join("flowerbox").join("save.ron"))

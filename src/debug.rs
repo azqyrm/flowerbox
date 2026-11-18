@@ -103,6 +103,12 @@ use crate::tuning::*;
 
 pub struct DebugPlugin;
 
+/// An automated run (autopilot, screenshot, z-fight scan): it never reads or writes the player's
+/// real save and settings (unless `FLOWERBOX_DATA_DIR` / `FLOWERBOX_CONFIG_DIR` point elsewhere).
+pub fn test_run() -> bool {
+    ["FLOWERBOX_AUTOPILOT", "FLOWERBOX_SCREENSHOT", "FLOWERBOX_ZFIGHT"].iter().any(|v| std::env::var(v).is_ok())
+}
+
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_overlay).add_systems(
