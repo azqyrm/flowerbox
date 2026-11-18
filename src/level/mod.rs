@@ -256,6 +256,7 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
         // (a ladder climbs it).
         if let EdgeKind::Lintel(d) = w.kind
             && layout.doors[d].floor - layout.doors[d].low > 0.3
+            && max.x > min.x
         {
             let riser_top = layout.doors[d].floor - 0.01;
             block(&mut commands, "Riser", Vec3::new(min.x, LEVEL_BOTTOM, min.z), Vec3::new(max.x, riser_top, max.z), &wall_mats[n % 2], true);
@@ -278,8 +279,11 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
             let edge = centre + down * end * length;
             let room_ceiling = layout.ceiling_at(edge + down * end.signum() * 0.5);
             if room_ceiling < ceiling_y - 0.05 && !layout.file.sky {
-                let half = across.abs() * width * 0.5 + down.abs() * LEVEL_WALL_THICKNESS * 0.5;
-                block(&mut commands, "Stair Header", Vec3::new(edge.x - half.x, room_ceiling, edge.y - half.y), Vec3::new(edge.x + half.x, ceiling_y + 0.3, edge.y + half.y), &wall_mats[0], true);
+                // Just inside the stair, between its side walls' faces and up to its ceiling:
+                // overlapping those (or the room's ceiling) would z-fight (N41).
+                let inside = edge - down * end.signum() * LEVEL_WALL_THICKNESS * 0.5;
+                let half = across.abs() * (width * 0.5 - t) + down.abs() * LEVEL_WALL_THICKNESS * 0.5;
+                block(&mut commands, "Stair Header", Vec3::new(inside.x - half.x, room_ceiling, inside.y - half.y), Vec3::new(inside.x + half.x, ceiling_y, inside.y + half.y), &wall_mats[0], true);
             }
         }
         let base = s.bottom - 0.5;

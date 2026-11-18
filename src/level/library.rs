@@ -178,7 +178,7 @@ pub fn spawn_library_prop(
         }
         PropKind::Water => {
             let (w, d) = (prop.size.0.max(1.0), prop.size.1.max(1.0));
-            piece(commands, meshes, root, Plane3d::default().mesh().size(w, d).into(), &m.water, t(0.0, 0.06, 0.0));
+            piece(commands, meshes, root, Plane3d::default().mesh().size(w, d).into(), &m.water, t(0.0, LIBRARY_WATER_DEPTH, 0.0));
         }
         PropKind::DartTrap => {
             // The plate, sunk a little; the face on the wall behind (opposite where darts fly).

@@ -68,6 +68,8 @@
 //!   `3.0:"Hello~you` types text (`~` = space; the chat, the name field).
 //! - `FLOWERBOX_THROW="secs:index"` → throws bag entry `index` out at that time (online tests).
 //! - `FLOWERBOX_WEAR=secs` → puts on a full set of armour at that time (online tests).
+//! - `FLOWERBOX_ZFIGHT=1` → after a warm-up, lists box and quad meshes that share a face plane
+//!   facing the same way and overlap in it (they z-fight: flicker), then exits (ROADMAP N41).
 //! - `FLOWERBOX_POS="x,z[,yaw]"` → start there (on the floor below; for screenshots in the level).
 
 use bevy::prelude::*;
@@ -127,6 +129,9 @@ impl Plugin for DebugPlugin {
         }
         if std::env::var("FLOWERBOX_FPS_LOG").is_ok() {
             app.add_systems(Update, log_fps);
+        }
+        if std::env::var("FLOWERBOX_ZFIGHT").is_ok() {
+            app.add_systems(Update, zfight_scan);
         }
         if std::env::var("FLOWERBOX_POS").is_ok() {
             app.add_systems(PostStartup, place_player);
@@ -2364,4 +2369,101 @@ fn weapons_script(
     if at(17.0) {
         exit.write(AppExit::Success);
     }
+}
+
+// ── Z-fighting scan (FLOWERBOX_ZFIGHT=1) ─────────────────────────────────
+
+/// Once, at frame 90: every axis-aligned box or quad mesh (24 or 4 vertices, rotations in
+/// quarter turns) as a world box; any two with a face in the same plane, facing the same way,
+/// overlapping in more than a sliver, get logged by name (or their parent's), then the app exits.
+#[allow(clippy::type_complexity)]
+fn zfight_scan(
+    mut frame: Local<u32>,
+    meshes: Res<Assets<Mesh>>,
+    q: Query<(Entity, &Mesh3d, &GlobalTransform, &bevy::camera::primitives::Aabb, &InheritedVisibility)>,
+    names: Query<&Name>,
+    parents: Query<&ChildOf>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    *frame += 1;
+    if *frame != 90 {
+        return;
+    }
+    let label = |mut e: Entity| {
+        let mut path = vec![];
+        for _ in 0..3 {
+            if let Ok(n) = names.get(e) {
+                path.push(n.as_str().to_string());
+            }
+            match parents.get(e) {
+                Ok(p) => e = p.parent(),
+                Err(_) => break,
+            }
+        }
+        if path.is_empty() { format!("{e:?}") } else { path.join(" < ") }
+    };
+    let mut boxes = vec![];
+    for (e, mesh, gt, aabb, vis) in &q {
+        if !vis.get() {
+            continue;
+        }
+        let Some(m) = meshes.get(&mesh.0) else { continue };
+        if !matches!(m.count_vertices(), 4 | 24) {
+            continue;
+        }
+        let a = gt.affine();
+        let cols = [a.matrix3.x_axis, a.matrix3.y_axis, a.matrix3.z_axis];
+        // Quarter-turn rotations only: each column along one axis.
+        if !cols.iter().all(|c| {
+            let c = c.abs();
+            let big = c.max_element();
+            c.element_sum() - big < 1e-4 * big.max(1.0)
+        }) {
+            continue;
+        }
+        let (c, h) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+        let mut lo = Vec3::splat(f32::MAX);
+        let mut hi = Vec3::splat(f32::MIN);
+        for k in 0..8 {
+            let s = Vec3::new(if k & 1 == 0 { -1.0 } else { 1.0 }, if k & 2 == 0 { -1.0 } else { 1.0 }, if k & 4 == 0 { -1.0 } else { 1.0 });
+            let p = gt.transform_point(c + h * s);
+            lo = lo.min(p);
+            hi = hi.max(p);
+        }
+        boxes.push((e, lo, hi));
+    }
+    // Bucket faces by (axis, side, plane at mm precision).
+    let mut faces: std::collections::HashMap<(usize, bool, i64), Vec<usize>> = default();
+    for (i, (_, lo, hi)) in boxes.iter().enumerate() {
+        for axis in 0..3 {
+            for (side, v) in [(false, lo[axis]), (true, hi[axis])] {
+                faces.entry((axis, side, (v * 1000.0).round() as i64)).or_default().push(i);
+            }
+        }
+    }
+    let mut found: std::collections::BTreeMap<String, (u32, String)> = default();
+    for ((axis, _, _), list) in &faces {
+        for x in 0..list.len() {
+            for y in x + 1..list.len() {
+                let (a, b) = (&boxes[list[x]], &boxes[list[y]]);
+                let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+                let ou = a.2[u].min(b.2[u]) - a.1[u].max(b.1[u]);
+                let ov = a.2[v].min(b.2[v]) - a.1[v].max(b.1[v]);
+                if ou > 0.02 && ov > 0.02 {
+                    let (la, lb) = (label(a.0), label(b.0));
+                    let key = if la < lb { format!("{la}  |  {lb}") } else { format!("{lb}  |  {la}") };
+                    let f = found.entry(key).or_default();
+                    f.0 += 1;
+                    if f.0 <= 2 {
+                        f.1 += &format!(" [{:.2}..{:.2} / {:.2}..{:.2}]", a.1, a.2, b.1, b.2);
+                    }
+                }
+            }
+        }
+    }
+    info!("z-fight scan: {} box/quad meshes, {} overlapping face pairs in {} kinds", boxes.len(), found.values().map(|f| f.0).sum::<u32>(), found.len());
+    for (k, (n, at)) in &found {
+        info!("z-fight: {n:>4} × {k}:{at}");
+    }
+    exit.write(AppExit::Success);
 }

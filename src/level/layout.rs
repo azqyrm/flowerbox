@@ -696,7 +696,9 @@ impl Layout {
     /// - a lintel's end near a wall across it stops at that wall's face (the wall's cap closes the corner);
     /// - a short jog between two such walls can come out empty (min ≥ max): skip it;
     /// - a wall along X ending against a wall along Z that runs on past it stops at its face;
-    /// - any other end is capped by half a wall's thickness (corners and free ends closed).
+    /// - any other end is capped by half a wall's thickness (corners and free ends closed);
+    /// - an archway joining another level on this one's edge has no lintel here (the other
+    ///   level's wall stands there), and walls meeting it stop at that wall's face.
     pub fn wall_boxes(&self) -> Vec<(Vec3, Vec3)> {
         let t = LEVEL_WALL_THICKNESS * 0.5;
         let wall_top = self.wall_top();
@@ -711,11 +713,22 @@ impl Layout {
                 (o != w && o.along_x == w.along_x && (o.line - w.line).abs() < 2.0 * t - 1e-3 && gap > -1e-3 && gap < 2.0 * t - 1e-3).then_some((at + e) * 0.5)
             })
         };
+        // The lintel over an archway on this level's edge, joining another level file: that
+        // level builds the wall there (a real door in its wall), so this one builds none.
+        let join = |o: &WallRun| {
+            let EdgeKind::Lintel(d) = o.kind else { return false };
+            let mid = (o.from + o.to) * 0.5;
+            let side = |s: f32| {
+                let off = s * (2.0 * t + 0.3);
+                self.floor_at(if o.along_x { Vec2::new(mid, o.line + off) } else { Vec2::new(o.line + off, mid) }).is_some()
+            };
+            self.doors[d].arch && side(-1.0) != side(1.0)
+        };
         // A full-height wall across `line` (along the other axis) at `at`: touching it, or
         // (`through`) running on past both sides.
         let crossing = |along_x: bool, line: f32, at: f32, through: bool| {
             self.walls.iter().any(|o| {
-                o.along_x == along_x && o.kind == EdgeKind::Wall && near(o.line, at) && if through { o.from + 1e-3 < line && line < o.to - 1e-3 } else { o.from - 1e-3 <= line && line <= o.to + 1e-3 }
+                o.along_x == along_x && (o.kind == EdgeKind::Wall || join(o)) && near(o.line, at) && if through { o.from + 1e-3 < line && line < o.to - 1e-3 } else { o.from - 1e-3 <= line && line <= o.to + 1e-3 }
             })
         };
         // A full wall across a lintel near its end (within a wall's thickness): the lintel stops
@@ -743,6 +756,9 @@ impl Layout {
                         at + outward * t
                     }
                 };
+                if join(w) {
+                    return (Vec3::ZERO, Vec3::ZERO);
+                }
                 let (from, to) = (end(w.from, -1.0), end(w.to, 1.0));
                 let bottom = match w.kind {
                     EdgeKind::Wall => LEVEL_BOTTOM,

@@ -249,6 +249,8 @@ pub const BILE_TICK: f32 = 0.5;
 pub const BILE_DAMAGE: f32 = 6.0;
 
 // ── Library traps (`crate::level::library`) ──
+/// The drowned floor's water above the floor (above the lowest book in a pile: equal heights z-fight).
+pub const LIBRARY_WATER_DEPTH: f32 = 0.07;
 /// A plate fires this long after it's stepped on, then rests this long (s).
 pub const DART_FUSE: f32 = 0.3;
 pub const DART_REARM: f32 = 2.5;
