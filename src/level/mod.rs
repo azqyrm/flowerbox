@@ -19,6 +19,7 @@ pub mod gothic;
 pub mod layout;
 pub mod library;
 pub mod womb;
+pub mod isle;
 pub mod props;
 pub mod riddle;
 
@@ -39,11 +40,12 @@ pub struct LevelPlugin;
 
 /// The levels loaded at start (asset path, embedded copy): the Sunken Halls north of the arena,
 /// the Cathedral of Ashes south of it.
-pub const LEVELS: [(&str, &str); 4] = [
+pub const LEVELS: [(&str, &str); 5] = [
     ("levels/lvl1.ron", include_str!("../../assets/levels/lvl1.ron")),
     ("levels/lvl2.ron", include_str!("../../assets/levels/lvl2.ron")),
     ("levels/lvl3.ron", include_str!("../../assets/levels/lvl3.ron")),
     ("levels/lvl4.ron", include_str!("../../assets/levels/lvl4.ron")),
+    ("levels/lvl5.ron", include_str!("../../assets/levels/lvl5.ron")),
 ];
 
 /// Every loaded level.
@@ -59,7 +61,7 @@ impl Levels {
 
 impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((door::DoorPlugin, props::PropsPlugin, riddle::RiddlePlugin, library::LibraryPlugin, womb::WombPlugin));
+        app.add_plugins((door::DoorPlugin, props::PropsPlugin, riddle::RiddlePlugin, library::LibraryPlugin, womb::WombPlugin, isle::IslePlugin));
         let mut levels = vec![];
         let mut openings = vec![];
         let mut riddles = vec![];
@@ -68,7 +70,9 @@ impl Plugin for LevelPlugin {
             info!("level \"{}\": {} rooms, {} wall runs, {} doors", layout.file.name, layout.floors.len(), layout.walls.len(), layout.doors.len());
             let treasures: Vec<_> = layout.file.treasures.iter().map(|t| (t.id, t.item, layout.ground(t.at))).collect();
             app.world_mut().get_resource_or_init::<PickupLayout>().0.extend(treasures);
-            let unique: Vec<u32> = layout.file.enemies.iter().flat_map(|e| e.drops.iter().filter_map(|d| d.unique)).collect();
+            let mut unique: Vec<u32> = layout.file.enemies.iter().flat_map(|e| e.drops.iter().filter_map(|d| d.unique)).collect();
+            // A chest's item is found once per world, like a unique drop.
+            unique.extend(layout.file.props.iter().filter(|p| p.kind == layout::PropKind::Chest).map(|p| p.id));
             app.world_mut().get_resource_or_init::<UniqueDrops>().0.extend(unique);
             // Doors on the arena's ring wall open a gap in it.
             openings.extend(
@@ -168,6 +172,14 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
             stone(materials, 0.4, 0.29, 0.2, Some(Tex::Planks)),
             Some(3.0),
         ),
+        // Wet dark rock, rain-slick slabs.
+        Theme::Storm => (
+            stone(materials, 0.2, 0.22, 0.25, Some(Tex::Flagstones)),
+            [stone(materials, 0.24, 0.25, 0.28, Some(Tex::Bricks)), stone(materials, 0.21, 0.22, 0.25, Some(Tex::Bricks))],
+            stone(materials, 0.1, 0.1, 0.12, None),
+            stone(materials, 0.26, 0.27, 0.3, Some(Tex::Flagstones)),
+            Some(2.5),
+        ),
         // Living flesh: everything glows a little and throbs with the heartbeat (`womb::pulse_flesh`).
         Theme::Flesh => {
             let mut flesh = |c: Color, glow: LinearRgba| {
@@ -218,6 +230,9 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
     for f in &layout.floors {
         let room_ceiling = layout.room_ceiling(f.room);
         for (a, b) in ceiling((f.min, f.max)) {
+            if layout.file.sky {
+                break; // under the open sky
+            }
             block(&mut commands, "Ceiling", Vec3::new(a.x, room_ceiling, a.y), Vec3::new(b.x, room_ceiling + 0.3, b.y), &ceiling_mat, true);
         }
         // No floor under stairs: their ramp is solid, and a floor slab reaching under a stair
@@ -241,7 +256,10 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
         } else {
             (Vec3::new(w.line - t, bottom, w.from - t), Vec3::new(w.line + t, wall_top, w.to + t))
         };
-        block(&mut commands, "Wall", min, max, &wall_mats[n % 2], true);
+        // (A lintel above low parapets, under the open sky, has nothing to fill.)
+        if max.y > min.y + 0.01 {
+            block(&mut commands, "Wall", min, max, &wall_mats[n % 2], true);
+        }
         // A doorway between floors of different heights: wall below it, from the lower floor up
         // (a ladder climbs it).
         if let EdgeKind::Lintel(d) = w.kind
@@ -254,7 +272,9 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
 
     // Stairs: an invisible ramp to walk on, and steps to look at.
     for s in &layout.stairs {
-        block(&mut commands, "Stair Ceiling", Vec3::new(s.min.x, ceiling_y, s.min.y), Vec3::new(s.max.x, ceiling_y + 0.3, s.max.y), &ceiling_mat, true);
+        if !layout.file.sky {
+            block(&mut commands, "Stair Ceiling", Vec3::new(s.min.x, ceiling_y, s.min.y), Vec3::new(s.max.x, ceiling_y + 0.3, s.max.y), &ceiling_mat, true);
+        }
         let down = s.down.vec();
         let size = s.max - s.min;
         let (length, width) = if s.down.is_ns() { (size.y, size.x) } else { (size.x, size.y) };
@@ -265,7 +285,7 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
         for end in [-0.5, 0.5] {
             let edge = centre + down * end * length;
             let room_ceiling = layout.ceiling_at(edge + down * end.signum() * 0.5);
-            if room_ceiling < ceiling_y - 0.05 {
+            if room_ceiling < ceiling_y - 0.05 && !layout.file.sky {
                 let half = across.abs() * width * 0.5 + down.abs() * LEVEL_WALL_THICKNESS * 0.5;
                 block(&mut commands, "Stair Header", Vec3::new(edge.x - half.x, room_ceiling, edge.y - half.y), Vec3::new(edge.x + half.x, ceiling_y + 0.3, edge.y + half.y), &wall_mats[0], true);
             }
@@ -336,6 +356,11 @@ mod tests {
     #[test]
     fn the_womb_builds_and_hangs_together() {
         hangs_together(3);
+    }
+
+    #[test]
+    fn the_storm_isle_builds_and_hangs_together() {
+        hangs_together(4);
     }
 
     /// Things on floors, torches on walls, ladders up walls to raised doorways, every room

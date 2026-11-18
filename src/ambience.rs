@@ -65,10 +65,12 @@ pub enum Ambience {
     Womb,
     /// The Heart chamber: the heartbeat loud and quick, a low choir of moans.
     WombHeart,
+    /// The Storm Isle: howling wind, rain hissing on rock, the sea below, far thunder.
+    Storm,
 }
 
 impl Ambience {
-    pub const ALL: [Ambience; 10] = [
+    pub const ALL: [Ambience; 11] = [
         Ambience::Arena,
         Ambience::Halls,
         Ambience::Forge,
@@ -79,6 +81,7 @@ impl Ambience {
         Ambience::Archive,
         Ambience::Womb,
         Ambience::WombHeart,
+        Ambience::Storm,
     ];
 
     /// The default of a level theme.
@@ -88,6 +91,7 @@ impl Ambience {
             Theme::Gothic => Ambience::Cathedral,
             Theme::Library => Ambience::Library,
             Theme::Flesh => Ambience::Womb,
+            Theme::Storm => Ambience::Storm,
         }
     }
 
@@ -104,6 +108,7 @@ impl Ambience {
             Ambience::Archive => 0.5,
             Ambience::Womb => 0.65,
             Ambience::WombHeart => 0.65,
+            Ambience::Storm => 0.7,
         }
     }
 }
@@ -262,6 +267,7 @@ pub fn bed(kind: Ambience) -> Vec<f32> {
         Ambience::Archive => (0.2, 4.0),
         Ambience::Womb => (0.3, 2.5),
         Ambience::WombHeart => (0.25, 3.0),
+        Ambience::Storm => (0.15, 4.0),
         _ => (0.0, 0.0),
     };
     let mut at = 0.5;
@@ -392,6 +398,24 @@ pub fn bed(kind: Ambience) -> Vec<f32> {
                     .sum();
                 let shimmer = bp.step(n, 5000.0 + 1500.0 * (t * 0.3).sin(), 6.0) * 0.12 * breathe(t, 6.0, 0.0, 0.2);
                 hum + chimes + shimmer
+            }
+            Ambience::Storm => {
+                // Wind howling through a sweeping band, the hiss of rain, the surf's slow swell,
+                // a long thunder roll now and then.
+                let sweep = 350.0 + 300.0 * (t * 0.37).sin() + 120.0 * (t * 1.3).sin();
+                let wind = bp.step(n, sweep, 2.5) * 0.9 * breathe(t, 6.0, 0.0, 0.4);
+                let hiss = (n - lp2.step(n, 2500.0)) * 0.25;
+                let surf = lp.step(n, 200.0) * 1.6 * breathe(t, 8.0, 1.5, 0.3);
+                let thunder: f32 = events
+                    .iter()
+                    .filter(|(s, _)| t >= *s && t < *s + 4.0)
+                    .map(|(s, _)| {
+                        let d = t - s;
+                        (d * 8.0).min(1.0) * (-d * 1.1).exp() * (1.0 + 0.5 * (d * 17.0).sin())
+                    })
+                    .sum();
+                let rumble = bp2.step(n, 60.0, 1.2) * thunder * 3.0;
+                wind + hiss + surf + rumble
             }
             Ambience::Womb | Ambience::WombHeart => {
                 // The heartbeat: a lub-dub of low thumps (a beat of 1.1 s here, 0.75 s at the

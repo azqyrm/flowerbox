@@ -88,6 +88,11 @@ pub enum AbilityId {
     CrushingEmbrace,
     /// A mother's wail: unblockable, very wide.
     Wail,
+    // ── The Stormcaller (the Storm Isle's boss) ──
+    /// The rod driven into the ground: a thunderclap shockwave.
+    Thunderclap,
+    /// Sparks thrown in a tight fan, fast.
+    ChainLightning,
 }
 
 /// What an ability does.
@@ -351,6 +356,35 @@ const WAIL: AbilityDef = AbilityDef {
     effect: AbilityEffect::Shriek { startup: 1.0, active: 0.6, recovery: 0.8, radius: 11.0, damage: 20.0 },
 };
 
+const THUNDERCLAP: AbilityDef = AbilityDef {
+    name: "Thunderclap",
+    icon: ItemIcon::Axe,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Slam {
+        swing: AttackSpec {
+            startup: 0.95,
+            active: 0.22,
+            recovery: 0.95,
+            cancel: 2.12,
+            stamina_cost: 0.0,
+            lunge: 1.0,
+            damage_mult: 1.4,
+            windup: SwingKey::new(0.0, -0.3, 0.0, 3.05),
+            strike: SwingKey::new(0.0, 0.5, 0.0, 0.55),
+            stance: Stance::Lunge,
+        },
+        radius: 7.5,
+        wave_mult: 0.9,
+    },
+};
+
+const CHAIN_LIGHTNING: AbilityDef = AbilityDef {
+    name: "Chain Lightning",
+    icon: ItemIcon::Sword,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Volley { startup: 0.6, active: 0.3, recovery: 0.6, count: 3, spread: 0.35, speed: 19.0, damage: 24.0, kind: crate::projectile::ProjectileKind::Spark },
+};
+
 const WARCRY: AbilityDef = AbilityDef {
     name: "Warcry",
     icon: ItemIcon::Axe,
@@ -376,6 +410,8 @@ impl AbilityId {
             AbilityId::BileSpray => &BILE_SPRAY,
             AbilityId::CrushingEmbrace => &CRUSHING_EMBRACE,
             AbilityId::Wail => &WAIL,
+            AbilityId::Thunderclap => &THUNDERCLAP,
+            AbilityId::ChainLightning => &CHAIN_LIGHTNING,
         }
     }
 

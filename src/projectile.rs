@@ -28,6 +28,8 @@ pub enum ProjectileKind {
     Ink,
     /// A gob of glowing green-yellow bile (the Matron).
     Bile,
+    /// A crackling blue-white spark (the Stormcaller).
+    Spark,
 }
 
 /// Fling one.
@@ -55,6 +57,7 @@ struct ProjectileAssets {
     dart: (Handle<Mesh>, Handle<StandardMaterial>),
     ink: (Handle<Mesh>, Handle<StandardMaterial>),
     bile: (Handle<Mesh>, Handle<StandardMaterial>),
+    spark: (Handle<Mesh>, Handle<StandardMaterial>),
 }
 
 const LIFE: f32 = 4.0;
@@ -75,6 +78,10 @@ fn assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut material
                 ..default()
             }),
         ),
+        spark: (
+            meshes.add(Sphere::new(0.09).mesh().ico(1).unwrap()),
+            materials.add(StandardMaterial { base_color: Color::srgb(0.8, 0.9, 1.0), emissive: LinearRgba::rgb(8.0, 10.0, 18.0), unlit: true, ..default() }),
+        ),
         bile: (
             meshes.add(Sphere::new(0.12).mesh().ico(2).unwrap()),
             materials.add(StandardMaterial {
@@ -94,6 +101,7 @@ fn spawn(mut commands: Commands, assets: Option<Res<ProjectileAssets>>, mut shot
             ProjectileKind::Dart => &assets.dart,
             ProjectileKind::Ink => &assets.ink,
             ProjectileKind::Bile => &assets.bile,
+            ProjectileKind::Spark => &assets.spark,
         };
         // A dart lies along its flight (the cylinder's axis is +Y).
         let rot = Quat::from_rotation_arc(Vec3::Y, shot.vel.normalize_or(Vec3::NEG_Z));
@@ -107,6 +115,7 @@ fn spawn(mut commands: Commands, assets: Option<Res<ProjectileAssets>>, mut shot
         let glow = match shot.kind {
             ProjectileKind::Ink => Some(Color::srgb(0.6, 0.3, 1.0)),
             ProjectileKind::Bile => Some(Color::srgb(0.7, 1.0, 0.2)),
+            ProjectileKind::Spark => Some(Color::srgb(0.6, 0.8, 1.0)),
             ProjectileKind::Dart => None,
         };
         if let Some(color) = glow {

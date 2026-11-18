@@ -97,6 +97,9 @@ pub struct LevelFile {
     /// Ladders (`crate::ladder`).
     #[serde(default)]
     pub ladders: Vec<LadderDef>,
+    /// Under the open sky: no ceilings (the walls are parapets as high as `ceiling`).
+    #[serde(default)]
+    pub sky: bool,
 }
 
 fn default_seed_base() -> u32 {
@@ -115,6 +118,8 @@ pub enum Theme {
     Library,
     /// Living flesh that throbs with a heartbeat (the Womb).
     Flesh,
+    /// Wet, wind-scoured rock under an open sky (the Storm Isle).
+    Storm,
 }
 
 /// A ladder against a wall: its foot at `at` (on the lower floor), the climber facing `facing`
@@ -200,6 +205,15 @@ pub enum PropKind {
     FleshPillar,
     /// A giant heart hanging from vessels, beating (the boss chamber).
     Heart,
+    // ── The Storm Isle (`crate::level::isle`) ──
+    /// A heap of weathered boulders (`size.0` = scale). Solid.
+    Rock,
+    /// A broken stretch of wall (`size` = length, height). Solid.
+    Ruin,
+    /// A loot chest (`size.0` = tier 1..3, `id` = its unique pickup id).
+    Chest,
+    /// The storm's eye: the ring closes from `size.0` metres round it to `size.1` (`crate::storm`).
+    StormEye,
 }
 
 #[derive(Deserialize, Debug, Clone)]
