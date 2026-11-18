@@ -1,0 +1,72 @@
+// Level 5: "The Storm Isle", west of the arena, under the open sky (an original level built on
+// battle-royale mechanics, for a Souls player). World metres (x east, y = world z growing south).
+//
+// Route: the arena's west door 60 → stairs up to the Causeway (the Lookout: sunflower 51) → the
+// Storm Field. Step onto it and the storm ring starts closing on the eye in stages; outside it the
+// storm burns. Loot chests in three tiers lie about the field (grey, violet, gold). The field's
+// dwellers converge as the ring closes; at the eye, among standing stones, waits the Stormcaller.
+(
+    name: "The Storm Isle",
+    px_per_m: 1.0,
+    origin_px: (0.0, 0.0),
+    origin_world: (0.0, 0.0),
+    theme: Storm,
+    sky: true,
+    ceiling: Some(2.6),
+    seed_base: 900,
+    rooms: [
+        (name: "The Causeway", floor: 2.0, rects: [(-46.0, -1.5, -30.0, 1.5)]),
+        (name: "The Lookout", floor: 2.0, rects: [(-44.0, 1.5, -36.0, 8.0)]),
+        (name: "The Storm Field", floor: 2.0, rects: [(-100.0, -30.0, -46.0, 30.0)]),
+    ],
+    stairs: [
+        (rect: (-30.0, -1.5, -18.0, 1.5), down: East, top: 2.0, bottom: 0.0),
+    ],
+    doors: [
+        // The arena's west wall.
+        (id: 60, at: (-18.0, 0.0), width: 2.6, hinge: South, opens: West),
+        (id: 61, at: (-46.0, 0.0), width: 2.6, hinge: North, opens: West, arch: true),
+        (id: 62, at: (-40.0, 1.5), width: 2.6, hinge: West, opens: South, arch: true),
+    ],
+    enemies: [
+        (kind: Hollow, at: (-52.0, -10.0), patrol: Some((-52.0, 10.0))),
+        (kind: Hollow, at: (-60.0, 18.0)),
+        (kind: Hollow, at: (-62.0, -22.0)),
+        (kind: Hollow, at: (-88.0, 12.0), patrol: Some((-88.0, -12.0))),
+        (kind: Hollow, at: (-94.0, -20.0)),
+        (kind: Hollow, at: (-84.0, 24.0)),
+        (kind: Acolyte, at: (-58.0, 6.0)),
+        (kind: Acolyte, at: (-80.0, -14.0)),
+        (kind: Acolyte, at: (-72.0, 22.0), patrol: Some((-60.0, 22.0))),
+        (kind: Warg, at: (-92.0, 2.0)),
+        (kind: Warg, at: (-66.0, -26.0)),
+        (kind: Stormcaller, at: (-73.0, 0.0), drops: [(item: StormCrown, unique: Some(430))]),
+    ],
+    treasures: [
+        (id: 350, item: HopCone, at: (-42.5, 7.0)),
+    ],
+    sunflowers: [
+        (id: 51, at: (-40.0, 5.0), facing: South),
+    ],
+    props: [
+        (kind: StormEye, at: (-73.0, 0.0), size: (30.0, 9.0)),
+        // Chests: tier in size.0, their id a unique pickup.
+        (kind: Chest, at: (-55.0, -21.0), facing: East, size: (1.0, 0.0), id: 500),
+        (kind: Chest, at: (-91.0, 21.0), facing: East, size: (1.0, 0.0), id: 501),
+        (kind: Chest, at: (-96.0, -26.0), facing: North, size: (1.0, 0.0), id: 502),
+        (kind: Chest, at: (-51.0, 24.0), facing: East, size: (1.0, 0.0), id: 503),
+        (kind: Chest, at: (-81.0, -26.0), facing: North, size: (2.0, 0.0), id: 504),
+        (kind: Chest, at: (-62.0, 27.0), facing: South, size: (2.0, 0.0), id: 505),
+        (kind: Chest, at: (-73.0, -6.5), facing: North, size: (3.0, 0.0), id: 506),
+        // Ruins and rocks to fight round.
+        (kind: Ruin, at: (-56.0, -6.0), facing: East, size: (6.0, 2.2)),
+        (kind: Ruin, at: (-62.0, 12.0), facing: North, size: (8.0, 1.6)),
+        (kind: Ruin, at: (-86.0, -6.0), facing: East, size: (7.0, 2.4)),
+        (kind: Ruin, at: (-84.0, 18.0), facing: North, size: (5.0, 1.8)),
+        (kind: Ruin, at: (-70.0, -18.0), facing: North, size: (9.0, 2.0)),
+        (kind: Rock, at: (-50.0, -26.0), size: (1.4, 0.0)), (kind: Rock, at: (-96.0, 8.0), size: (1.8, 0.0)),
+        (kind: Rock, at: (-78.0, 26.0), size: (1.2, 0.0)), (kind: Rock, at: (-64.0, -12.0), size: (1.0, 0.0)),
+        (kind: Rock, at: (-90.0, -16.0), size: (1.5, 0.0)), (kind: Rock, at: (-54.0, 16.0), size: (1.1, 0.0)),
+        (kind: Bones, at: (-75.0, 5.0)), (kind: Bones, at: (-69.0, -3.0)),
+    ],
+)

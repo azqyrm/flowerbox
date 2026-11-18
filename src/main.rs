@@ -15,6 +15,7 @@ mod combat;
 mod critical;
 mod light;
 mod spectate;
+mod storm;
 mod debug;
 mod enemy;
 mod grab;
@@ -80,7 +81,7 @@ fn main() {
             critical::CriticalPlugin,
             light::LightPlugin,
         ))
-        .add_plugins((spectate::SpectatePlugin, ambience::AmbiencePlugin, ladder::LadderPlugin, projectile::ProjectilePlugin))
+        .add_plugins((spectate::SpectatePlugin, ambience::AmbiencePlugin, ladder::LadderPlugin, projectile::ProjectilePlugin, storm::StormPlugin))
         .add_plugins((
             level::LevelPlugin,
             enemy::EnemyPlugin,

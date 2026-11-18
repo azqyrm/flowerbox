@@ -33,6 +33,7 @@ pub mod fighter;
 pub mod kinds;
 pub mod scholars;
 pub mod womb;
+pub mod stormfolk;
 pub mod warg;
 
 pub struct EnemyPlugin;
@@ -110,6 +111,8 @@ pub enum EnemyKind {
     Unborn,
     /// The Matron, the Womb's boss.
     Matron,
+    /// The Stormcaller, the Storm Isle's boss.
+    Stormcaller,
 }
 
 pub use crate::character::Dormant;

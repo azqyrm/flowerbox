@@ -16,7 +16,7 @@ use crate::items::inventory::EquipSlot;
 use crate::weapon::{AttackHand, Hand, WeaponClass};
 
 /// Bumped whenever the protocol changes; peers with another version are refused.
-pub const PROTOCOL_VERSION: u16 = 17;
+pub const PROTOCOL_VERSION: u16 = 18;
 
 /// The equipment other players see on you (rings and the quick item don't show).
 pub const SHOWN_SLOTS: [EquipSlot; 6] =
@@ -155,6 +155,8 @@ pub enum Reliable {
     Pin { target: NetId, kind: crate::character::action::CritKind, facing: f32 },
     /// Host → guest: you earned `amount` Light (a kill in the host's world).
     Light { amount: u32 },
+    /// Guest → host: I'd like to open loot chest `id` (`level::isle`).
+    RequestChest { id: u32 },
 }
 
 /// An item on the floor.

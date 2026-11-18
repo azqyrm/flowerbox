@@ -1,4 +1,4 @@
-//! The Light counter, bottom right (Souls' rune / soul count): a small glowing sun and the amount.
+//! The Light counter, top right (under the online status; the notification feed has the bottom right) (Souls' rune / soul count): a small glowing sun and the amount.
 //! A gain shows "+N" above it for a while (gains in quick succession add up) and the number counts
 //! up to the new total.
 
@@ -43,9 +43,9 @@ fn spawn_counter(mut commands: Commands, assets: Res<AssetServer>) {
             Name::new("HUD Light"),
             Node {
                 position_type: PositionType::Absolute,
-                right: Val::Px(32.0),
-                bottom: Val::Px(32.0),
-                flex_direction: FlexDirection::Column,
+                right: Val::Px(28.0),
+                top: Val::Px(44.0),
+                flex_direction: FlexDirection::ColumnReverse,
                 align_items: AlignItems::FlexEnd,
                 row_gap: Val::Px(2.0),
                 ..default()
@@ -114,7 +114,7 @@ fn update_counter(
     mut gains: MessageReader<LightGained>,
     purse: Query<&LightPurse, With<Player>>,
     mut amount: Query<&mut Text, (With<LightAmount>, Without<LightGain>)>,
-    mut gain: Query<(&mut Text, &mut TextColor), (With<LightGain>, Without<LightAmount>)>,
+    mut gain: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<LightGain>, Without<LightAmount>)>,
 ) {
     let dt = time.delta_secs();
     let total: u32 = gains.read().map(|g| g.amount).sum();
@@ -139,12 +139,13 @@ fn update_counter(
             t.0 = s;
         }
     }
-    if let Ok((mut t, mut color)) = gain.single_mut() {
+    if let Ok((mut t, mut color, mut shadow)) = gain.single_mut() {
         let alpha = if shown.gain == 0 { 0.0 } else { (1.0 - (shown.since_gain - GAIN_SHOW) / GAIN_FADE).clamp(0.0, 1.0) };
         let s = format!("+{}", shown.gain);
         if t.0 != s {
             t.0 = s;
         }
         color.0 = GOLD_TEXT.with_alpha(alpha);
+        shadow.color = Color::BLACK.with_alpha(alpha);
     }
 }

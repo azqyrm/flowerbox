@@ -60,11 +60,15 @@ pub enum ItemId {
     CaulHood,
     /// The Matron's reward.
     HeartstringRing,
+    /// The Storm Isle: an epic chest's ring.
+    TempestRing,
+    /// The Stormcaller's reward.
+    StormCrown,
 }
 
 impl ItemId {
     #[allow(dead_code)] // tests
-    pub const ALL: [ItemId; 24] = [
+    pub const ALL: [ItemId; 26] = [
         ItemId::Longsword,
         ItemId::RustedShortsword,
         ItemId::RustedAxe,
@@ -89,6 +93,8 @@ impl ItemId {
         ItemId::ArchivistQuill,
         ItemId::CaulHood,
         ItemId::HeartstringRing,
+        ItemId::TempestRing,
+        ItemId::StormCrown,
     ];
 
     pub fn def(self) -> &'static ItemDef {
@@ -117,6 +123,8 @@ impl ItemId {
             ItemId::ArchivistQuill => &ARCHIVIST_QUILL,
             ItemId::CaulHood => &CAUL_HOOD,
             ItemId::HeartstringRing => &HEARTSTRING_RING,
+            ItemId::TempestRing => &TEMPEST_RING,
+            ItemId::StormCrown => &STORM_CROWN,
         }
     }
 }
@@ -517,6 +525,33 @@ static HEARTSTRING_RING: ItemDef = ItemDef {
         ItemKind::Ring,
         ItemIcon::ThornRing,
         "A ring of sinew cut from the Matron's heart. It still beats, slowly, and the wearer's heart learns to beat with it.",
+    )
+};
+
+static TEMPEST_RING: ItemDef = ItemDef {
+    weight: 0.3,
+    absorption: 0.06,
+    max_hp_bonus: 20.0,
+    rare: true,
+    ..ItemDef::base(
+        "Tempest Ring",
+        ItemKind::Ring,
+        ItemIcon::Ring,
+        "A ring of fused glass from a sand struck by lightning. It hums before a storm, and the wearer weathers blows as the isle weathers the sea.",
+    )
+};
+
+static STORM_CROWN: ItemDef = ItemDef {
+    weight: 1.6,
+    absorption: 0.08,
+    stance: 5.0,
+    rare: true,
+    model: Some(ItemModel { bone: Bone::Head, build: models::storm_crown, pair: false }),
+    ..ItemDef::base(
+        "Stormcaller's Crown",
+        ItemKind::Armor(ArmorSlot::Head),
+        ItemIcon::Hood,
+        "An iron crown of spikes that drew the lightning down onto its wearer for a hundred years. The sparks are gone; the iron still smells of rain.",
     )
 };
 

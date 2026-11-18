@@ -97,6 +97,17 @@ pub fn hauberk(b: &mut ModelBuilder, spec: &HumanoidSpec) {
     }
 }
 
+/// An iron crown of spikes round the head.
+pub fn storm_crown(b: &mut ModelBuilder, spec: &HumanoidSpec) {
+    let hr = spec.head_radius;
+    b.textured(Torus::new(hr * 0.95, hr * 1.12), IRON, Tex::Rust, 0.8, 0.5, Transform::from_xyz(0.0, hr * 1.45, 0.0));
+    for k in 0..7 {
+        let a = k as f32 / 7.0 * std::f32::consts::TAU;
+        let (s, c) = a.sin_cos();
+        b.textured(Cone { radius: 0.022, height: 0.16 }, IRON, Tex::Rust, 0.8, 0.5, Transform::from_xyz(hr * 1.05 * c, hr * 1.45 + 0.08, hr * 1.05 * s).with_rotation(Quat::from_rotation_z(-0.25 * c) * Quat::from_rotation_x(0.25 * s)));
+    }
+}
+
 /// A clinging, translucent hood of caul: pale, veined, close over the skull and down the neck.
 pub fn caul_hood(b: &mut ModelBuilder, spec: &HumanoidSpec) {
     let hr = spec.head_radius;

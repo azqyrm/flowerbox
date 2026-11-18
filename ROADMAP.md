@@ -602,7 +602,9 @@ User asked for "the uterus of Abeloth from Star Wars". Abeloth is a Star Wars ch
 
 ### Phase 8.20 — Level 5: a storm-isle level (user request "Fortnite", 2026-11-17)
 We don't recreate an existing game (its name, characters, art or look). Interpreted as an **original** level built on battle-royale *mechanics* for a Souls player: an open isle where a closing storm ring drives you inward through waves of enemies, colour-tiered loot chests, a drop-in entry from above. Attached to the arena by a ceiling hatch + ladder or a door.
-- [ ] Layout, storm ring hazard, tiered chests, waves, boss/finale, rewards
+- [x] Layout, storm ring hazard, tiered chests, waves, boss/finale, rewards
+- [x] Open sky (no ceilings, parapets), rain + lightning, falling into the void kills, storm ambience
+- [x] Tests (reachability, ring stages, chest rolls), walk test, chest test, Stormcaller fight; merged `storm` → `master`
 
 ### Phase 9 — Polish
 Order (2026-11-16): first everything that needs no outside assets, then the art (needs a decision on downloading CC0 models).
@@ -966,3 +968,11 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - Rewards: Caul Hood (head: 7 %, stance 4), Heartstring Ring (boss drop, unique 420: +35 HP, 5 %), Hop Cones, Poppy, Camomile. Sunflower 41 in the Placental Alcove.
   - Ambience `Womb` (heartbeat through fluid, gurgles, a far groan; whole beats per loop) and `WombHeart` (quicker heart, low moaning drone).
   - Tests: `hangs_together(level)` now checks lvl3 and lvl4 (reachability, ladders, ceilings); Matron fight via `FLOWERBOX_AUTOPILOT=boss FLOWERBOX_POS=104,0,-1.57` (all moves, enrage, defeat, fog lifts, ring drops, +5000 Light). `FLOWERBOX_ATTACK_AT=secs` (still autopilot) strikes once: membrane at `23.6,0,-1.57` tears, illusory wall at `-26.6,185,1.57` fades.
+- **N40 (2026-11-18) — the Storm Isle (Phase 8.20, the user's "Fortnite" request):**
+  - We don't recreate existing games (name, characters, art, look), so this is an original level built on battle-royale **mechanics** for a Souls player (told the user): a closing storm ring, tiered loot chests, converging enemies, a finale in the eye.
+  - `assets/levels/lvl5.ron`, west of the arena (door 60 in the ring wall → stairs up → the Causeway, the Lookout with sunflower 51 → the Storm Field, 54 × 60 m). `LevelFile::sky: true`: no ceilings (rooms and stairs), walls are parapets up to `ceiling` + 1 m (a lintel that would sit above them is skipped — a negative-height box panicked avian's inertia).
+  - `storm.rs`: `Storm` (from a `StormEye` prop: start / end radius) starts closing when *this machine's* player steps inside; `ring_radius` holds and shrinks by `STORM_STAGES`; outside it `STORM_DAMAGE` every `STORM_TICK` (no stance damage); it opens again on `WorldReset` or when you leave. The wall is an open tube mesh (`storm::tube`). Lightning: one `DirectionalLight` flashed twice every 4–12 s while the ambience is `Storm`, with far thunder; rain: `RAIN_DROPS` streaks recycled round the player. `fall_to_death`: below `KILL_Y` you die (any level).
+  - `level/isle.rs`: `Rock`, `Ruin`, `StormEye` (+ a ring of standing stones at the final circle), **`Chest`** (`size.0` = tier, `id` = a unique pickup id registered as a unique drop, so its item is found once per world; `chest_loot(tier, id)` is fixed per chest): tier 1 consumables, tier 2 gear (Thornbriar Ring, buckler, hatchet, Caul Hood, Hop Cone), tier 3 the **Tempest Ring** (+20 HP, 6 %). Online the host opens chests (`Reliable::RequestChest`, protocol 18); the item appears for everyone (`ItemDropped` → world event), the lid swings only for whoever opened it.
+  - **The Stormcaller** (`enemy/stormfolk.rs`): 1.4× drowned figure, crown of sparking spikes, a lightning rod (greatsword class): Chain Lightning (Volley, `ProjectileKind::Spark`, fast and tight), Thunderclap (slam, radius 7.5), Dash Strike, Whirlwind; enraged below 50 %. Drops the **Stormcaller's Crown** (head: 8 %, stance 5; unique 430), +4500 Light.
+  - The Light counter moved to the top right (the notification feed has the bottom right); its "+N" shadow now fades with it.
+  - Known: the ring, rain and lightning run per machine (each player's own ring); the storm wall is far from the player in screenshots, check it in play.

@@ -52,6 +52,11 @@ pub fn spectating(who: &str, several: bool) -> String {
 pub const DOOR_BOSS_SEALED: &str = "It will not move while the hall's master lives";
 /// The way on, after a boss.
 pub const WAY_OPENS: &str = "Somewhere, a door unseals";
+/// The storm ring starts to close (`crate::storm`).
+pub const STORM_CLOSING: &str = "The storm closes in";
+/// A chest whose item was already found.
+pub const CHEST_EMPTY: &str = "The chest is empty";
+pub const PROMPT_OPEN_CHEST: &str = "[E] Open the chest";
 /// A membrane cut open.
 pub const MEMBRANE_TORN: &str = "The membrane tears open";
 /// A struck illusory wall fades.

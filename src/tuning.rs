@@ -228,6 +228,19 @@ pub const LIGHT_SHARE: crate::light::LightShare = crate::light::LightShare::Ever
 /// `LightShare::Nearby`: within this distance of the kill (m).
 pub const LIGHT_NEARBY_RANGE: f32 = 40.0;
 
+// ── The Storm Isle (`crate::storm`, `crate::level::isle`) ──
+/// The ring's stages: (hold s, shrink s, fraction of the way to the final circle when done).
+pub const STORM_STAGES: [(f32, f32, f32); 3] = [(25.0, 15.0, 0.4), (20.0, 12.0, 0.75), (15.0, 10.0, 1.0)];
+/// Outside the ring: this much damage every `STORM_TICK` s.
+pub const STORM_TICK: f32 = 0.5;
+pub const STORM_DAMAGE: f32 = 5.0;
+/// Streaks of rain round the player on the isle.
+pub const RAIN_DROPS: usize = 260;
+/// Below this height you've fallen into the void.
+pub const KILL_Y: f32 = -30.0;
+/// From how far E opens a chest (m).
+pub const CHEST_RANGE: f32 = 1.7;
+
 // ── The Womb (`crate::level::womb`) ──
 /// One lub-dub (s).
 pub const WOMB_HEARTBEAT: f32 = 1.1;
