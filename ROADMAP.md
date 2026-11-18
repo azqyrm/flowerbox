@@ -596,8 +596,9 @@ Steps:
 
 ### Phase 8.19 — Level 4: a womb horror level (user request, 2026-11-17)
 User asked for "the uterus of Abeloth from Star Wars". Abeloth is a Star Wars character, so this level is an **original** fleshy, living womb dungeon (own name, own creature design; no Star Wars names or likeness). Attached to the central arena by a door or a floor hatch + ladder.
-- [ ] Layout + flesh theme (pulsing walls, membranes, sinew bridges, amniotic pools), heartbeat ambience
-- [ ] Enemies + a boss, hazards, rewards
+- [x] Layout + flesh theme (pulsing walls, membranes, sinew bridges, amniotic pools), heartbeat ambience
+- [x] Enemies + a boss, hazards, rewards
+- [x] Tests (reachability), screenshots, the boss fight (autopilot), membranes / illusory walls struck; merged `womb` → `master`
 
 ### Phase 8.20 — Level 5: a storm-isle level (user request "Fortnite", 2026-11-17)
 We don't recreate an existing game (its name, characters, art or look). Interpreted as an **original** level built on battle-royale *mechanics* for a Souls player: an open isle where a closing storm ring drives you inward through waves of enemies, colour-tiered loot chests, a drop-in entry from above. Attached to the arena by a ceiling hatch + ladder or a door.
@@ -957,3 +958,11 @@ When you start the game you're in the lit circular dungeon. You can walk with WA
   - **Enemy `facing`** in level files (`facing: Some(South)`): readers sit with their backs to the door — backstab bait.
   - The Archivist test: `FLOWERBOX_AUTOPILOT=boss FLOWERBOX_POS=38,155,-1.57` (the boss autopilot now picks the nearest boss): used Page Storm, Ink Volley, Tome Slam, enraged with Hush, got stance-broken and riposted, died; fog lifted, the Quill dropped, +4000 Light.
   - Known: the library's light is dim (torches + candles); `FLOWERBOX_BESTIARY_FROM=6` shows only the new kinds.
+- **N39 (2026-11-18) — the Womb of the Deep Mother (Phase 8.19, an original horror level):**
+  - The user asked for "the uterus of Abeloth from Star Wars". That's a franchise character, so the level is original: the Deep Mother's womb, no Star Wars names or likeness (told the user).
+  - `assets/levels/lvl4.ron`, east of the arena through door 50 in the ring wall (x 18 → 126, floors 0 → −3 → −6). Theme `Flesh`: floor / walls / ceiling are `Tex::Flesh` materials registered in `level::womb::FleshMaterials`; `pulse_flesh` scales their emissive with a lub-dub `heartbeat()` (`WOMB_HEARTBEAT` 1.1 s). No torches: light comes from Ova (egg clusters), bile pools and the Heart.
+  - Props (`level/womb.rs`): `Membrane` (visible flesh curtain, Health 1 + Hurtbox like the illusory wall: any hit tears it; per machine), `BilePool` (burns `BILE_DAMAGE` every `BILE_TICK` s for bodies this machine owns standing in it, no stance damage), `Sinews` (swaying cords), `Ova`, `FleshPillar` (ribbed, solid), `Heart` (beating, big red light).
+  - Enemies (`enemy/womb.rs`): **Unborn** (small pale half-formed things, claws, packs, backstabbable; capsule is a person's — bodies stand on it), **the Matron** (1.7× scale, long arms, tendril crown; Bile Spray (Volley, new `ProjectileKind::Bile`), Crushing Embrace (slam), Rending Turn, Wail (unblockable shriek, radius 11), Dash Strike when enraged below 45 %). Plus a Contorted and a Mourner (the stalker in the narrow bile gallery).
+  - Rewards: Caul Hood (head: 7 %, stance 4), Heartstring Ring (boss drop, unique 420: +35 HP, 5 %), Hop Cones, Poppy, Camomile. Sunflower 41 in the Placental Alcove.
+  - Ambience `Womb` (heartbeat through fluid, gurgles, a far groan; whole beats per loop) and `WombHeart` (quicker heart, low moaning drone).
+  - Tests: `hangs_together(level)` now checks lvl3 and lvl4 (reachability, ladders, ceilings); Matron fight via `FLOWERBOX_AUTOPILOT=boss FLOWERBOX_POS=104,0,-1.57` (all moves, enrage, defeat, fog lifts, ring drops, +5000 Light). `FLOWERBOX_ATTACK_AT=secs` (still autopilot) strikes once: membrane at `23.6,0,-1.57` tears, illusory wall at `-26.6,185,1.57` fades.

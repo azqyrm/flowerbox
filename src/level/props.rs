@@ -95,6 +95,7 @@ pub fn spawn_props(
 
     let gothic = super::gothic::GothicMats::new(materials);
     let library = super::library::LibraryMats::new(materials);
+    let womb = super::womb::WombMats::new(materials);
     let mut exits = vec![];
     // Sunbeams to fill with dust once the props are placed: (top of the opening, sun direction,
     // size, height above the floor).
@@ -122,6 +123,10 @@ pub fn spawn_props(
             | PropKind::IllusoryWall
             | PropKind::Orrery => {
                 super::library::spawn_library_prop(commands, meshes, &library, layout, prop, n, root, frame);
+                continue;
+            }
+            PropKind::Membrane | PropKind::BilePool | PropKind::Sinews | PropKind::Ova | PropKind::FleshPillar | PropKind::Heart => {
+                super::womb::spawn_womb_prop(commands, meshes, &womb, layout, prop, n, root, frame);
                 continue;
             }
             _ => {

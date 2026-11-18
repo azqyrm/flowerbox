@@ -1,0 +1,96 @@
+// Level 4: "The Womb of the Deep Mother", east of the arena (an original horror level). World
+// metres (x east, y = world z growing south). Format: see src/level/layout.rs.
+//
+// Route: the arena's east door 50 → the Cervix (a membrane to cut through) → the Birth Canal
+// (stairs down) → the Antrum (flesh pillars, bile pools, the Unborn; the Ovary off to the north) →
+// the Umbilical Gallery (a narrow path between pools of bile; a Mourner) → the Placental Alcove
+// (sunflower 41) → stairs down → fog → the Heart Chamber: the Matron, under her beating heart.
+(
+    name: "The Womb of the Deep Mother",
+    px_per_m: 1.0,
+    origin_px: (0.0, 0.0),
+    origin_world: (0.0, 0.0),
+    theme: Flesh,
+    ceiling: Some(9.0),
+    seed_base: 800,
+    rooms: [
+        (name: "The Cervix", floor: 0.0, height: Some(3.6), rects: [(18.0, -1.5, 30.0, 1.5)]),
+        (name: "The Antrum", floor: -3.0, height: Some(9.0), rects: [(40.0, -14.0, 64.0, 14.0)]),
+        (name: "The Ovary", floor: -3.0, height: Some(4.5), rects: [(44.0, -26.0, 56.0, -14.0)]),
+        (name: "The Umbilical Gallery", floor: -3.0, height: Some(6.0), rects: [(64.0, -6.0, 84.0, 6.0)]),
+        (name: "The Placental Alcove", floor: -3.0, height: Some(4.0), rects: [(78.0, 6.0, 90.0, 14.0)]),
+        (name: "The Heart Chamber", floor: -6.0, height: Some(14.0), ambience: Some(WombHeart), rects: [(94.0, -16.0, 126.0, 16.0)]),
+    ],
+    stairs: [
+        (rect: (30.0, -1.5, 40.0, 1.5), down: East, top: 0.0, bottom: -3.0),
+        (rect: (84.0, -1.5, 94.0, 1.5), down: East, top: -3.0, bottom: -6.0),
+    ],
+    doors: [
+        // The arena's east wall.
+        (id: 50, at: (18.0, 0.0), width: 2.6, hinge: North, opens: East),
+        (id: 51, at: (50.0, -14.0), width: 2.6, hinge: West, opens: North, arch: true),
+        (id: 52, at: (64.0, 0.0), width: 2.6, hinge: North, opens: East, arch: true),
+        (id: 53, at: (81.0, 6.0), width: 2.6, hinge: West, opens: South, arch: true),
+        // The Heart Chamber's mouth (the fog gate stands in it).
+        (id: 54, at: (94.0, 0.0), width: 3.0, hinge: North, opens: East, arch: true),
+    ],
+    enemies: [
+        // The Antrum: the Unborn, a Contorted in the dark at the back.
+        (kind: Unborn, at: (48.0, -4.0), patrol: Some((48.0, 4.0))),
+        (kind: Unborn, at: (50.0, 6.0), facing: Some(East)),
+        (kind: Unborn, at: (56.0, -2.0)),
+        (kind: Unborn, at: (60.0, 4.0), patrol: Some((60.0, -6.0))),
+        (kind: Contorted, at: (61.0, -11.0)),
+        // The Ovary: a nest.
+        (kind: Unborn, at: (48.0, -20.0)),
+        (kind: Unborn, at: (53.0, -22.0)),
+        // The Umbilical Gallery: one turned away on the path, and the Mourner at its end.
+        (kind: Unborn, at: (70.0, 0.0), facing: Some(East)),
+        (kind: Mourner, at: (81.0, 0.0)),
+        // The Matron.
+        (kind: Matron, at: (114.0, 0.0), drops: [(item: HeartstringRing, unique: Some(420))]),
+    ],
+    treasures: [
+        (id: 340, item: CaulHood, at: (50.0, -24.5)),
+        (id: 341, item: HopCone, at: (45.5, -24.5)),
+        (id: 342, item: Poppy, at: (62.5, 12.5)),
+        (id: 343, item: HopCone, at: (88.5, 12.5)),
+        (id: 344, item: Camomile, at: (42.0, -12.5)),
+    ],
+    sunflowers: [
+        (id: 41, at: (86.0, 10.0), facing: West),
+    ],
+    props: [
+        // The Cervix: a membrane to cut through, eggs for light.
+        (kind: Ova, at: (21.0, 1.0)),
+        (kind: Membrane, at: (25.0, 0.0), facing: East, size: (3.2, 3.4)),
+        (kind: Sinews, at: (28.0, 0.0)),
+        (kind: Ova, at: (38.0, 1.0)),
+        // The Antrum.
+        (kind: FleshPillar, at: (46.0, -8.0), size: (0.9, 0.0)), (kind: FleshPillar, at: (46.0, 8.0), size: (0.9, 0.0)),
+        (kind: FleshPillar, at: (58.0, -8.0), size: (0.9, 0.0)), (kind: FleshPillar, at: (58.0, 8.0), size: (0.9, 0.0)),
+        (kind: BilePool, at: (52.0, -10.5), size: (6.0, 4.0)), (kind: BilePool, at: (55.0, 10.0), size: (5.0, 4.0)),
+        (kind: Ova, at: (42.0, -12.0)), (kind: Ova, at: (62.0, 12.5)), (kind: Ova, at: (52.0, 1.0)), (kind: Ova, at: (42.0, 11.0)),
+        (kind: Sinews, at: (44.0, 0.0)), (kind: Sinews, at: (52.0, -5.0)), (kind: Sinews, at: (52.0, 5.0)), (kind: Sinews, at: (60.0, 0.0)),
+        (kind: Sinews, at: (48.0, 11.0)), (kind: Sinews, at: (56.0, -12.0)),
+        // The Ovary.
+        (kind: Ova, at: (46.0, -17.0)), (kind: Ova, at: (54.0, -17.0)), (kind: Ova, at: (50.0, -21.0)), (kind: Ova, at: (54.5, -24.5)),
+        (kind: Sinews, at: (50.0, -18.0)),
+        // The Umbilical Gallery: a path between pools of bile.
+        (kind: BilePool, at: (74.0, -3.75), size: (19.5, 4.4)),
+        (kind: BilePool, at: (74.0, 3.75), size: (19.5, 4.4)),
+        (kind: Sinews, at: (68.0, 0.0)), (kind: Sinews, at: (74.0, 0.0)), (kind: Sinews, at: (80.0, 0.0)),
+        (kind: Ova, at: (83.0, -5.0)),
+        // The Placental Alcove.
+        (kind: Ova, at: (80.0, 12.5)), (kind: Sinews, at: (84.0, 9.0)),
+        // The Heart Chamber.
+        (kind: Ova, at: (92.5, 1.2)),
+        (kind: FogGate, at: (94.4, 0.0), facing: East, size: (3.2, 3.4), boss: Some(Matron)),
+        (kind: Heart, at: (110.0, 0.0)),
+        (kind: FleshPillar, at: (100.0, -10.0), size: (1.2, 0.0)), (kind: FleshPillar, at: (100.0, 10.0), size: (1.2, 0.0)),
+        (kind: FleshPillar, at: (120.0, -10.0), size: (1.2, 0.0)), (kind: FleshPillar, at: (120.0, 10.0), size: (1.2, 0.0)),
+        (kind: Ova, at: (96.0, -14.0)), (kind: Ova, at: (96.0, 14.0)), (kind: Ova, at: (124.0, -14.0)), (kind: Ova, at: (124.0, 14.0)),
+        (kind: BilePool, at: (110.0, -14.0), size: (8.0, 3.0)), (kind: BilePool, at: (110.0, 14.0), size: (8.0, 3.0)),
+        (kind: Sinews, at: (104.0, -5.0)), (kind: Sinews, at: (116.0, 5.0)), (kind: Sinews, at: (104.0, 6.0)), (kind: Sinews, at: (118.0, -6.0)),
+    ],
+)

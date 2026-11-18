@@ -61,10 +61,14 @@ pub enum Ambience {
     Library,
     /// The Astral Archive: a slow, shimmering drone of bell-like partials.
     Archive,
+    /// Inside the Womb: a slow heartbeat through fluid, gurgling, a far groan.
+    Womb,
+    /// The Heart chamber: the heartbeat loud and quick, a low choir of moans.
+    WombHeart,
 }
 
 impl Ambience {
-    pub const ALL: [Ambience; 8] = [
+    pub const ALL: [Ambience; 10] = [
         Ambience::Arena,
         Ambience::Halls,
         Ambience::Forge,
@@ -73,6 +77,8 @@ impl Ambience {
         Ambience::Boss,
         Ambience::Library,
         Ambience::Archive,
+        Ambience::Womb,
+        Ambience::WombHeart,
     ];
 
     /// The default of a level theme.
@@ -81,6 +87,7 @@ impl Ambience {
             Theme::Sunken => Ambience::Halls,
             Theme::Gothic => Ambience::Cathedral,
             Theme::Library => Ambience::Library,
+            Theme::Flesh => Ambience::Womb,
         }
     }
 
@@ -95,6 +102,8 @@ impl Ambience {
             Ambience::Boss => 0.55,
             Ambience::Library => 0.5,
             Ambience::Archive => 0.5,
+            Ambience::Womb => 0.65,
+            Ambience::WombHeart => 0.65,
         }
     }
 }
@@ -251,6 +260,8 @@ pub fn bed(kind: Ambience) -> Vec<f32> {
         Ambience::Boss => (0.5, 1.8),
         Ambience::Library => (0.35, 1.2),
         Ambience::Archive => (0.2, 4.0),
+        Ambience::Womb => (0.3, 2.5),
+        Ambience::WombHeart => (0.25, 3.0),
         _ => (0.0, 0.0),
     };
     let mut at = 0.5;
@@ -381,6 +392,34 @@ pub fn bed(kind: Ambience) -> Vec<f32> {
                     .sum();
                 let shimmer = bp.step(n, 5000.0 + 1500.0 * (t * 0.3).sin(), 6.0) * 0.12 * breathe(t, 6.0, 0.0, 0.2);
                 hum + chimes + shimmer
+            }
+            Ambience::Womb | Ambience::WombHeart => {
+                // The heartbeat: a lub-dub of low thumps (a beat of 1.1 s here, 0.75 s at the
+                // heart), muffled as if heard through fluid; gurgles; a far, low groan.
+                let period = if kind == Ambience::Womb { 1.1 } else { 0.75 };
+                // Keep the loop seamless: a whole number of beats in the bed.
+                let period = LENGTH / (LENGTH / period).round();
+                let p = (t / period).fract() * period;
+                let thump = |at: f32, f: f32, a: f32| {
+                    let d = p - at;
+                    if d < 0.0 { 0.0 } else { (TAU * f * d * (1.0 - d)).sin() * (-d * 14.0).exp() * a }
+                };
+                let heart = thump(0.0, 48.0, 1.0) + thump(0.18, 40.0, 0.7);
+                let fluid = lp.step(n, 140.0 + 60.0 * (t * 0.4).sin()) * 1.6;
+                let gurgle: f32 = events
+                    .iter()
+                    .filter(|(s, _)| t >= *s && t < *s + 0.8)
+                    .map(|(s, pitch)| {
+                        let d = t - s;
+                        (TAU * (180.0 * pitch + 120.0 * (d * 30.0).sin()) * d).sin() * (std::f32::consts::PI * d / 0.8).sin() * 0.12
+                    })
+                    .sum();
+                let groan = if kind == Ambience::WombHeart {
+                    drone(t, 55.0, &[(1.0, 0.18), (1.19, 0.1), (1.5, 0.08)], 0.8) * breathe(t, 8.0, 0.0, 0.3)
+                } else {
+                    bp.step(lp2.step(n, 400.0), 70.0 + 20.0 * (t * 0.1).sin(), 6.0) * 0.8 * breathe(t, 12.0, 1.0, 0.1)
+                };
+                heart * 0.9 + fluid + gurgle + groan
             }
         };
         out.push(s);

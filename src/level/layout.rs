@@ -113,6 +113,8 @@ pub enum Theme {
     Gothic,
     /// Dark panelled wood walls, worn plank floors, a coffered ceiling (the library).
     Library,
+    /// Living flesh that throbs with a heartbeat (the Womb).
+    Flesh,
 }
 
 /// A ladder against a wall: its foot at `at` (on the lower floor), the climber facing `facing`
@@ -185,6 +187,19 @@ pub enum PropKind {
     IllusoryWall,
     /// A brass armillary turning round a glowing star (the boss hall's centrepiece).
     Orrery,
+    // ── The Womb (`crate::level::womb`) ──
+    /// A wet curtain of flesh across a passage (`size` = width, height); any hit tears it.
+    Membrane,
+    /// A pool of burning bile on the floor (`size` = x, z metres along `facing`).
+    BilePool,
+    /// Cords hanging from the ceiling, swaying.
+    Sinews,
+    /// A cluster of glowing eggs (a dim orange light).
+    Ova,
+    /// A ribbed column of flesh, floor to ceiling (`size.0` = radius). Solid.
+    FleshPillar,
+    /// A giant heart hanging from vessels, beating (the boss chamber).
+    Heart,
 }
 
 #[derive(Deserialize, Debug, Clone)]

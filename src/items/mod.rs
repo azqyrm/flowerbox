@@ -56,11 +56,15 @@ pub enum ItemId {
     InkboundRobe,
     /// The Archivist's reward.
     ArchivistQuill,
+    /// The Womb: a hood of caul.
+    CaulHood,
+    /// The Matron's reward.
+    HeartstringRing,
 }
 
 impl ItemId {
     #[allow(dead_code)] // tests
-    pub const ALL: [ItemId; 22] = [
+    pub const ALL: [ItemId; 24] = [
         ItemId::Longsword,
         ItemId::RustedShortsword,
         ItemId::RustedAxe,
@@ -83,6 +87,8 @@ impl ItemId {
         ItemId::Penitence,
         ItemId::InkboundRobe,
         ItemId::ArchivistQuill,
+        ItemId::CaulHood,
+        ItemId::HeartstringRing,
     ];
 
     pub fn def(self) -> &'static ItemDef {
@@ -109,6 +115,8 @@ impl ItemId {
             ItemId::Penitence => &PENITENCE,
             ItemId::InkboundRobe => &INKBOUND_ROBE,
             ItemId::ArchivistQuill => &ARCHIVIST_QUILL,
+            ItemId::CaulHood => &CAUL_HOOD,
+            ItemId::HeartstringRing => &HEARTSTRING_RING,
         }
     }
 }
@@ -483,6 +491,32 @@ static ARCHIVIST_QUILL: ItemDef = ItemDef {
         ItemKind::Weapon,
         ItemIcon::Greatsword,
         "The keeper of the Drowned Library wrote the names of the dead with it, then crossed them out. A lance-long steel nib on a black shaft; its runes still weep ink. Ability: Penitent Whirl.",
+    )
+};
+
+static CAUL_HOOD: ItemDef = ItemDef {
+    weight: 0.8,
+    absorption: 0.07,
+    stance: 4.0,
+    model: Some(ItemModel { bone: Bone::Head, build: models::caul_hood, pair: false }),
+    ..ItemDef::base(
+        "Caul Hood",
+        ItemKind::Armor(ArmorSlot::Head),
+        ItemIcon::Hood,
+        "A veil of tough, translucent caul, peeled from something that was never born. It clings, it breathes, and it turns a blade better than leather.",
+    )
+};
+
+static HEARTSTRING_RING: ItemDef = ItemDef {
+    weight: 0.4,
+    absorption: 0.05,
+    max_hp_bonus: 35.0,
+    rare: true,
+    ..ItemDef::base(
+        "Heartstring Ring",
+        ItemKind::Ring,
+        ItemIcon::ThornRing,
+        "A ring of sinew cut from the Matron's heart. It still beats, slowly, and the wearer's heart learns to beat with it.",
     )
 };
 

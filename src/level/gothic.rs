@@ -107,7 +107,13 @@ pub fn spawn_gothic_prop(
         | PropKind::DartTrap
         | PropKind::Pendulum
         | PropKind::IllusoryWall
-        | PropKind::Orrery => {}
+        | PropKind::Orrery
+        | PropKind::Membrane
+        | PropKind::BilePool
+        | PropKind::Sinews
+        | PropKind::Ova
+        | PropKind::FleshPillar
+        | PropKind::Heart => {}
         PropKind::Column => {
             let r = if prop.size.0 > 0.0 { prop.size.0 } else { 0.55 };
             part(commands, Cylinder::new(r, height).into(), &m.marble, t(0.0, height * 0.5, 0.0));

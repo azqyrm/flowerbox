@@ -18,6 +18,7 @@ pub mod door;
 pub mod gothic;
 pub mod layout;
 pub mod library;
+pub mod womb;
 pub mod props;
 pub mod riddle;
 
@@ -38,10 +39,11 @@ pub struct LevelPlugin;
 
 /// The levels loaded at start (asset path, embedded copy): the Sunken Halls north of the arena,
 /// the Cathedral of Ashes south of it.
-pub const LEVELS: [(&str, &str); 3] = [
+pub const LEVELS: [(&str, &str); 4] = [
     ("levels/lvl1.ron", include_str!("../../assets/levels/lvl1.ron")),
     ("levels/lvl2.ron", include_str!("../../assets/levels/lvl2.ron")),
     ("levels/lvl3.ron", include_str!("../../assets/levels/lvl3.ron")),
+    ("levels/lvl4.ron", include_str!("../../assets/levels/lvl4.ron")),
 ];
 
 /// Every loaded level.
@@ -57,7 +59,7 @@ impl Levels {
 
 impl Plugin for LevelPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((door::DoorPlugin, props::PropsPlugin, riddle::RiddlePlugin, library::LibraryPlugin));
+        app.add_plugins((door::DoorPlugin, props::PropsPlugin, riddle::RiddlePlugin, library::LibraryPlugin, womb::WombPlugin));
         let mut levels = vec![];
         let mut openings = vec![];
         let mut riddles = vec![];
@@ -166,6 +168,29 @@ fn spawn_level(commands: &mut Commands, layout: &Layout, torches: &TorchAssets, 
             stone(materials, 0.4, 0.29, 0.2, Some(Tex::Planks)),
             Some(3.0),
         ),
+        // Living flesh: everything glows a little and throbs with the heartbeat (`womb::pulse_flesh`).
+        Theme::Flesh => {
+            let mut flesh = |c: Color, glow: LinearRgba| {
+                materials.add(StandardMaterial {
+                    base_color: c,
+                    base_color_texture: textures::get(Tex::Flesh),
+                    emissive: glow,
+                    perceptual_roughness: 0.3,
+                    reflectance: 0.5,
+                    ..default()
+                })
+            };
+            let mats = (
+                flesh(Color::srgb(0.2, 0.065, 0.065), LinearRgba::rgb(0.006, 0.0, 0.0)),
+                [flesh(Color::srgb(0.26, 0.08, 0.085), LinearRgba::rgb(0.01, 0.0005, 0.0005)), flesh(Color::srgb(0.23, 0.07, 0.075), LinearRgba::rgb(0.01, 0.0005, 0.0005))],
+                flesh(Color::srgb(0.16, 0.04, 0.045), LinearRgba::rgb(0.008, 0.0, 0.0)),
+                flesh(Color::srgb(0.22, 0.07, 0.07), LinearRgba::rgb(0.006, 0.0, 0.0)),
+                Some(2.0),
+            );
+            let throb = [&mats.0, &mats.1[0], &mats.1[1], &mats.2, &mats.3].map(|h| (h.clone(), materials.get(h).map_or(LinearRgba::BLACK, |m| m.emissive)));
+            commands.insert_resource(womb::FleshMaterials(throb.to_vec()));
+            mats
+        }
     };
     let ceiling_y = layout.ceiling();
     let wall_top = layout.wall_top();
@@ -305,7 +330,18 @@ mod tests {
 
     #[test]
     fn the_library_builds_and_hangs_together() {
-        let file: LevelFile = ron::from_str(LEVELS[2].1).expect("lvl3.ron parses");
+        hangs_together(2);
+    }
+
+    #[test]
+    fn the_womb_builds_and_hangs_together() {
+        hangs_together(3);
+    }
+
+    /// Things on floors, torches on walls, ladders up walls to raised doorways, every room
+    /// reachable from the first, ceilings under the walls' top.
+    fn hangs_together(level: usize) {
+        let file: LevelFile = ron::from_str(LEVELS[level].1).expect("level file parses");
         let l = Layout::build(file);
         let on_floor = |p: layout::Px| l.floor_at(l.world(p)).is_some();
         for t in &l.file.treasures {
@@ -322,7 +358,7 @@ mod tests {
         }
         for p in &l.file.props {
             // An illusory wall stands in its doorway (on the wall line).
-            if p.kind != layout::PropKind::IllusoryWall {
+            if !matches!(p.kind, layout::PropKind::IllusoryWall | layout::PropKind::FogGate) {
                 assert!(on_floor(p.at), "{:?} at {:?} off the floor", p.kind, p.at);
             }
         }
