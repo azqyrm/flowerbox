@@ -228,6 +228,13 @@ pub const LIGHT_SHARE: crate::light::LightShare = crate::light::LightShare::Ever
 /// `LightShare::Nearby`: within this distance of the kill (m).
 pub const LIGHT_NEARBY_RANGE: f32 = 40.0;
 
+// ── The Womb (`crate::level::womb`) ──
+/// One lub-dub (s).
+pub const WOMB_HEARTBEAT: f32 = 1.1;
+/// Bile burns this much every `BILE_TICK` seconds you stand in it.
+pub const BILE_TICK: f32 = 0.5;
+pub const BILE_DAMAGE: f32 = 6.0;
+
 // ── Library traps (`crate::level::library`) ──
 /// A plate fires this long after it's stepped on, then rests this long (s).
 pub const DART_FUSE: f32 = 0.3;

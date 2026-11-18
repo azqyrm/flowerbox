@@ -81,6 +81,13 @@ pub enum AbilityId {
     PageStorm,
     /// "Hush": a hiss that can't be blocked, wide.
     Hush,
+    // ── The Matron (the Womb's boss) ──
+    /// Bile sprayed in a wide fan.
+    BileSpray,
+    /// Both long arms brought down together: a crushing slam with a shockwave.
+    CrushingEmbrace,
+    /// A mother's wail: unblockable, very wide.
+    Wail,
 }
 
 /// What an ability does.
@@ -99,7 +106,7 @@ pub enum AbilityEffect {
     Shriek { startup: f32, active: f32, recovery: f32, radius: f32, damage: f32 },
     /// A stance that, at the start of its active phase, flings `count` projectiles in a fan
     /// `spread` radians wide where the body faces (`crate::projectile`).
-    Volley { startup: f32, active: f32, recovery: f32, count: u32, spread: f32, speed: f32, damage: f32 },
+    Volley { startup: f32, active: f32, recovery: f32, count: u32, spread: f32, speed: f32, damage: f32, kind: crate::projectile::ProjectileKind },
 }
 
 /// A shockwave: where it can reach and what it deals.
@@ -277,7 +284,7 @@ const INK_VOLLEY: AbilityDef = AbilityDef {
     name: "Ink Volley",
     icon: ItemIcon::Sword,
     stamina_cost: 0.0,
-    effect: AbilityEffect::Volley { startup: 0.75, active: 0.35, recovery: 0.7, count: 5, spread: 0.9, speed: 11.0, damage: 22.0 },
+    effect: AbilityEffect::Volley { startup: 0.75, active: 0.35, recovery: 0.7, count: 5, spread: 0.9, speed: 11.0, damage: 22.0, kind: crate::projectile::ProjectileKind::Ink },
 };
 
 const PAGE_STORM: AbilityDef = AbilityDef {
@@ -308,6 +315,42 @@ const HUSH: AbilityDef = AbilityDef {
     effect: AbilityEffect::Shriek { startup: 0.9, active: 0.5, recovery: 0.7, radius: 9.0, damage: 18.0 },
 };
 
+const BILE_SPRAY: AbilityDef = AbilityDef {
+    name: "Bile Spray",
+    icon: ItemIcon::Sword,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Volley { startup: 0.85, active: 0.4, recovery: 0.8, count: 7, spread: 1.3, speed: 9.0, damage: 20.0, kind: crate::projectile::ProjectileKind::Bile },
+};
+
+const CRUSHING_EMBRACE: AbilityDef = AbilityDef {
+    name: "Crushing Embrace",
+    icon: ItemIcon::Axe,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Slam {
+        swing: AttackSpec {
+            startup: 1.1,
+            active: 0.25,
+            recovery: 1.1,
+            cancel: 2.45,
+            stamina_cost: 0.0,
+            lunge: 2.2,
+            damage_mult: 1.5,
+            windup: SwingKey::new(0.0, -0.45, 0.0, 2.9),
+            strike: SwingKey::new(0.0, 0.6, 0.0, 0.6),
+            stance: Stance::Lunge,
+        },
+        radius: 6.5,
+        wave_mult: 0.85,
+    },
+};
+
+const WAIL: AbilityDef = AbilityDef {
+    name: "Wail",
+    icon: ItemIcon::Sword,
+    stamina_cost: 0.0,
+    effect: AbilityEffect::Shriek { startup: 1.0, active: 0.6, recovery: 0.8, radius: 11.0, damage: 20.0 },
+};
+
 const WARCRY: AbilityDef = AbilityDef {
     name: "Warcry",
     icon: ItemIcon::Axe,
@@ -330,6 +373,9 @@ impl AbilityId {
             AbilityId::InkVolley => &INK_VOLLEY,
             AbilityId::PageStorm => &PAGE_STORM,
             AbilityId::Hush => &HUSH,
+            AbilityId::BileSpray => &BILE_SPRAY,
+            AbilityId::CrushingEmbrace => &CRUSHING_EMBRACE,
+            AbilityId::Wail => &WAIL,
         }
     }
 
@@ -386,7 +432,7 @@ fn apply_abilities(
         commands.entity(entity).insert(AbilityApplied(Some(action.serial)));
         // A volley: every machine flings it from its copy of the body (puppets too); each
         // projectile only hurts that machine's own bodies (`crate::projectile`).
-        if let AbilityEffect::Volley { count, spread, speed, damage, .. } = id.def().effect {
+        if let AbilityEffect::Volley { count, spread, speed, damage, kind, .. } = id.def().effect {
             let from = tf.translation + Vec3::Y * 0.6;
             for i in 0..count {
                 let a = ctrl.facing + if count > 1 { spread * (i as f32 / (count - 1) as f32 - 0.5) } else { 0.0 };
@@ -397,7 +443,7 @@ fn apply_abilities(
                     damage,
                     stance: damage,
                     team: team.copied(),
-                    kind: crate::projectile::ProjectileKind::Ink,
+                    kind,
                     by: Some(entity),
                 });
             }

@@ -49,6 +49,7 @@
 //!   every hit (hand, damage) and the stamina each attack cost.
 //! - `FLOWERBOX_AUTOPILOT=still` → no enemies, no movement, every door open (level screenshots).
 //!   `FLOWERBOX_WALK="x,z"` walks that way instead (collision checks), logging the position.
+//!   `FLOWERBOX_ATTACK_AT=secs`: one light attack then (membranes, illusory walls).
 //! - `FLOWERBOX_AUTOPILOT=boss` (with `FLOWERBOX_POS=0,138,3.14`) → fights the Thorned Saint with
 //!   5000 HP: attacks when close, rolls from its specials, adds 25 scripted damage every 0.5 s;
 //!   logs its moves, waves, enrage, death, the drop and the fog lifting.
@@ -182,7 +183,7 @@ impl Plugin for DebugPlugin {
                     app.insert_resource(Autopilot { movement: Some(movement), attack_button: None, guard_button: None })
                         .add_systems(Update, log_player_pos.run_if(on_timer(std::time::Duration::from_millis(500))));
                 }
-                app.add_systems(Update, open_all_doors);
+                app.add_systems(Update, (open_all_doors, scripted_attack));
             }
             Ok("level") => {
                 app.insert_resource(Autopilot { movement: Some(|_, _| *LEVEL_DIR.lock().unwrap()), attack_button: None, guard_button: None })
@@ -937,6 +938,18 @@ fn log_action_changes(
             *last, now, hp.current, st.current, tf.translation
         );
         *last = now;
+    }
+}
+
+/// `FLOWERBOX_ATTACK_AT=secs` (still autopilot): one light attack then (strike a membrane or an
+/// illusory wall in front of you).
+fn scripted_attack(time: Res<Time>, mut player: Query<&mut ActionIntent, With<Player>>) {
+    let Some(at) = std::env::var("FLOWERBOX_ATTACK_AT").ok().and_then(|v| v.parse::<f32>().ok()) else { return };
+    if crossed(time.elapsed_secs(), time.delta_secs(), at)
+        && let Ok(mut intent) = player.single_mut()
+    {
+        info!("autopilot: attack");
+        intent.buffer(ActionRequest::LightAttack(AttackHand::Right));
     }
 }
 

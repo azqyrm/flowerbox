@@ -26,6 +26,8 @@ pub enum ProjectileKind {
     Dart,
     /// A glob of glowing black ink (the Archivist).
     Ink,
+    /// A gob of glowing green-yellow bile (the Matron).
+    Bile,
 }
 
 /// Fling one.
@@ -52,6 +54,7 @@ struct Projectile {
 struct ProjectileAssets {
     dart: (Handle<Mesh>, Handle<StandardMaterial>),
     ink: (Handle<Mesh>, Handle<StandardMaterial>),
+    bile: (Handle<Mesh>, Handle<StandardMaterial>),
 }
 
 const LIFE: f32 = 4.0;
@@ -72,6 +75,15 @@ fn assets(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut material
                 ..default()
             }),
         ),
+        bile: (
+            meshes.add(Sphere::new(0.12).mesh().ico(2).unwrap()),
+            materials.add(StandardMaterial {
+                base_color: Color::srgb(0.5, 0.6, 0.1),
+                emissive: LinearRgba::rgb(2.5, 3.5, 0.3),
+                perceptual_roughness: 0.1,
+                ..default()
+            }),
+        ),
     });
 }
 
@@ -81,6 +93,7 @@ fn spawn(mut commands: Commands, assets: Option<Res<ProjectileAssets>>, mut shot
         let (mesh, mat) = match shot.kind {
             ProjectileKind::Dart => &assets.dart,
             ProjectileKind::Ink => &assets.ink,
+            ProjectileKind::Bile => &assets.bile,
         };
         // A dart lies along its flight (the cylinder's axis is +Y).
         let rot = Quat::from_rotation_arc(Vec3::Y, shot.vel.normalize_or(Vec3::NEG_Z));
@@ -91,8 +104,13 @@ fn spawn(mut commands: Commands, assets: Option<Res<ProjectileAssets>>, mut shot
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(shot.pos).with_rotation(rot),
         ));
-        if shot.kind == ProjectileKind::Ink {
-            e.with_child((PointLight { color: Color::srgb(0.6, 0.3, 1.0), intensity: 8000.0, range: 3.0, ..default() }, Transform::default()));
+        let glow = match shot.kind {
+            ProjectileKind::Ink => Some(Color::srgb(0.6, 0.3, 1.0)),
+            ProjectileKind::Bile => Some(Color::srgb(0.7, 1.0, 0.2)),
+            ProjectileKind::Dart => None,
+        };
+        if let Some(color) = glow {
+            e.with_child((PointLight { color, intensity: 8000.0, range: 3.0, ..default() }, Transform::default()));
         }
     }
 }

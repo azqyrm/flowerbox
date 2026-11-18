@@ -32,6 +32,7 @@ pub mod dormancy;
 pub mod fighter;
 pub mod kinds;
 pub mod scholars;
+pub mod womb;
 pub mod warg;
 
 pub struct EnemyPlugin;
@@ -105,6 +106,10 @@ pub enum EnemyKind {
     PageHound,
     /// The Archivist, the library's boss.
     Archivist,
+    /// The Womb's half-formed brood.
+    Unborn,
+    /// The Matron, the Womb's boss.
+    Matron,
 }
 
 pub use crate::character::Dormant;

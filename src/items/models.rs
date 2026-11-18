@@ -97,6 +97,14 @@ pub fn hauberk(b: &mut ModelBuilder, spec: &HumanoidSpec) {
     }
 }
 
+/// A clinging, translucent hood of caul: pale, veined, close over the skull and down the neck.
+pub fn caul_hood(b: &mut ModelBuilder, spec: &HumanoidSpec) {
+    let hr = spec.head_radius;
+    let caul = Color::srgb(0.85, 0.62, 0.6);
+    b.textured(Sphere::new(hr * 1.12), caul, Tex::Flesh, 0.0, 0.35, Transform::from_xyz(0.0, hr * 1.02, hr * 0.22));
+    b.textured(Cylinder::new(hr * 1.05, 0.14), caul, Tex::Flesh, 0.0, 0.35, Transform::from_xyz(0.0, -0.03, hr * 0.1));
+}
+
 /// A long, ink-dark robe over the torso: a high collar, a sash, the front panel.
 pub fn inkbound_robe(b: &mut ModelBuilder, spec: &HumanoidSpec) {
     let t = spec.torso;

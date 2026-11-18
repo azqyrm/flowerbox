@@ -52,6 +52,8 @@ pub fn spectating(who: &str, several: bool) -> String {
 pub const DOOR_BOSS_SEALED: &str = "It will not move while the hall's master lives";
 /// The way on, after a boss.
 pub const WAY_OPENS: &str = "Somewhere, a door unseals";
+/// A membrane cut open.
+pub const MEMBRANE_TORN: &str = "The membrane tears open";
 /// A struck illusory wall fades.
 pub const ILLUSORY_WALL: &str = "The wall was only an illusion";
 /// Every player was composted (together): the world resets as after a rest.

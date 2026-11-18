@@ -83,7 +83,7 @@ fn follow_camera(
     player: Single<(Entity, &Transform, &ActionState<Action>, Option<&LockOn>), (With<Player>, Without<ThirdPersonCamera>)>,
     targets: Query<(&Transform, &Targetable), (Without<Player>, Without<ThirdPersonCamera>)>,
     mut cams: Query<(&mut ThirdPersonCamera, &mut Transform)>,
-    characters: Query<(), (Or<(With<CharacterController>, With<Hurtbox>)>, Without<crate::level::library::IllusoryWall>)>,
+    characters: Query<(), (Or<(With<CharacterController>, With<Hurtbox>)>, Without<crate::level::library::IllusoryWall>, Without<crate::level::womb::Membrane>)>,
     (focus_on, others): (Res<CameraFocus>, Query<&Transform, (Without<Player>, Without<ThirdPersonCamera>)>),
 ) {
     let (player_entity, player_tf, actions, lock) = player.into_inner();
