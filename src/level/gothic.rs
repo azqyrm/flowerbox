@@ -141,15 +141,25 @@ pub fn spawn_gothic_prop(
             let z = dist - LEVEL_WALL_THICKNESS * 0.5 - 0.04;
             let _ = back;
             let sill = 2.2;
-            part(commands, Rectangle::new(w, h).into(), &m.glass, t(0.0, sill + h * 0.5, z).with_rotation(Quat::from_rotation_y(0.0)));
-            // A pointed arch: two leaning panes above, stone mullions and tracery.
+            // One pane (rectangle + pointed arch): overlapping panes z-fight and flicker.
+            part(commands, arch_pane(w, h), &m.glass, t(0.0, sill, z));
+            // Stone jambs, a mullion, the sill and tracery following the two arcs.
             for side in [-1.0f32, 1.0] {
-                let lean = side * 0.55;
-                part(commands, Rectangle::new(w * 0.56, w * 0.62).into(), &m.glass, t(side * w * 0.23, sill + h + w * 0.2, z).with_rotation(Quat::from_rotation_z(-lean)));
-                part(commands, Cuboid::new(0.18, w * 0.8, 0.2).into(), &m.stone, t(side * w * 0.27, sill + h + w * 0.25, z - 0.05).with_rotation(Quat::from_rotation_z(-lean)));
                 part(commands, Cuboid::new(0.18, h, 0.22).into(), &m.stone, t(side * (w * 0.5 + 0.05), sill + h * 0.5, z - 0.05));
             }
-            part(commands, Cuboid::new(0.08, h, 0.12).into(), &m.stone, t(0.0, sill + h * 0.5, z - 0.03));
+            let arc = arch_outline(w, ARCH_SEGMENTS);
+            for pair in arc.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                let mid = (a + b) * 0.5;
+                let d = b - a;
+                part(
+                    commands,
+                    Cuboid::new(d.length() + 0.06, 0.18, 0.22).into(),
+                    &m.stone,
+                    t(mid.x, sill + h + mid.y, z - 0.05).with_rotation(Quat::from_rotation_z(d.y.atan2(d.x))),
+                );
+            }
+            part(commands, Cuboid::new(0.08, h + arc_rise(w) * 0.8, 0.12).into(), &m.stone, t(0.0, sill + (h + arc_rise(w) * 0.8) * 0.5, z - 0.03));
             part(commands, Cuboid::new(w + 0.3, 0.2, 0.4).into(), &m.stone, t(0.0, sill - 0.1, z - 0.12));
             // Coloured moonlight falling in.
             commands.spawn((
@@ -298,4 +308,70 @@ pub fn spawn_gothic_prop(
         PropKind::Anvil | PropKind::Forge | PropKind::SkyGrate => {}
     }
     let _ = NotShadowCaster;
+}
+
+/// Segments per side of a window's pointed arch.
+const ARCH_SEGMENTS: usize = 6;
+
+/// The rise of an equilateral pointed arch over a span `w`.
+fn arc_rise(w: f32) -> f32 {
+    w * 3f32.sqrt() * 0.5
+}
+
+/// The arch's outline from the right springing point over the apex to the left one (relative to
+/// the springing line's middle): two arcs of radius `w` centred on the opposite springing points.
+fn arch_outline(w: f32, n: usize) -> Vec<Vec2> {
+    let half = w * 0.5;
+    let top = std::f32::consts::FRAC_PI_3;
+    let mut out = Vec::with_capacity(2 * n + 1);
+    // Right arc: centred on the left springing point, from angle 0 up to 60°.
+    for i in 0..=n {
+        let a = top * i as f32 / n as f32;
+        out.push(Vec2::new(-half + w * a.cos(), w * a.sin()));
+    }
+    // Left arc, mirrored, from the apex down.
+    for i in (0..n).rev() {
+        let a = top * i as f32 / n as f32;
+        out.push(Vec2::new(half - w * a.cos(), w * a.sin()));
+    }
+    out
+}
+
+/// A stained-glass pane: a `w`×`h` rectangle topped by a pointed arch, one convex fan (local XY,
+/// bottom middle at the origin), the texture spread over the whole shape.
+fn arch_pane(w: f32, h: f32) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    let total = h + arc_rise(w);
+    let mut outline = vec![Vec2::new(-w * 0.5, 0.0), Vec2::new(w * 0.5, 0.0)];
+    outline.extend(arch_outline(w, ARCH_SEGMENTS).into_iter().map(|p| p + Vec2::Y * h));
+    let centre = Vec2::new(0.0, total * 0.5);
+    let mut pos = vec![[centre.x, centre.y, 0.0]];
+    pos.extend(outline.iter().map(|p| [p.x, p.y, 0.0]));
+    let uv: Vec<[f32; 2]> = pos.iter().map(|p| [p[0] / w + 0.5, 1.0 - p[1] / total]).collect();
+    let normals = vec![[0.0, 0.0, -1.0]; pos.len()];
+    let n = outline.len() as u32;
+    let mut idx = Vec::with_capacity(3 * n as usize);
+    for i in 0..n {
+        idx.extend([0, 1 + i, 1 + (i + 1) % n]);
+    }
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_indices(Indices::U32(idx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arch_is_closed_and_pointed() {
+        let o = arch_outline(2.0, ARCH_SEGMENTS);
+        assert!((o[0] - Vec2::new(1.0, 0.0)).length() < 1e-4);
+        assert!((o[o.len() - 1] - Vec2::new(-1.0, 0.0)).length() < 1e-4);
+        let apex = o[ARCH_SEGMENTS];
+        assert!(apex.x.abs() < 1e-4 && (apex.y - arc_rise(2.0)).abs() < 1e-4);
+    }
 }
